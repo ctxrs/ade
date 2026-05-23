@@ -62,14 +62,14 @@ async fn execution_launch_start_rejects_while_maintenance_drain_active() {
     let data_dir = tempfile::tempdir().unwrap();
     let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = fixture.router();
-    let execution = fixture.daemon().handle().execution();
-    execution
+    let update_drain = fixture.daemon().handle().update_drain();
+    update_drain
         .begin_update_drain("test_update".to_string(), "unit_test".to_string())
         .await
         .expect("idle test daemon should acquire maintenance drain");
 
     let (status, error) = post_launch_start(&app, json!({})).await;
-    let _ = execution.release_update_drain().await;
+    let _ = update_drain.release_update_drain().await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(error.contains("test_update"));

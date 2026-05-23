@@ -1,7 +1,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::ExecutionHandle;
+use ctx_daemon::daemon::UpdateDrainHandle;
 use ctx_update_service::route_contract::{
     BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
     MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult,
@@ -10,7 +10,7 @@ use ctx_update_service::route_contract::{
 use crate::api::errors::ApiErrorResp;
 
 pub(in crate::api) async fn begin_update_drain(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<UpdateDrainHandle>,
     Json(req): Json<BeginUpdateDrainRouteRequest>,
 ) -> Result<Json<BeginUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution
@@ -21,7 +21,7 @@ pub(in crate::api) async fn begin_update_drain(
 }
 
 pub(in crate::api) async fn release_update_drain(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<UpdateDrainHandle>,
     Json(req): Json<ReleaseUpdateDrainRouteRequest>,
 ) -> Result<Json<ReleaseUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution

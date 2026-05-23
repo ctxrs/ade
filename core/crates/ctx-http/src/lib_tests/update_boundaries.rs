@@ -131,6 +131,35 @@ async fn update_drain_begin_conflicts_when_already_active() {
 }
 
 #[tokio::test]
+async fn linux_sandbox_prepare_conflicts_with_active_update_drain() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
+
+    let (status, body) = post_json(
+        &app,
+        "/api/updates/drain/begin",
+        json!({"confirm": true, "reason": "test_update", "owner": "unit_test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["acquired"], json!(true));
+
+    let (status, body) = post_json(
+        &app,
+        "/api/execution/linux_sandbox_runtime/prepare",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("already"));
+}
+
+#[tokio::test]
 async fn update_drain_release_requires_confirm() {
     let data_dir = tempfile::tempdir().unwrap();
     let fixture =

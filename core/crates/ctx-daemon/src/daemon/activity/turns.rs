@@ -49,7 +49,7 @@ pub(in crate::daemon) async fn daemon_turn_activity_summary_parts(
         .collect::<Vec<_>>();
     let active_turn_count = running_turn_count;
     Ok(DaemonTurnActivitySummary {
-        idle: running_turn_count == 0,
+        idle: queued_turn_count == 0 && running_turn_count == 0,
         active_turn_count,
         queued_turn_count,
         running_turn_count,

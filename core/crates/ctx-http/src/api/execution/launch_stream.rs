@@ -11,7 +11,7 @@ use ctx_execution_runtime::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
 };
 
-use ctx_daemon::daemon::ExecutionHandle;
+use ctx_daemon::daemon::ExecutionLaunchHandle;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ExecutionLaunchStatusQuery {
@@ -19,7 +19,7 @@ pub(in crate::api) struct ExecutionLaunchStatusQuery {
 }
 
 pub(in crate::api) async fn launch_status(
-    State(state): State<ExecutionHandle>,
+    State(state): State<ExecutionLaunchHandle>,
     Query(query): Query<ExecutionLaunchStatusQuery>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, StatusCode> {
     let job_id = query.job_id.trim();
@@ -35,7 +35,7 @@ pub(in crate::api) async fn launch_status(
 
 pub(in crate::api) async fn launch_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<ExecutionHandle>,
+    State(state): State<ExecutionLaunchHandle>,
     Query(query): Query<ExecutionLaunchStatusQuery>,
 ) -> impl IntoResponse {
     let job_id = query.job_id.trim().to_string();

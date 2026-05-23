@@ -3,21 +3,28 @@ use std::time::Duration;
 
 use anyhow::Error;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
+use ctx_store::{Store, StoreManager};
+use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::route_contract::{
     BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
     ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult, ShutdownDaemonRouteRequest,
     ShutdownDaemonRouteResult,
 };
+use ctx_update_service::UpdateDrainCoordinator;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
+use crate::daemon::activity::{
+    daemon_sandbox_work_activity_summary_parts, daemon_turn_activity_summary_parts,
+};
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::{
-    daemon_sandbox_work_activity_summary, daemon_turn_activity_summary,
-    reconcile_running_turns_with_reason, spawn_deferred_daemon_shutdown,
-    DaemonSandboxWorkActivitySummary, DaemonState, DaemonTurnActivitySummary, ExecutionHandle,
+    daemon_turn_activity_summary, reconcile_running_turns_with_reason,
+    spawn_deferred_daemon_shutdown, DaemonSandboxWorkActivitySummary, DaemonState,
+    DaemonTurnActivitySummary, ExecutionHandle, LinuxSandboxRuntimeHandle, UpdateDrainHandle,
 };
 
 pub struct MaintenanceDrainPermit {
-    state: Arc<DaemonState>,
+    update_drain: Arc<UpdateDrainCoordinator>,
     released: bool,
 }
 
@@ -26,7 +33,7 @@ impl MaintenanceDrainPermit {
         if self.released {
             return false;
         }
-        let released = self.state.core.update_drain.release().await;
+        let released = self.update_drain.release().await;
         self.released = true;
         released
     }
@@ -38,11 +45,11 @@ impl Drop for MaintenanceDrainPermit {
             return;
         }
         self.released = true;
-        let state = Arc::clone(&self.state);
+        let update_drain = Arc::clone(&self.update_drain);
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
-                    let _ = state.core.update_drain.release().await;
+                    let _ = update_drain.release().await;
                 });
             }
             Err(error) => {
@@ -80,36 +87,60 @@ pub async fn begin_update_drain(
     reason: String,
     owner: String,
 ) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
-    if state
-        .core
-        .update_drain
-        .acquire(reason, owner)
-        .await
-        .is_none()
-    {
+    begin_update_drain_parts(
+        state.global_store(),
+        &state.core.stores,
+        state.core.update_drain.as_ref(),
+        reason,
+        owner,
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn begin_update_drain_parts(
+    global_store: &Store,
+    stores: &StoreManager,
+    update_drain: &UpdateDrainCoordinator,
+    reason: String,
+    owner: String,
+) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
+    if update_drain.acquire(reason, owner).await.is_none() {
         return Err(BeginUpdateDrainError::AlreadyActive);
     }
 
-    let activity = match daemon_turn_activity_summary(state).await {
-        Ok(activity) => activity,
-        Err(error) => {
-            let _ = state.core.update_drain.release().await;
-            return Err(BeginUpdateDrainError::ActivityUnavailable(error));
-        }
-    };
+    let activity =
+        match daemon_turn_activity_summary_parts(global_store, stores, update_drain).await {
+            Ok(activity) => activity,
+            Err(error) => {
+                let _ = update_drain.release().await;
+                return Err(BeginUpdateDrainError::ActivityUnavailable(error));
+            }
+        };
     if !activity.idle {
-        let _ = state.core.update_drain.release().await;
+        let _ = update_drain.release().await;
         return Err(BeginUpdateDrainError::Busy);
     }
     Ok(activity)
 }
 
 pub async fn release_update_drain(state: &DaemonState) -> bool {
-    state.core.update_drain.release().await
+    release_update_drain_parts(state.core.update_drain.as_ref()).await
+}
+
+pub(in crate::daemon) async fn release_update_drain_parts(
+    update_drain: &UpdateDrainCoordinator,
+) -> bool {
+    update_drain.release().await
 }
 
 pub async fn reject_new_execution_during_maintenance(state: &DaemonState) -> Result<(), Error> {
-    state.core.update_drain.reject_if_draining().await
+    reject_new_execution_during_maintenance_parts(state.core.update_drain.as_ref()).await
+}
+
+pub(in crate::daemon) async fn reject_new_execution_during_maintenance_parts(
+    update_drain: &UpdateDrainCoordinator,
+) -> Result<(), Error> {
+    update_drain.reject_if_draining().await
 }
 
 pub async fn post_message_update_drain_reason(state: &DaemonState) -> Option<String> {
@@ -124,9 +155,24 @@ pub async fn post_message_update_drain_reason(state: &DaemonState) -> Option<Str
 pub async fn acquire_linux_sandbox_prepare_drain(
     state: &Arc<DaemonState>,
 ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
-    if state
-        .core
-        .update_drain
+    acquire_linux_sandbox_prepare_drain_parts(
+        Arc::clone(&state.core.update_drain),
+        state.global_store(),
+        &state.core.stores,
+        state.transport.terminals.as_ref(),
+        state.execution.harness.as_ref(),
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn acquire_linux_sandbox_prepare_drain_parts(
+    update_drain: Arc<UpdateDrainCoordinator>,
+    global_store: &Store,
+    stores: &StoreManager,
+    terminals: &TerminalManager,
+    harness: &HarnessRuntimeManager,
+) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
+    if update_drain
         .acquire("linux_sandbox_runtime_prepare", "execution_api")
         .await
         .is_none()
@@ -134,17 +180,20 @@ pub async fn acquire_linux_sandbox_prepare_drain(
         return Err(MaintenanceDrainError::AlreadyActive);
     }
     let permit = MaintenanceDrainPermit {
-        state: Arc::clone(state),
+        update_drain,
         released: false,
     };
 
-    let activity = match daemon_sandbox_work_activity_summary(state).await {
-        Ok(activity) => activity,
-        Err(error) => {
-            let _ = permit.release().await;
-            return Err(MaintenanceDrainError::ActivityUnavailable(error));
-        }
-    };
+    let activity =
+        match daemon_sandbox_work_activity_summary_parts(global_store, stores, terminals, harness)
+            .await
+        {
+            Ok(activity) => activity,
+            Err(error) => {
+                let _ = permit.release().await;
+                return Err(MaintenanceDrainError::ActivityUnavailable(error));
+            }
+        };
     if sandbox_work_is_active(&activity) {
         let _ = permit.release().await;
         return Err(MaintenanceDrainError::SandboxWorkActive);
@@ -213,7 +262,7 @@ async fn release_shutdown_drain_on_error(state: &DaemonState, acquired_drain: bo
     }
 }
 
-impl ExecutionHandle {
+impl UpdateDrainHandle {
     pub async fn begin_update_drain_for_route(
         &self,
         req: BeginUpdateDrainRouteRequest,
@@ -228,9 +277,16 @@ impl ExecutionHandle {
         let owner = owner
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "unknown".to_string());
-        let activity = begin_update_drain(&self.state, reason, owner)
-            .await
-            .map_err(begin_update_drain_route_error)?;
+        let update_drain = self.update_drain();
+        let activity = begin_update_drain_parts(
+            self.global_store(),
+            self.stores(),
+            update_drain.as_ref(),
+            reason,
+            owner,
+        )
+        .await
+        .map_err(begin_update_drain_route_error)?;
         Ok(BeginUpdateDrainRouteResult {
             acquired: true,
             activity,
@@ -244,11 +300,65 @@ impl ExecutionHandle {
         if !req.confirm() {
             return Err(MaintenanceRouteError::bad_request("confirm required"));
         }
+        let update_drain = self.update_drain();
         Ok(ReleaseUpdateDrainRouteResult {
-            released: release_update_drain(self.state.as_ref()).await,
+            released: release_update_drain_parts(update_drain.as_ref()).await,
         })
     }
 
+    pub async fn begin_update_drain(
+        &self,
+        reason: String,
+        owner: String,
+    ) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
+        let update_drain = self.update_drain();
+        begin_update_drain_parts(
+            self.global_store(),
+            self.stores(),
+            update_drain.as_ref(),
+            reason,
+            owner,
+        )
+        .await
+    }
+
+    pub async fn release_update_drain(&self) -> bool {
+        let update_drain = self.update_drain();
+        release_update_drain_parts(update_drain.as_ref()).await
+    }
+
+    pub async fn reject_new_execution_during_maintenance(&self) -> Result<(), Error> {
+        let update_drain = self.update_drain();
+        reject_new_execution_during_maintenance_parts(update_drain.as_ref()).await
+    }
+
+    pub async fn daemon_turn_activity_summary(&self) -> Result<DaemonTurnActivitySummary, Error> {
+        let update_drain = self.update_drain();
+        daemon_turn_activity_summary_parts(
+            self.global_store(),
+            self.stores(),
+            update_drain.as_ref(),
+        )
+        .await
+    }
+}
+
+impl LinuxSandboxRuntimeHandle {
+    pub async fn acquire_linux_sandbox_prepare_drain(
+        &self,
+    ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
+        acquire_linux_sandbox_prepare_drain_parts(
+            self.update_drain(),
+            self.global_store(),
+            self.stores(),
+            self.terminals(),
+            self.harness(),
+        )
+        .await
+    }
+}
+
+impl ExecutionHandle {
     pub async fn request_daemon_shutdown_for_route(
         &self,
         req: ShutdownDaemonRouteRequest,
@@ -279,32 +389,6 @@ impl ExecutionHandle {
             return false;
         };
         supplied.is_some_and(|value| value == expected)
-    }
-
-    pub async fn begin_update_drain(
-        &self,
-        reason: String,
-        owner: String,
-    ) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
-        begin_update_drain(&self.state, reason, owner).await
-    }
-
-    pub async fn release_update_drain(&self) -> bool {
-        release_update_drain(self.state.as_ref()).await
-    }
-
-    pub async fn reject_new_execution_during_maintenance(&self) -> Result<(), Error> {
-        reject_new_execution_during_maintenance(self.state.as_ref()).await
-    }
-
-    pub async fn acquire_linux_sandbox_prepare_drain(
-        &self,
-    ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
-        acquire_linux_sandbox_prepare_drain(&self.state).await
-    }
-
-    pub async fn daemon_turn_activity_summary(&self) -> Result<DaemonTurnActivitySummary, Error> {
-        daemon_turn_activity_summary(&self.state).await
     }
 
     pub async fn request_daemon_shutdown(

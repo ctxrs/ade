@@ -8,6 +8,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
   APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
+  EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
@@ -187,6 +188,7 @@ const {
   routerCompositionPatternsForPath,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanExecutionHandleRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -407,6 +409,43 @@ test("appstate daemon handle construction ratchet preserves known baseline recon
   });
 
   assert.deepEqual(violations, []);
+});
+
+test("appstate execution handle extractor ratchet allows only shutdown route", () => {
+  assert.equal(
+    EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS.has(
+      "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
+    ),
+    true,
+  );
+  const violations = scanExecutionHandleRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/execution.rs",
+    contents: `
+      use ctx_daemon::daemon::ExecutionHandle;
+      async fn route(State(execution): State<ExecutionHandle>) {
+        execution.start_execution_launch_for_request(req).await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "execution route extracts broad execution handle",
+      "execution route extracts broad execution handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanExecutionHandleRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
+      contents: `
+        use ctx_daemon::daemon::ExecutionHandle;
+        async fn route(State(execution): State<ExecutionHandle>) {}
+      `,
+    }),
+    [],
+  );
 });
 
 test("appstate guard rejects task creation placeholder extractors", () => {

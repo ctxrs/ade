@@ -980,6 +980,11 @@ const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
   },
 ];
 
+const EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS = new Set([
+  "core/crates/ctx-http/src/api/router.rs",
+  "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
+]);
+
 const DAEMON_EXTRACTION_BLOCKER_PATTERNS = [
   {
     name: "daemon depends on ctx-http",
@@ -6726,6 +6731,30 @@ function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanExecutionHandleRouteExtractorRatchet({ filePath, contents }) {
+  if (EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const executionHandleRegex =
+    /\bExecutionHandle\b|State\s*<\s*ExecutionHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = executionHandleRegex.exec(contents);
+    match;
+    match = executionHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "execution route extracts broad execution handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -6756,6 +6785,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         patterns: apiPatternsForPath(relativePath),
+      }),
+      ...scanExecutionHandleRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
       }),
     );
   }
@@ -7225,6 +7258,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
   APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
+  EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
@@ -7409,6 +7443,7 @@ module.exports = {
   routerCompositionPatternsForPath,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanExecutionHandleRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

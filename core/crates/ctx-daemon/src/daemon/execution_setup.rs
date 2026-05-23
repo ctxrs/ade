@@ -10,8 +10,8 @@ use ctx_execution_runtime::{
         LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus, StartExecutionLaunchError,
         StartExecutionLaunchRequest,
     },
-    ExecutionLaunchSnapshot, ExecutionLaunchStreamEvent, ExecutionSetupJobKind,
-    RuntimePrewarmScope, StartupPrewarmSnapshot,
+    ExecutionLaunchSnapshot, ExecutionLaunchStreamEvent, ExecutionSetupCoordinator,
+    ExecutionSetupJobKind, RuntimePrewarmScope, StartupPrewarmSnapshot,
 };
 use ctx_linux_sandbox_runtime::{
     linux_sandbox_runtime_status as runtime_linux_sandbox_runtime_status,
@@ -21,8 +21,10 @@ use ctx_linux_sandbox_runtime::{
 use ctx_observability::logs;
 use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_settings_service::EffectiveExecutionSettingsError;
+use ctx_store::{Store, StoreManager};
+use ctx_update_service::UpdateDrainCoordinator;
 
-use crate::daemon::{maintenance, settings, DaemonState, ExecutionHandle};
+use crate::daemon::{maintenance, DaemonState, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle};
 
 fn classify_effective_execution_settings_error(
     error: EffectiveExecutionSettingsError,
@@ -95,7 +97,14 @@ pub async fn launch_status(
     state: &Arc<DaemonState>,
     job_id: &str,
 ) -> Option<ExecutionLaunchSnapshot> {
-    state.execution.setup.launch_status(job_id).await
+    launch_status_parts(state.execution.setup.as_ref(), job_id).await
+}
+
+pub(in crate::daemon) async fn launch_status_parts(
+    setup: &ExecutionSetupCoordinator,
+    job_id: &str,
+) -> Option<ExecutionLaunchSnapshot> {
+    setup.launch_status(job_id).await
 }
 
 pub async fn subscribe_launch(
@@ -105,7 +114,17 @@ pub async fn subscribe_launch(
     ExecutionLaunchSnapshot,
     broadcast::Receiver<ExecutionLaunchStreamEvent>,
 )> {
-    state.execution.setup.subscribe_launch(job_id).await
+    subscribe_launch_parts(state.execution.setup.as_ref(), job_id).await
+}
+
+pub(in crate::daemon) async fn subscribe_launch_parts(
+    setup: &ExecutionSetupCoordinator,
+    job_id: &str,
+) -> Option<(
+    ExecutionLaunchSnapshot,
+    broadcast::Receiver<ExecutionLaunchStreamEvent>,
+)> {
+    setup.subscribe_launch(job_id).await
 }
 
 pub async fn start_workspace_launch(
@@ -113,10 +132,23 @@ pub async fn start_workspace_launch(
     workspace: Workspace,
     execution_settings: ExecutionSettings,
 ) -> ExecutionLaunchSnapshot {
-    state
-        .execution
-        .setup
-        .start_workspace_launch(workspace, execution_settings, state.core.daemon_url.clone())
+    start_workspace_launch_parts(
+        &state.execution.setup,
+        workspace,
+        execution_settings,
+        state.core.daemon_url.clone(),
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn start_workspace_launch_parts(
+    setup: &Arc<ExecutionSetupCoordinator>,
+    workspace: Workspace,
+    execution_settings: ExecutionSettings,
+    daemon_url: String,
+) -> ExecutionLaunchSnapshot {
+    setup
+        .start_workspace_launch(workspace, execution_settings, daemon_url)
         .await
 }
 
@@ -125,9 +157,15 @@ pub async fn start_runtime_prewarm(
     execution_settings: ExecutionSettings,
     prewarm_scope: RuntimePrewarmScope,
 ) -> ExecutionLaunchSnapshot {
-    state
-        .execution
-        .setup
+    start_runtime_prewarm_parts(&state.execution.setup, execution_settings, prewarm_scope).await
+}
+
+pub(in crate::daemon) async fn start_runtime_prewarm_parts(
+    setup: &Arc<ExecutionSetupCoordinator>,
+    execution_settings: ExecutionSettings,
+    prewarm_scope: RuntimePrewarmScope,
+) -> ExecutionLaunchSnapshot {
+    setup
         .start_runtime_prewarm(execution_settings, prewarm_scope)
         .await
 }
@@ -140,7 +178,26 @@ pub async fn start_execution_launch_for_request(
     state: &Arc<DaemonState>,
     request: StartExecutionLaunchRequest,
 ) -> Result<ExecutionLaunchSnapshot, StartExecutionLaunchError> {
-    maintenance::reject_new_execution_during_maintenance(state.as_ref())
+    start_execution_launch_for_request_parts(
+        state.global_store(),
+        &state.core.stores,
+        state.core.update_drain.as_ref(),
+        &state.execution.setup,
+        &state.core.daemon_url,
+        request,
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn start_execution_launch_for_request_parts(
+    global_store: &Store,
+    stores: &StoreManager,
+    update_drain: &UpdateDrainCoordinator,
+    setup: &Arc<ExecutionSetupCoordinator>,
+    daemon_url: &str,
+    request: StartExecutionLaunchRequest,
+) -> Result<ExecutionLaunchSnapshot, StartExecutionLaunchError> {
+    maintenance::reject_new_execution_during_maintenance_parts(update_drain)
         .await
         .map_err(|error| StartExecutionLaunchError::MaintenanceActive {
             message: logs::redact_sensitive(&error.to_string()),
@@ -156,32 +213,41 @@ pub async fn start_execution_launch_for_request(
                 .as_deref()
                 .ok_or(StartExecutionLaunchError::MissingWorkspaceId)?;
             let workspace_id = parse_workspace_id(raw_workspace_id)?;
-            let workspace = state
-                .global_store()
+            let workspace = global_store
                 .get_workspace(workspace_id)
                 .await
                 .map_err(|error| StartExecutionLaunchError::Internal {
                     message: logs::redact_sensitive(&error.to_string()),
                 })?
                 .ok_or(StartExecutionLaunchError::WorkspaceNotFound)?;
-            let execution_settings =
-                crate::daemon::execution_effective::effective_execution_settings_classified(
-                    state.as_ref(),
-                    workspace_id,
-                )
-                .await
-                .map_err(classify_effective_execution_settings_error)?;
-            Ok(start_workspace_launch(state, workspace, execution_settings).await)
+            let workspace_store = stores.workspace(workspace_id).await.map_err(|error| {
+                StartExecutionLaunchError::Internal {
+                    message: logs::redact_sensitive(&error.to_string()),
+                }
+            })?;
+            let execution_settings = ctx_settings_service::effective_execution_settings_classified(
+                global_store,
+                &workspace_store,
+            )
+            .await
+            .map_err(classify_effective_execution_settings_error)?;
+            Ok(start_workspace_launch_parts(
+                setup,
+                workspace,
+                execution_settings,
+                daemon_url.to_string(),
+            )
+            .await)
         }
         ExecutionSetupJobKind::StartupPrewarm => {
-            let settings = settings::load_settings(state.as_ref())
+            let settings = ctx_settings_service::load_settings(global_store)
                 .await
                 .map_err(|error| StartExecutionLaunchError::Internal {
                     message: logs::redact_sensitive(&error.to_string()),
                 })?;
             let mut execution_settings = settings.execution.unwrap_or_default();
             execution_settings.mode = ExecutionMode::Sandbox;
-            Ok(start_runtime_prewarm(state, execution_settings, request.prewarm_scope).await)
+            Ok(start_runtime_prewarm_parts(setup, execution_settings, request.prewarm_scope).await)
         }
     }
 }
@@ -189,7 +255,13 @@ pub async fn start_execution_launch_for_request(
 pub async fn linux_sandbox_runtime_status(
     state: &Arc<DaemonState>,
 ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
-    runtime_linux_sandbox_runtime_status(&state.core.data_root)
+    linux_sandbox_runtime_status_parts(&state.core.data_root).await
+}
+
+pub(in crate::daemon) async fn linux_sandbox_runtime_status_parts(
+    data_root: &std::path::Path,
+) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
+    runtime_linux_sandbox_runtime_status(data_root)
         .await
         .map_err(|error| linux_sandbox_runtime_error(LinuxSandboxRuntimeOperation::Status, error))
 }
@@ -197,7 +269,13 @@ pub async fn linux_sandbox_runtime_status(
 pub async fn stage_linux_sandbox_runtime(
     state: &Arc<DaemonState>,
 ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
-    runtime_stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
+    stage_linux_sandbox_runtime_parts(&state.core.data_root).await
+}
+
+pub(in crate::daemon) async fn stage_linux_sandbox_runtime_parts(
+    data_root: &std::path::Path,
+) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
+    runtime_stage_linux_sandbox_runtime_downloads(data_root, None)
         .await
         .map_err(|error| linux_sandbox_runtime_error(LinuxSandboxRuntimeOperation::Stage, error))
 }
@@ -210,8 +288,23 @@ pub async fn prepare_linux_sandbox_runtime(
     let drain_permit = maintenance::acquire_linux_sandbox_prepare_drain(state)
         .await
         .map_err(linux_sandbox_prepare_drain_error)?;
-    let result = match runtime_prepare_linux_sandbox_runtime(
+    prepare_linux_sandbox_runtime_parts(
         &state.core.data_root,
+        drain_permit,
+        activation_mode,
+        sudo_password,
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn prepare_linux_sandbox_runtime_parts(
+    data_root: &std::path::Path,
+    drain_permit: maintenance::MaintenanceDrainPermit,
+    activation_mode: Option<LinuxSandboxActivationMode>,
+    sudo_password: Option<&str>,
+) -> Result<LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeError> {
+    let result = match runtime_prepare_linux_sandbox_runtime(
+        data_root,
         activation_mode.unwrap_or(LinuxSandboxActivationMode::Local),
         sudo_password,
         None,
@@ -231,9 +324,9 @@ pub async fn prepare_linux_sandbox_runtime(
     Ok(result)
 }
 
-impl ExecutionHandle {
+impl ExecutionLaunchHandle {
     pub async fn launch_status(&self, job_id: &str) -> Option<ExecutionLaunchSnapshot> {
-        launch_status(&self.state, job_id).await
+        launch_status_parts(self.execution_setup().as_ref(), job_id).await
     }
 
     pub async fn subscribe_launch(
@@ -243,7 +336,7 @@ impl ExecutionHandle {
         ExecutionLaunchSnapshot,
         broadcast::Receiver<ExecutionLaunchStreamEvent>,
     )> {
-        subscribe_launch(&self.state, job_id).await
+        subscribe_launch_parts(self.execution_setup().as_ref(), job_id).await
     }
 
     pub async fn start_workspace_launch(
@@ -251,7 +344,13 @@ impl ExecutionHandle {
         workspace: Workspace,
         execution_settings: ExecutionSettings,
     ) -> ExecutionLaunchSnapshot {
-        start_workspace_launch(&self.state, workspace, execution_settings).await
+        start_workspace_launch_parts(
+            self.execution_setup(),
+            workspace,
+            execution_settings,
+            self.daemon_url().to_string(),
+        )
+        .await
     }
 
     pub async fn start_runtime_prewarm(
@@ -259,30 +358,36 @@ impl ExecutionHandle {
         execution_settings: ExecutionSettings,
         prewarm_scope: RuntimePrewarmScope,
     ) -> ExecutionLaunchSnapshot {
-        start_runtime_prewarm(&self.state, execution_settings, prewarm_scope).await
-    }
-
-    pub async fn startup_status(&self) -> StartupPrewarmSnapshot {
-        startup_status(&self.state).await
+        start_runtime_prewarm_parts(self.execution_setup(), execution_settings, prewarm_scope).await
     }
 
     pub async fn start_execution_launch_for_request(
         &self,
         request: StartExecutionLaunchRequest,
     ) -> Result<ExecutionLaunchSnapshot, StartExecutionLaunchError> {
-        start_execution_launch_for_request(&self.state, request).await
+        start_execution_launch_for_request_parts(
+            self.global_store(),
+            self.stores(),
+            self.update_drain(),
+            self.execution_setup(),
+            self.daemon_url(),
+            request,
+        )
+        .await
     }
+}
 
+impl LinuxSandboxRuntimeHandle {
     pub async fn linux_sandbox_runtime_status(
         &self,
     ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
-        linux_sandbox_runtime_status(&self.state).await
+        linux_sandbox_runtime_status_parts(self.data_root()).await
     }
 
     pub async fn stage_linux_sandbox_runtime(
         &self,
     ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
-        stage_linux_sandbox_runtime(&self.state).await
+        stage_linux_sandbox_runtime_parts(self.data_root()).await
     }
 
     pub async fn prepare_linux_sandbox_runtime(
@@ -290,6 +395,16 @@ impl ExecutionHandle {
         activation_mode: Option<LinuxSandboxActivationMode>,
         sudo_password: Option<&str>,
     ) -> Result<LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeError> {
-        prepare_linux_sandbox_runtime(&self.state, activation_mode, sudo_password).await
+        let drain_permit = self
+            .acquire_linux_sandbox_prepare_drain()
+            .await
+            .map_err(linux_sandbox_prepare_drain_error)?;
+        prepare_linux_sandbox_runtime_parts(
+            self.data_root(),
+            drain_permit,
+            activation_mode,
+            sudo_password,
+        )
+        .await
     }
 }

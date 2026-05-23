@@ -7,7 +7,7 @@ use ctx_execution_runtime::{
     ExecutionLaunchSnapshot,
 };
 
-use ctx_daemon::daemon::ExecutionHandle;
+use ctx_daemon::daemon::ExecutionLaunchHandle;
 
 use super::errors::ApiErrorResp;
 
@@ -20,7 +20,7 @@ pub(super) use linux_sandbox::{
 };
 
 pub(super) async fn launch_start(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<ExecutionLaunchHandle>,
     Json(req): Json<StartExecutionLaunchRequest>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
     let snapshot = execution

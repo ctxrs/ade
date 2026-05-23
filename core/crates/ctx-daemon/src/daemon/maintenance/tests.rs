@@ -3,6 +3,9 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
+use ctx_core::ids::{RunId, TurnId};
+use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus, VcsKind};
 use ctx_store::StoreManager;
 use ctx_update_service::route_contract::MaintenanceRouteErrorKind;
 
@@ -26,6 +29,87 @@ async fn test_state_with_shutdown_token(
     );
     state.core.local_shutdown_token = local_shutdown_token;
     (data_dir, Arc::new(state))
+}
+
+async fn insert_turn_with_status(
+    state: &Arc<DaemonState>,
+    root: &std::path::Path,
+    status: SessionTurnStatus,
+) {
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            format!("ws-{}", uuid::Uuid::new_v4()),
+            root.join(format!("ws-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("open workspace store");
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            root.join(format!("worktree-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .expect("create worktree");
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .expect("create task");
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ExecutionEnvironment::Host,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("create session");
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .expect("index session");
+    let now = Utc::now();
+    store
+        .insert_session_turn(SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: session.id,
+            run_id: Some(RunId::new()),
+            user_message_id: None,
+            status,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            failure: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        })
+        .await
+        .expect("insert turn");
 }
 
 #[tokio::test]
@@ -53,7 +137,7 @@ async fn begin_update_drain_acquires_until_released() {
 #[tokio::test]
 async fn begin_update_drain_route_requires_confirm() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(state).execution();
+    let handle = crate::daemon::DaemonHandle::new(state).update_drain();
 
     let error = handle
         .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(false, None, None))
@@ -67,7 +151,7 @@ async fn begin_update_drain_route_requires_confirm() {
 #[tokio::test]
 async fn begin_update_drain_route_defaults_reason_and_owner() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).execution();
+    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
 
     let result = handle
         .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(
@@ -88,7 +172,7 @@ async fn begin_update_drain_route_defaults_reason_and_owner() {
 #[tokio::test]
 async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).execution();
+    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
     begin_update_drain(&state, "existing".to_string(), "unit_test".to_string())
         .await
         .expect("acquire initial drain");
@@ -103,9 +187,28 @@ async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
 }
 
 #[tokio::test]
+async fn begin_update_drain_route_rejects_queued_turns() {
+    let (data_dir, state) = test_state().await;
+    insert_turn_with_status(&state, data_dir.path(), SessionTurnStatus::Queued).await;
+    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
+
+    let error = handle
+        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(true, None, None))
+        .await
+        .expect_err("queued turns should keep update drain busy");
+
+    assert_eq!(error.kind(), MaintenanceRouteErrorKind::Conflict);
+    assert_eq!(
+        error.message(),
+        "daemon has queued or running turns; update drain was not acquired"
+    );
+    assert!(post_message_update_drain_reason(&state).await.is_none());
+}
+
+#[tokio::test]
 async fn release_update_drain_route_requires_confirm() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(state).execution();
+    let handle = crate::daemon::DaemonHandle::new(state).update_drain();
 
     let error = handle
         .release_update_drain_for_route(ReleaseUpdateDrainRouteRequest::new(false))

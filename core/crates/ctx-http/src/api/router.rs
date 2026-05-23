@@ -7,9 +7,10 @@ use url::Url;
 
 use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
-    HealthHandle, LogsHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
-    OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle,
-    TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateReleaseHandle,
+    ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
+    MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
+    ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
     WorkspaceStreamHandle, WorkspacesHandle,
 };
 
@@ -94,6 +95,9 @@ pub struct RouteHandles {
     pub(in crate::api) providers: ProvidersHandle,
     pub(in crate::api) telemetry: TelemetryHandle,
     pub(in crate::api) transport: TransportHandle,
+    pub(in crate::api) execution_launch: ExecutionLaunchHandle,
+    pub(in crate::api) linux_sandbox_runtime: LinuxSandboxRuntimeHandle,
+    pub(in crate::api) update_drain: UpdateDrainHandle,
     pub(in crate::api) execution: ExecutionHandle,
 }
 
@@ -121,6 +125,9 @@ impl RouteHandles {
             providers: handle.providers(),
             telemetry: handle.telemetry(),
             transport: handle.transport(),
+            execution_launch: handle.execution_launch(),
+            linux_sandbox_runtime: handle.linux_sandbox_runtime(),
+            update_drain: handle.update_drain(),
             execution: handle.execution(),
         }
     }
@@ -153,6 +160,9 @@ impl_route_state_extractors! {
     ProvidersHandle, providers;
     TelemetryHandle, telemetry;
     TransportHandle, transport;
+    ExecutionLaunchHandle, execution_launch;
+    LinuxSandboxRuntimeHandle, linux_sandbox_runtime;
+    UpdateDrainHandle, update_drain;
     ExecutionHandle, execution;
 }
 

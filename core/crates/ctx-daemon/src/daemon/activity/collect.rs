@@ -42,15 +42,15 @@ pub(in crate::daemon) async fn collect_turns_by_statuses_parts(
     Ok((workspace_count, matching_turns))
 }
 
-pub(super) async fn session_execution_environment(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn session_execution_environment_parts(
+    stores: &StoreManager,
     cache: &mut HashMap<ctx_core::ids::SessionId, ExecutionEnvironment>,
     session_id: ctx_core::ids::SessionId,
 ) -> Result<ExecutionEnvironment> {
     if let Some(environment) = cache.get(&session_id).copied() {
         return Ok(environment);
     }
-    let store = state.store_for_session(session_id).await?;
+    let store = stores.store_for_session(session_id).await?;
     let session = store
         .get_session(session_id)
         .await?

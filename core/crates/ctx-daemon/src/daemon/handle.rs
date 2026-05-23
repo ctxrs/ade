@@ -14,6 +14,7 @@ use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 use tokio::sync::{broadcast, Mutex};
 
 use super::{
@@ -160,6 +161,35 @@ impl DaemonHandle {
 
     pub fn transport(&self) -> TransportHandle {
         TransportHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn execution_launch(&self) -> ExecutionLaunchHandle {
+        ExecutionLaunchHandle::new(
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.core.update_drain),
+            Arc::clone(&self.state.execution.setup),
+            self.state.core.daemon_url.clone(),
+        )
+    }
+
+    pub fn linux_sandbox_runtime(&self) -> LinuxSandboxRuntimeHandle {
+        LinuxSandboxRuntimeHandle::new(
+            self.state.core.data_root.clone(),
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.core.update_drain),
+            Arc::clone(&self.state.transport.terminals),
+            Arc::clone(&self.state.execution.harness),
+        )
+    }
+
+    pub fn update_drain(&self) -> UpdateDrainHandle {
+        UpdateDrainHandle::new(
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.core.update_drain),
+        )
     }
 
     pub fn execution(&self) -> ExecutionHandle {
@@ -625,6 +655,140 @@ impl MobileSecureProxyHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct ExecutionLaunchHandle {
+    global_store: Store,
+    stores: StoreManager,
+    update_drain: Arc<UpdateDrainCoordinator>,
+    execution_setup: Arc<ExecutionSetupCoordinator>,
+    daemon_url: String,
+}
+
+impl ExecutionLaunchHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        stores: StoreManager,
+        update_drain: Arc<UpdateDrainCoordinator>,
+        execution_setup: Arc<ExecutionSetupCoordinator>,
+        daemon_url: String,
+    ) -> Self {
+        Self {
+            global_store,
+            stores,
+            update_drain,
+            execution_setup,
+            daemon_url,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub(in crate::daemon) fn update_drain(&self) -> &UpdateDrainCoordinator {
+        self.update_drain.as_ref()
+    }
+
+    pub(in crate::daemon) fn execution_setup(&self) -> &Arc<ExecutionSetupCoordinator> {
+        &self.execution_setup
+    }
+
+    pub(in crate::daemon) fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+}
+
+#[derive(Clone)]
+pub struct LinuxSandboxRuntimeHandle {
+    data_root: PathBuf,
+    global_store: Store,
+    stores: StoreManager,
+    update_drain: Arc<UpdateDrainCoordinator>,
+    terminals: Arc<TerminalManager>,
+    harness: Arc<HarnessRuntimeManager>,
+}
+
+impl LinuxSandboxRuntimeHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        global_store: Store,
+        stores: StoreManager,
+        update_drain: Arc<UpdateDrainCoordinator>,
+        terminals: Arc<TerminalManager>,
+        harness: Arc<HarnessRuntimeManager>,
+    ) -> Self {
+        Self {
+            data_root,
+            global_store,
+            stores,
+            update_drain,
+            terminals,
+            harness,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub(in crate::daemon) fn update_drain(&self) -> Arc<UpdateDrainCoordinator> {
+        Arc::clone(&self.update_drain)
+    }
+
+    pub(in crate::daemon) fn terminals(&self) -> &TerminalManager {
+        self.terminals.as_ref()
+    }
+
+    pub(in crate::daemon) fn harness(&self) -> &HarnessRuntimeManager {
+        self.harness.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub struct UpdateDrainHandle {
+    global_store: Store,
+    stores: StoreManager,
+    update_drain: Arc<UpdateDrainCoordinator>,
+}
+
+impl UpdateDrainHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        stores: StoreManager,
+        update_drain: Arc<UpdateDrainCoordinator>,
+    ) -> Self {
+        Self {
+            global_store,
+            stores,
+            update_drain,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub(in crate::daemon) fn update_drain(&self) -> Arc<UpdateDrainCoordinator> {
+        Arc::clone(&self.update_drain)
     }
 }
 

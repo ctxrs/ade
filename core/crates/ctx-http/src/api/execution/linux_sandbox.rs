@@ -7,12 +7,12 @@ use ctx_execution_runtime::route_contract::{
     LinuxSandboxRuntimeStatus,
 };
 
-use ctx_daemon::daemon::ExecutionHandle;
+use ctx_daemon::daemon::LinuxSandboxRuntimeHandle;
 
 use crate::api::errors::ApiErrorResp;
 
 pub(in crate::api) async fn linux_sandbox_runtime_status_api(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<LinuxSandboxRuntimeHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
     let status = execution
         .linux_sandbox_runtime_status()
@@ -22,7 +22,7 @@ pub(in crate::api) async fn linux_sandbox_runtime_status_api(
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_stage(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<LinuxSandboxRuntimeHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
     let status = execution
         .stage_linux_sandbox_runtime()
@@ -32,7 +32,7 @@ pub(in crate::api) async fn linux_sandbox_runtime_stage(
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_prepare(
-    State(execution): State<ExecutionHandle>,
+    State(execution): State<LinuxSandboxRuntimeHandle>,
     Json(req): Json<LinuxSandboxRuntimePrepareRequest>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution
