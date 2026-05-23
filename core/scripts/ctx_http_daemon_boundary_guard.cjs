@@ -859,6 +859,18 @@ const workspaceVcsLiveRoutingApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/snapshots.rs",
 ];
 
+const workspaceVcsHttpModuleRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_vcs/",
+];
+
+const workspaceVcsStreamRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+]);
+
+const workspaceVcsStreamDaemonImplementationPath =
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs";
+
 const terminalStreamRuntimeApiRoots = [
   "core/crates/ctx-http/src/api/ws/terminal.rs",
   "core/crates/ctx-http/src/api/ws/terminal/",
@@ -7919,6 +7931,76 @@ function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   return violations;
 }
 
+function isWorkspaceVcsHttpModulePath(filePath) {
+  return workspaceVcsHttpModuleRoots.some((root) =>
+    root.endsWith("/") ? filePath.startsWith(root) : filePath === root
+  );
+}
+
+function workspaceVcsStreamCapabilityPresent() {
+  if (!fs.existsSync(daemonHandlePath)) {
+    return false;
+  }
+  return /\bWorkspaceVcsStreamHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+}
+
+function workspaceVcsStreamRouteExtractorPresent() {
+  const routeModulePath = path.join(apiRoot, "ws", "workspace_vcs.rs");
+  if (!fs.existsSync(routeModulePath)) {
+    return false;
+  }
+  const contents = fs.readFileSync(routeModulePath, "utf8");
+  return /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceVcsStreamHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceVcsStreamHandle\s*>)/u.test(
+    contents,
+  );
+}
+
+function scanWorkspaceVcsStreamRouteExtractorRatchet({
+  filePath,
+  contents,
+  workspaceVcsStreamCapability = true,
+}) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const workspaceVcsStreamExtractorRegex =
+    /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceVcsStreamHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceVcsStreamHandle\s*>)/gu;
+
+  if (!workspaceVcsStreamRouteExtractorAllowedPaths.has(filePath)) {
+    for (
+      let match = workspaceVcsStreamExtractorRegex.exec(contents);
+      match;
+      match = workspaceVcsStreamExtractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace VCS route extracts WorkspaceVcsStreamHandle outside route module",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspaceVcsStreamCapability && isWorkspaceVcsHttpModulePath(filePath)) {
+    const broadWorkspaceRegex = /\bWorkspacesHandle\b/gu;
+    for (
+      let match = broadWorkspaceRegex.exec(contents);
+      match;
+      match = broadWorkspaceRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace VCS route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function rustImplBlocksForType({ contents, typeName }) {
   const blocks = [];
   const regex = new RegExp(`\\bimpl\\s+${typeName}\\s*\\{`, "gu");
@@ -8294,6 +8376,108 @@ function scanWorkspaceStreamHandleFieldRatchet({ filePath, contents }) {
         line,
         name: "workspace stream effects exposes generic full-state escape hatch",
         text: lines[line - 1]?.trim() ?? escape[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceVcsStreamHandleFieldRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:DaemonState|DaemonHandle|WorkspacesHandle|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+
+  const structs = [
+    {
+      block: rustStructBlockForType({ contents, typeName: "WorkspaceVcsStreamHandle" }),
+      name: "workspace VCS stream capability stores broad handle or daemon state",
+    },
+    {
+      block: rustStructBlockForType({ contents, typeName: "WorkspaceVcsStreamHandleParts" }),
+      name: "workspace VCS stream capability stores broad handle or daemon state",
+    },
+    {
+      block: rustStructBlockForType({ contents, typeName: "WorkspaceVcsStreamRuntime" }),
+      name: "workspace VCS stream runtime stores broad handle or daemon state",
+    },
+    {
+      block: rustStructBlockForType({ contents, typeName: "WorkspaceVcsStreamRuntimeParts" }),
+      name: "workspace VCS stream runtime stores broad handle or daemon state",
+    },
+  ].filter(({ block }) => Boolean(block));
+
+  for (const { block, name } of structs) {
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(block.text);
+      broad;
+      broad = broadFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name,
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+const workspaceVcsStreamRouteMethodRegex =
+  /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+(?:require_workspace_vcs_stream_access|admit_workspace_vcs_stream_for_route|get_worktree_vcs_snapshot|subscribe_worktree_vcs_events|filter_workspace_worktree_ids|refresh_worktree_vcs_for_worktrees|plan_workspace_vcs_subscription_update|plan_workspace_vcs_refresh|release_workspace_vcs_demand|route_workspace_vcs_snapshot|plan_workspace_vcs_lag_reseed|record_workspace_vcs_stream_metric)\s*\(/gu;
+
+function scanWorkspaceVcsStreamDaemonImplementationRatchet({
+  filePath,
+  contents,
+  workspaceVcsStreamCapability = true,
+}) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (filePath !== workspaceVcsStreamDaemonImplementationPath) {
+    for (const impl of rustImplBlocksForType({ contents, typeName: "WorkspaceVcsStreamHandle" })) {
+      workspaceVcsStreamRouteMethodRegex.lastIndex = 0;
+      for (
+        let match = workspaceVcsStreamRouteMethodRegex.exec(impl.text);
+        match;
+        match = workspaceVcsStreamRouteMethodRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "workspace VCS stream route method implemented outside VCS stream module",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (!workspaceVcsStreamCapability) {
+    return violations;
+  }
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "WorkspacesHandle" })) {
+    workspaceVcsStreamRouteMethodRegex.lastIndex = 0;
+    for (
+      let match = workspaceVcsStreamRouteMethodRegex.exec(impl.text);
+      match;
+      match = workspaceVcsStreamRouteMethodRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace VCS stream route method remains on broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
       });
     }
   }
@@ -10988,6 +11172,9 @@ function scanRepo() {
     });
   }
 
+  const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
+  const hasWorkspaceVcsStreamRouteExtractor = workspaceVcsStreamRouteExtractorPresent();
+
   for (const filePath of listRustFiles(apiRoot)) {
     if (isTestRustPath(filePath)) {
       continue;
@@ -11059,6 +11246,11 @@ function scanRepo() {
       ...scanWorkspaceStreamRouteExtractorRatchet({
         filePath: relativePath,
         contents,
+      }),
+      ...scanWorkspaceVcsStreamRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceVcsStreamCapability: hasWorkspaceVcsStreamCapability,
       }),
       ...scanWorkspaceActiveRouteExtractorRatchet({
         filePath: relativePath,
@@ -11324,6 +11516,15 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceStreamActiveDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceVcsStreamDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceVcsStreamCapability: hasWorkspaceVcsStreamCapability,
+      }),
+      ...scanWorkspaceVcsStreamHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -12062,6 +12263,9 @@ module.exports = {
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
+  scanWorkspaceVcsStreamDaemonImplementationRatchet,
+  scanWorkspaceVcsStreamHandleFieldRatchet,
+  scanWorkspaceVcsStreamRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

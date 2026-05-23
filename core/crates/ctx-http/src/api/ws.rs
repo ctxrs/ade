@@ -15,7 +15,7 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
 
-use ctx_daemon::daemon::{DictationHandle, WorkspaceStreamHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{DictationHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle};
 
 mod async_util;
 mod common;

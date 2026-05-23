@@ -42,7 +42,7 @@ fn counter_delta(counter: &AtomicU64, recorded: &AtomicU64) -> u64 {
 }
 
 pub(super) async fn record_workspace_vcs_stream_metrics(
-    state: &WorkspacesHandle,
+    state: &WorkspaceVcsStreamHandle,
     metrics: &VcsStreamMetrics,
 ) {
     let counters = [

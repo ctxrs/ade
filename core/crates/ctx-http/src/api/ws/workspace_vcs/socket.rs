@@ -9,7 +9,7 @@ use super::subscription::{
 use ctx_workspace_stream_service::vcs::WorkspaceVcsSnapshotRoute;
 
 fn spawn_workspace_vcs_metrics_loop(
-    state: WorkspacesHandle,
+    state: WorkspaceVcsStreamHandle,
     metrics: Arc<VcsStreamMetrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -24,7 +24,7 @@ fn spawn_workspace_vcs_metrics_loop(
 
 pub(super) async fn handle_workspace_vcs_ws(
     socket: WebSocket,
-    state: WorkspacesHandle,
+    state: WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
 ) {
     let (sender, mut receiver) = socket.split();

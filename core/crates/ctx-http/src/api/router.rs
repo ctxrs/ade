@@ -21,7 +21,7 @@ use ctx_daemon::daemon::{
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
     WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
     WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
-    WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspaceVcsStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -125,6 +125,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspaces: WorkspacesHandle,
     pub(in crate::api) workspace_active: WorkspaceActiveHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
+    pub(in crate::api) workspace_vcs_stream: WorkspaceVcsStreamHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
     pub(in crate::api) provider_auth_import: ProviderAuthImportHandle,
     pub(in crate::api) provider_status: ProviderStatusHandle,
@@ -187,6 +188,7 @@ impl RouteHandles {
             workspaces: handle.workspaces(),
             workspace_active: handle.workspace_active(),
             workspace_stream: handle.workspace_stream(),
+            workspace_vcs_stream: handle.workspace_vcs_stream(),
             provider_accounts: handle.provider_accounts(),
             provider_auth_import: handle.provider_auth_import(),
             provider_status: handle.provider_status(),
@@ -254,6 +256,7 @@ impl_route_state_extractors! {
     WorkspacesHandle, workspaces;
     WorkspaceActiveHandle, workspace_active;
     WorkspaceStreamHandle, workspace_stream;
+    WorkspaceVcsStreamHandle, workspace_vcs_stream;
     ProviderAccountsHandle, provider_accounts;
     ProviderAuthImportHandle, provider_auth_import;
     ProviderStatusHandle, provider_status;

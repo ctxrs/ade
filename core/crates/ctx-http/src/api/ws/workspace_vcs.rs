@@ -28,7 +28,7 @@ fn workspace_stream_route_status(error: WorkspaceStreamRouteError) -> StatusCode
 
 pub(crate) async fn workspace_vcs_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<WorkspacesHandle>,
+    State(state): State<WorkspaceVcsStreamHandle>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let admission = match state

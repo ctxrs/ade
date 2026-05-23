@@ -2,7 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
-use ctx_core::models::{Worktree, WorktreeVcsFreshness, WorktreeVcsStreamTier};
+use ctx_core::models::{
+    Worktree, WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsSnapshot,
+    WorktreeVcsStreamTier, WorktreeVcsTouchedFilesState,
+};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_route_contracts::workspaces::{WorkspaceStreamRouteError, WorkspaceStreamRouteParams};
 use ctx_workspace_stream_service::vcs as stream_vcs_service;
 pub use ctx_workspace_stream_service::vcs::{
@@ -10,16 +14,179 @@ pub use ctx_workspace_stream_service::vcs::{
     WorkspaceVcsLagReseedPlan, WorkspaceVcsRefreshPlan, WorkspaceVcsSnapshotRoute,
     WorkspaceVcsSnapshotSeed, WorkspaceVcsSubscriptionPlan,
 };
+use ctx_worktree_vcs_service::{
+    published_worktree_vcs_snapshot_cache_entry, WorktreeVcsRuntimeState,
+    WorktreeVcsSnapshotCacheEntry,
+};
 use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 
-use crate::daemon::DaemonState;
-use crate::daemon::WorkspacesHandle;
+use crate::daemon::state::{TimedEntry, WorkspaceRuntime};
+use crate::daemon::WorkspaceVcsStreamHandle;
 
 use super::access::workspace_stream_route_error_from_access;
 use super::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 
+#[derive(Clone)]
+pub struct WorkspaceVcsStreamRuntime {
+    worktree_vcs_enabled: bool,
+    worktree_vcs_snapshots:
+        Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>>,
+    worktree_vcs_active: Arc<Mutex<HashMap<WorktreeId, usize>>>,
+    worktree_vcs_open_panes: Arc<Mutex<HashMap<WorktreeId, usize>>>,
+    worktree_vcs_summary_gen: Arc<Mutex<HashMap<WorktreeId, u64>>>,
+    worktree_vcs_runtime: Arc<Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>>,
+    worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
+}
+
+impl WorkspaceVcsStreamRuntime {
+    pub(in crate::daemon) fn from_workspace_runtime(runtime: &WorkspaceRuntime) -> Self {
+        Self {
+            worktree_vcs_enabled: runtime.worktree_vcs_enabled,
+            worktree_vcs_snapshots: Arc::clone(&runtime.worktree_vcs_snapshots),
+            worktree_vcs_active: Arc::clone(&runtime.worktree_vcs_active),
+            worktree_vcs_open_panes: Arc::clone(&runtime.worktree_vcs_open_panes),
+            worktree_vcs_summary_gen: Arc::clone(&runtime.worktree_vcs_summary_gen),
+            worktree_vcs_runtime: Arc::clone(&runtime.worktree_vcs_runtime),
+            worktree_vcs_events: runtime.worktree_vcs_events.clone(),
+        }
+    }
+
+    pub(in crate::daemon) fn worktree_vcs_enabled(&self) -> bool {
+        self.worktree_vcs_enabled
+    }
+
+    async fn cache_worktree_vcs_snapshot(&self, snapshot: WorktreeVcsSnapshot) {
+        if !self.worktree_vcs_enabled {
+            return;
+        }
+        let worktree_id = snapshot.worktree_id;
+        let now = std::time::Instant::now();
+        let mut cache = self.worktree_vcs_snapshots.lock().await;
+        cache.insert(
+            worktree_id,
+            TimedEntry::new(published_worktree_vcs_snapshot_cache_entry(snapshot, now)),
+        );
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) async fn cache_worktree_vcs_snapshot_for_test(
+        &self,
+        snapshot: WorktreeVcsSnapshot,
+    ) {
+        self.cache_worktree_vcs_snapshot(snapshot).await;
+    }
+
+    async fn get_cached_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        if !self.worktree_vcs_enabled {
+            return None;
+        }
+        let mut cache = self.worktree_vcs_snapshots.lock().await;
+        cache.get_mut(&worktree_id).map(|entry| {
+            entry.touch();
+            entry.value.snapshot.clone()
+        })
+    }
+
+    async fn update_worktree_vcs_activity(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if !self.worktree_vcs_enabled || previous == next {
+            return;
+        }
+        let mut evicted = Vec::new();
+        {
+            let mut active = self.worktree_vcs_active.lock().await;
+            for worktree_id in previous.difference(next) {
+                if let Some(count) = active.get_mut(worktree_id) {
+                    if *count <= 1 {
+                        active.remove(worktree_id);
+                        evicted.push(*worktree_id);
+                    } else {
+                        *count -= 1;
+                    }
+                }
+            }
+            for worktree_id in next.difference(previous) {
+                let entry = active.entry(*worktree_id).or_insert(0);
+                *entry += 1;
+            }
+        }
+        if !evicted.is_empty() {
+            {
+                let mut cache = self.worktree_vcs_snapshots.lock().await;
+                for worktree_id in &evicted {
+                    cache.remove(worktree_id);
+                }
+            }
+            {
+                let mut gens = self.worktree_vcs_summary_gen.lock().await;
+                for worktree_id in &evicted {
+                    gens.remove(worktree_id);
+                }
+            }
+            {
+                let mut runtime = self.worktree_vcs_runtime.lock().await;
+                for worktree_id in &evicted {
+                    runtime.remove(worktree_id);
+                }
+            }
+        }
+    }
+
+    async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if !self.worktree_vcs_enabled || previous == next {
+            return;
+        }
+        let mut open = self.worktree_vcs_open_panes.lock().await;
+        for worktree_id in previous.difference(next) {
+            if let Some(count) = open.get_mut(worktree_id) {
+                if *count <= 1 {
+                    open.remove(worktree_id);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+        for worktree_id in next.difference(previous) {
+            let entry = open.entry(*worktree_id).or_insert(0);
+            *entry += 1;
+        }
+    }
+
+    async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
+        if !self.worktree_vcs_enabled {
+            return false;
+        }
+        let active = self.worktree_vcs_active.lock().await;
+        active.get(&worktree_id).copied().unwrap_or(0) > 0
+    }
+
+    #[cfg(test)]
+    async fn is_worktree_vcs_pane_open(&self, worktree_id: WorktreeId) -> bool {
+        if !self.worktree_vcs_enabled {
+            return false;
+        }
+        let open = self.worktree_vcs_open_panes.lock().await;
+        open.get(&worktree_id).copied().unwrap_or(0) > 0
+    }
+
+    fn subscribe_worktree_vcs_events(&self) -> broadcast::Receiver<WorktreeVcsSnapshot> {
+        self.worktree_vcs_events.subscribe()
+    }
+}
+
 pub async fn filter_workspace_worktree_ids(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
     worktree_ids: Vec<WorktreeId>,
 ) -> Vec<WorktreeId> {
@@ -29,7 +196,7 @@ pub async fn filter_workspace_worktree_ids(
         if !seen.insert(worktree_id) {
             continue;
         }
-        let Some(worktree) = load_worktree(state, worktree_id).await else {
+        let Some(worktree) = load_worktree(handle, worktree_id).await else {
             continue;
         };
         if worktree.workspace_id == workspace_id {
@@ -41,7 +208,7 @@ pub async fn filter_workspace_worktree_ids(
 }
 
 pub async fn plan_workspace_vcs_subscription_update(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
     current: WorkspaceVcsDemandState,
     summary_worktree_ids: Vec<WorktreeId>,
@@ -50,9 +217,9 @@ pub async fn plan_workspace_vcs_subscription_update(
     let previous_active = current.active_worktree_ids();
     let previous_details = current.detail_worktree_ids.clone();
     let summary_worktree_ids =
-        filter_workspace_worktree_ids(state, workspace_id, summary_worktree_ids).await;
+        filter_workspace_worktree_ids(handle, workspace_id, summary_worktree_ids).await;
     let detail_worktree_ids =
-        filter_workspace_worktree_ids(state, workspace_id, detail_worktree_ids).await;
+        filter_workspace_worktree_ids(handle, workspace_id, detail_worktree_ids).await;
     let plan = stream_vcs_service::plan_workspace_vcs_subscription_update(
         current,
         summary_worktree_ids,
@@ -60,10 +227,10 @@ pub async fn plan_workspace_vcs_subscription_update(
     );
     let next_active = plan.state.active_worktree_ids();
 
-    state
+    handle
         .update_worktree_vcs_activity(&previous_active, &next_active)
         .await;
-    state
+    handle
         .update_worktree_vcs_open_panes(&previous_details, &plan.state.detail_worktree_ids)
         .await;
 
@@ -71,37 +238,37 @@ pub async fn plan_workspace_vcs_subscription_update(
 }
 
 pub async fn plan_workspace_vcs_refresh(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
     worktree_ids: Vec<WorktreeId>,
     tier: WorktreeVcsStreamTier,
 ) -> WorkspaceVcsRefreshPlan {
-    let worktree_ids = filter_workspace_worktree_ids(state, workspace_id, worktree_ids).await;
+    let worktree_ids = filter_workspace_worktree_ids(handle, workspace_id, worktree_ids).await;
     stream_vcs_service::plan_workspace_vcs_refresh(worktree_ids, tier)
 }
 
 pub async fn release_workspace_vcs_demand(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceVcsStreamHandle,
     demand: &WorkspaceVcsDemandState,
 ) {
     let active = demand.active_worktree_ids();
     if active.is_empty() && demand.detail_worktree_ids.is_empty() {
         return;
     }
-    state
+    handle
         .update_worktree_vcs_activity(&active, &HashSet::new())
         .await;
-    state
+    handle
         .update_worktree_vcs_open_panes(&demand.detail_worktree_ids, &HashSet::new())
         .await;
 }
 
 pub async fn refresh_worktree_vcs_for_worktrees(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceVcsStreamHandle,
     summary_worktree_ids: &[WorktreeId],
     detail_worktree_ids: &[WorktreeId],
 ) {
-    if !state.worktree_vcs_enabled() {
+    if !handle.runtime().worktree_vcs_enabled() {
         return;
     }
     if summary_worktree_ids.is_empty() && detail_worktree_ids.is_empty() {
@@ -109,12 +276,12 @@ pub async fn refresh_worktree_vcs_for_worktrees(
     }
     let mut worktrees: HashMap<WorktreeId, (Worktree, bool)> = HashMap::new();
     for worktree_id in summary_worktree_ids {
-        if let Some(worktree) = load_worktree(state, *worktree_id).await {
+        if let Some(worktree) = load_worktree(handle, *worktree_id).await {
             worktrees.entry(worktree.id).or_insert((worktree, false));
         }
     }
     for worktree_id in detail_worktree_ids {
-        if let Some(worktree) = load_worktree(state, *worktree_id).await {
+        if let Some(worktree) = load_worktree(handle, *worktree_id).await {
             worktrees
                 .entry(worktree.id)
                 .and_modify(|(_, details)| *details = true)
@@ -123,9 +290,8 @@ pub async fn refresh_worktree_vcs_for_worktrees(
     }
 
     for (worktree_id, (worktree, details)) in worktrees {
-        state.ensure_git_status_watcher(worktree.clone()).await;
         let should_refresh = !matches!(
-            state.get_worktree_vcs_snapshot(worktree.id).await,
+            handle.get_worktree_vcs_snapshot(worktree.id).await,
             Some(snapshot)
                 if snapshot.freshness == WorktreeVcsFreshness::Fresh
                     && snapshot.available
@@ -136,10 +302,8 @@ pub async fn refresh_worktree_vcs_for_worktrees(
                         ))
         );
         if should_refresh {
-            if let Err(err) =
-                crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
-                    state, &worktree, true, details,
-                )
+            if let Err(err) = handle
+                .refresh_loaded_worktree_vcs(worktree, true, details)
                 .await
             {
                 tracing::warn!(
@@ -151,18 +315,20 @@ pub async fn refresh_worktree_vcs_for_worktrees(
     }
 }
 
-async fn load_worktree(state: &Arc<DaemonState>, worktree_id: WorktreeId) -> Option<Worktree> {
-    let store = state.store_for_worktree(worktree_id).await.ok()?;
+async fn load_worktree(
+    handle: &WorkspaceVcsStreamHandle,
+    worktree_id: WorktreeId,
+) -> Option<Worktree> {
+    let store = handle.store_for_worktree(worktree_id).await.ok()?;
     store.get_worktree(worktree_id).await.ok().flatten()
 }
 
-impl WorkspacesHandle {
+impl WorkspaceVcsStreamHandle {
     pub async fn require_workspace_vcs_stream_access(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<(), WorkspaceStreamAccessError> {
         let exists = self
-            .state
             .global_store()
             .get_workspace(workspace_id)
             .await
@@ -188,14 +354,46 @@ impl WorkspacesHandle {
     pub async fn get_worktree_vcs_snapshot(
         &self,
         worktree_id: WorktreeId,
-    ) -> Option<ctx_core::models::WorktreeVcsSnapshot> {
-        self.state.get_worktree_vcs_snapshot(worktree_id).await
+    ) -> Option<WorktreeVcsSnapshot> {
+        if !self.runtime().worktree_vcs_enabled() {
+            return None;
+        }
+        if let Some(snapshot) = self
+            .runtime()
+            .get_cached_worktree_vcs_snapshot(worktree_id)
+            .await
+        {
+            return Some(snapshot);
+        }
+        if !self.runtime().is_worktree_vcs_active(worktree_id).await {
+            return None;
+        }
+        let store = self.store_for_worktree(worktree_id).await.ok()?;
+        let mut snapshot = store
+            .get_worktree_vcs_snapshot_cache(worktree_id)
+            .await
+            .ok()
+            .flatten()?;
+        snapshot.compute_state = if snapshot.summary.file_count.is_some() {
+            WorktreeVcsComputeState::Ready
+        } else {
+            WorktreeVcsComputeState::Computing
+        };
+        snapshot.freshness = if snapshot.summary.file_count.is_some() {
+            WorktreeVcsFreshness::Stale
+        } else {
+            WorktreeVcsFreshness::Refreshing
+        };
+        snapshot.touched_files = Default::default();
+        snapshot.touched_files_state = WorktreeVcsTouchedFilesState::NotLoaded;
+        self.runtime()
+            .cache_worktree_vcs_snapshot(snapshot.clone())
+            .await;
+        Some(snapshot)
     }
 
-    pub fn subscribe_worktree_vcs_events(
-        &self,
-    ) -> broadcast::Receiver<ctx_core::models::WorktreeVcsSnapshot> {
-        self.state.subscribe_worktree_vcs_events()
+    pub fn subscribe_worktree_vcs_events(&self) -> broadcast::Receiver<WorktreeVcsSnapshot> {
+        self.runtime().subscribe_worktree_vcs_events()
     }
 
     pub async fn filter_workspace_worktree_ids(
@@ -203,7 +401,7 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
         worktree_ids: Vec<WorktreeId>,
     ) -> Vec<WorktreeId> {
-        filter_workspace_worktree_ids(&self.state, workspace_id, worktree_ids).await
+        filter_workspace_worktree_ids(self, workspace_id, worktree_ids).await
     }
 
     pub async fn refresh_worktree_vcs_for_worktrees(
@@ -211,8 +409,7 @@ impl WorkspacesHandle {
         summary_worktree_ids: &[WorktreeId],
         detail_worktree_ids: &[WorktreeId],
     ) {
-        refresh_worktree_vcs_for_worktrees(&self.state, summary_worktree_ids, detail_worktree_ids)
-            .await;
+        refresh_worktree_vcs_for_worktrees(self, summary_worktree_ids, detail_worktree_ids).await;
     }
 
     pub async fn update_worktree_vcs_activity(
@@ -220,7 +417,7 @@ impl WorkspacesHandle {
         previous: &HashSet<WorktreeId>,
         next: &HashSet<WorktreeId>,
     ) {
-        self.state
+        self.runtime()
             .update_worktree_vcs_activity(previous, next)
             .await;
     }
@@ -230,19 +427,19 @@ impl WorkspacesHandle {
         previous: &HashSet<WorktreeId>,
         next: &HashSet<WorktreeId>,
     ) {
-        self.state
+        self.runtime()
             .update_worktree_vcs_open_panes(previous, next)
             .await;
     }
 
     #[cfg(test)]
     pub async fn is_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) -> bool {
-        self.state.is_worktree_vcs_active(worktree_id).await
+        self.runtime().is_worktree_vcs_active(worktree_id).await
     }
 
     #[cfg(test)]
     pub async fn is_worktree_vcs_pane_open_for_test(&self, worktree_id: WorktreeId) -> bool {
-        self.state.is_worktree_vcs_pane_open(worktree_id).await
+        self.runtime().is_worktree_vcs_pane_open(worktree_id).await
     }
 
     pub async fn plan_workspace_vcs_subscription_update(
@@ -253,7 +450,7 @@ impl WorkspacesHandle {
         detail_worktree_ids: Vec<WorktreeId>,
     ) -> WorkspaceVcsSubscriptionPlan {
         plan_workspace_vcs_subscription_update(
-            &self.state,
+            self,
             workspace_id,
             current,
             summary_worktree_ids,
@@ -268,11 +465,11 @@ impl WorkspacesHandle {
         worktree_ids: Vec<WorktreeId>,
         tier: WorktreeVcsStreamTier,
     ) -> WorkspaceVcsRefreshPlan {
-        plan_workspace_vcs_refresh(&self.state, workspace_id, worktree_ids, tier).await
+        plan_workspace_vcs_refresh(self, workspace_id, worktree_ids, tier).await
     }
 
     pub async fn release_workspace_vcs_demand(&self, demand: &WorkspaceVcsDemandState) {
-        release_workspace_vcs_demand(&self.state, demand).await;
+        release_workspace_vcs_demand(self, demand).await;
     }
 
     pub fn route_workspace_vcs_snapshot(
@@ -294,16 +491,14 @@ impl WorkspacesHandle {
         let mut labels = HashMap::new();
         labels.insert("source".to_string(), "daemon".to_string());
         labels.insert("stream".to_string(), "workspace_vcs".to_string());
-        let metric = ctx_observability::perf_telemetry::PerfMetric {
+        let metric = PerfMetric {
             name: name.to_string(),
-            kind: ctx_observability::perf_telemetry::PerfMetricKind::Counter,
+            kind: PerfMetricKind::Counter,
             unit: "count".to_string(),
             value: value as f64,
             labels,
         };
-        self.state
-            .telemetry
-            .perf_telemetry
+        self.perf_telemetry()
             .record_metric(metric, None, None, None)
             .await;
     }

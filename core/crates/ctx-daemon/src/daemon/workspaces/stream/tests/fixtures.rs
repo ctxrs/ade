@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::daemon::{DaemonHandle, DaemonState, WorkspaceStreamHandle};
+use crate::daemon::{DaemonHandle, DaemonState, WorkspaceStreamHandle, WorkspaceVcsStreamHandle};
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_store::StoreManager;
@@ -23,6 +23,10 @@ pub(super) async fn test_state(root: &Path) -> Arc<DaemonState> {
 
 pub(super) fn workspace_stream_handle(state: &Arc<DaemonState>) -> WorkspaceStreamHandle {
     DaemonHandle::new(Arc::clone(state)).workspace_stream()
+}
+
+pub(super) fn workspace_vcs_stream_handle(state: &Arc<DaemonState>) -> WorkspaceVcsStreamHandle {
+    DaemonHandle::new(Arc::clone(state)).workspace_vcs_stream()
 }
 
 pub(super) async fn create_workspace_session(

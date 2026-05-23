@@ -269,6 +269,9 @@ const {
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
+  scanWorkspaceVcsStreamDaemonImplementationRatchet,
+  scanWorkspaceVcsStreamHandleFieldRatchet,
+  scanWorkspaceVcsStreamRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -4665,6 +4668,188 @@ test("daemon boundary guard scopes workspace VCS live routing ban", () => {
       "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
     ).includes(WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS[0]),
     false,
+  );
+});
+
+test("daemon boundary guard ratchets workspace VCS stream HTTP handles", () => {
+  const broadViolations = scanWorkspaceVcsStreamRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+    contents: `
+      async fn helper(state: WorkspacesHandle) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(broadViolations, ["workspace VCS route uses broad workspace handle"]);
+
+  const revertedRouteViolations = scanWorkspaceVcsStreamRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+    contents: `
+      async fn workspace_vcs_ws(
+        State(state): State<WorkspacesHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(revertedRouteViolations, ["workspace VCS route uses broad workspace handle"]);
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+      contents: `
+        async fn helper(state: WorkspacesHandle) {}
+      `,
+      workspaceVcsStreamCapability: false,
+    }),
+    [],
+  );
+
+  const extractorViolations = scanWorkspaceVcsStreamRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs",
+    contents: `
+      async fn handler(
+        State(state): State<WorkspaceVcsStreamHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(extractorViolations, [
+    "workspace VCS route extracts WorkspaceVcsStreamHandle outside route module",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+      contents: `
+        async fn workspace_vcs_ws(
+          State(state): State<WorkspaceVcsStreamHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs",
+      contents: `
+        async fn handler(runtime: WorkspaceVcsRuntime) {
+          let _ = runtime.summary_worktree_ids.len();
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects broad workspace VCS stream handle/runtime fields", () => {
+  const violations = scanWorkspaceVcsStreamHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceVcsStreamHandle {
+        state: Arc<DaemonState>,
+        daemon: DaemonHandle,
+        workspaces: WorkspacesHandle,
+      }
+
+      pub(in crate::daemon) struct WorkspaceVcsStreamHandleParts {
+        workspace_runtime: WorkspaceRuntime,
+      }
+
+      pub struct WorkspaceVcsStreamRuntime {
+        state: DaemonState,
+        workspace_runtime: WorkspaceRuntime,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace VCS stream capability stores broad handle or daemon state"));
+  assert(violations.includes("workspace VCS stream runtime stores broad handle or daemon state"));
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        pub struct WorkspaceVcsStreamHandle {
+          store: Store,
+          runtime: Arc<WorkspaceVcsStreamRuntime>,
+        }
+
+        pub struct WorkspaceVcsStreamRuntime {
+          worktree_vcs_enabled: bool,
+          snapshots: Arc<WorkspaceVcsSnapshotCache>,
+        }
+      `,
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        pub struct WorkspaceVcsRuntime {
+          workspace_runtime: WorkspaceRuntime,
+          state: Arc<DaemonState>,
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("daemon boundary guard keeps workspace VCS stream route methods in stream module", () => {
+  const outsideViolations = scanWorkspaceVcsStreamDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
+    contents: `
+      impl WorkspaceVcsStreamHandle {
+        pub(in crate::daemon) fn new() -> Self {}
+
+        pub async fn release_workspace_vcs_demand(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(outsideViolations, [
+    "workspace VCS stream route method implemented outside VCS stream module",
+  ]);
+
+  const broadViolations = scanWorkspaceVcsStreamDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn require_workspace_vcs_stream_access(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(broadViolations, [
+    "workspace VCS stream route method remains on broad workspace handle",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamDaemonImplementationRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs",
+      contents: `
+        impl WorkspaceVcsStreamHandle {
+          pub async fn require_workspace_vcs_stream_access(&self) {}
+          pub fn plan_workspace_vcs_lag_reseed(&self) {}
+        }
+      `,
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    scanWorkspaceVcsStreamDaemonImplementationRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs",
+      contents: `
+        impl WorkspacesHandle {
+          pub async fn require_workspace_vcs_stream_access(&self) {}
+        }
+      `,
+      workspaceVcsStreamCapability: false,
+    }),
+    [],
   );
 });
 

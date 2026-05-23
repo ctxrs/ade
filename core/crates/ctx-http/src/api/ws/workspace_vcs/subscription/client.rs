@@ -4,11 +4,11 @@ use super::runtime::WorkspaceVcsRuntime;
 use super::snapshots::seed_current_vcs_snapshots;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{WorktreeVcsStreamClientMessage, WorktreeVcsStreamMessage};
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspaceVcsStreamHandle;
 use std::sync::Arc;
 
 pub(in crate::api::ws::workspace_vcs) async fn handle_workspace_vcs_client_message(
-    state: &WorkspacesHandle,
+    state: &WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
     pending: &Arc<VcsPendingBuffer>,
     metrics: &Arc<VcsStreamMetrics>,
@@ -46,7 +46,7 @@ pub(in crate::api::ws::workspace_vcs) async fn handle_workspace_vcs_client_messa
 }
 
 async fn replace_workspace_vcs_subscription(
-    state: &WorkspacesHandle,
+    state: &WorkspaceVcsStreamHandle,
     workspace_id: WorkspaceId,
     pending: &Arc<VcsPendingBuffer>,
     metrics: &Arc<VcsStreamMetrics>,

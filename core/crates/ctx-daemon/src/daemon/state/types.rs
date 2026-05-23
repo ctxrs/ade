@@ -44,12 +44,13 @@ pub struct WorkspaceRuntime {
     pub(crate) git_status_snapshots:
         Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
     pub(crate) worktree_vcs_snapshots:
-        Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>,
-    pub(crate) worktree_vcs_active: Mutex<HashMap<WorktreeId, usize>>,
-    pub(crate) worktree_vcs_refresh_locks: Mutex<HashMap<WorktreeId, std::sync::Weak<Mutex<()>>>>,
-    pub(crate) worktree_vcs_open_panes: Mutex<HashMap<WorktreeId, usize>>,
-    pub(crate) worktree_vcs_summary_gen: Mutex<HashMap<WorktreeId, u64>>,
-    pub(crate) worktree_vcs_runtime: Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>,
+        Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>>,
+    pub(crate) worktree_vcs_active: Arc<Mutex<HashMap<WorktreeId, usize>>>,
+    pub(crate) worktree_vcs_refresh_locks:
+        Arc<Mutex<HashMap<WorktreeId, std::sync::Weak<Mutex<()>>>>>,
+    pub(crate) worktree_vcs_open_panes: Arc<Mutex<HashMap<WorktreeId, usize>>>,
+    pub(crate) worktree_vcs_summary_gen: Arc<Mutex<HashMap<WorktreeId, u64>>>,
+    pub(crate) worktree_vcs_runtime: Arc<Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>>,
     pub(crate) worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime,
     pub(crate) worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
     pub(crate) git_status_watchers: Mutex<HashSet<WorktreeId>>,

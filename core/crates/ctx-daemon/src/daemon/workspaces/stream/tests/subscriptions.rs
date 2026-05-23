@@ -1,6 +1,6 @@
 use super::fixtures::{
     create_workspace_session, create_workspace_worktree, create_worktree_for_workspace, session_id,
-    test_state, workspace_stream_handle,
+    test_state, workspace_stream_handle, workspace_vcs_stream_handle,
 };
 use super::*;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +18,10 @@ use ctx_core::models::{
     WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotSessionIntent, WorkspaceActiveSnapshotSessionReplay,
     WorkspaceActiveSnapshotSessionSubscription, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
-    WorktreeBootstrapNotice, WorktreeBootstrapStatus, WorktreeVcsStreamTier,
+    Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus, WorktreeVcsBaseResolution,
+    WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsGitStatusSummary,
+    WorktreeVcsSnapshot, WorktreeVcsStreamTier, WorktreeVcsSummary, WorktreeVcsTouchedFiles,
+    WorktreeVcsTouchedFilesState,
 };
 use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
@@ -26,6 +29,37 @@ use ctx_workspace_active_snapshot::{
 };
 use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 use std::sync::Arc;
+
+fn test_vcs_snapshot(
+    worktree_id: WorktreeId,
+    freshness: WorktreeVcsFreshness,
+    touched_files_state: WorktreeVcsTouchedFilesState,
+) -> WorktreeVcsSnapshot {
+    WorktreeVcsSnapshot {
+        worktree_id,
+        rev: 1,
+        emitted_at_ms: 1,
+        base_commit_sha: "base".to_string(),
+        head_commit_sha: "head".to_string(),
+        target_branch: Some("origin/main".to_string()),
+        target_branch_commit_sha: Some("target".to_string()),
+        base_resolution: WorktreeVcsBaseResolution::default(),
+        compute_state: WorktreeVcsComputeState::Ready,
+        summary: WorktreeVcsSummary {
+            file_count: Some(1),
+            line_additions: Some(1),
+            line_deletions: Some(0),
+            line_count: Some(1),
+        },
+        git_status: WorktreeVcsGitStatusSummary::default(),
+        touched_files: WorktreeVcsTouchedFiles::default(),
+        touched_files_state,
+        freshness,
+        available: true,
+        unavailable_reason: None,
+        schema_version: 1,
+    }
+}
 
 fn task(workspace_id: WorkspaceId, primary_session_id: Option<SessionId>) -> Task {
     Task {
@@ -1635,8 +1669,9 @@ async fn worktree_vcs_filter_removes_cross_workspace_duplicate_and_missing_ids()
     let worktree_a2 = create_worktree_for_workspace(&state, root.path(), workspace_a).await;
     let (_workspace_b, worktree_b) = create_workspace_worktree(&state, root.path()).await;
 
+    let handle = workspace_vcs_stream_handle(&state);
     let filtered = filter_workspace_worktree_ids(
-        &state,
+        &handle,
         workspace_a,
         vec![
             worktree_b.id,
@@ -1657,13 +1692,13 @@ async fn worktree_vcs_filter_removes_cross_workspace_duplicate_and_missing_ids()
 async fn workspace_vcs_subscription_plan_filters_dedupes_and_updates_demand() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
-    let handle = DaemonHandle::new(state.clone()).workspaces();
+    let handle = workspace_vcs_stream_handle(&state);
     let (workspace_a, worktree_a1) = create_workspace_worktree(&state, root.path()).await;
     let worktree_a2 = create_worktree_for_workspace(&state, root.path(), workspace_a).await;
     let (_workspace_b, worktree_b) = create_workspace_worktree(&state, root.path()).await;
 
     let plan = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_a,
         WorkspaceVcsDemandState::default(),
         vec![
@@ -1724,8 +1759,9 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     let workspace_id = create_workspace_worktree(&state, root.path()).await.0;
     let worktree = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
 
+    let handle = workspace_vcs_stream_handle(&state);
     let initial = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_id,
         WorkspaceVcsDemandState::default(),
         vec![worktree.id],
@@ -1733,7 +1769,7 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     )
     .await;
     let repeat = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_id,
         initial.state.clone(),
         vec![worktree.id],
@@ -1748,7 +1784,7 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     assert!(repeat.detail_refresh_worktree_ids.is_empty());
 
     let upgrade = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_id,
         repeat.state.clone(),
         vec![worktree.id],
@@ -1769,7 +1805,7 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     assert_eq!(upgrade.detail_refresh_worktree_ids, vec![worktree.id]);
 
     let demotion = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_id,
         upgrade.state.clone(),
         vec![worktree.id],
@@ -1844,8 +1880,9 @@ async fn workspace_vcs_refresh_plan_filters_workspace_and_respects_tier() {
     let worktree_a2 = create_worktree_for_workspace(&state, root.path(), workspace_a).await;
     let (_workspace_b, worktree_b) = create_workspace_worktree(&state, root.path()).await;
 
+    let handle = workspace_vcs_stream_handle(&state);
     let summary = plan_workspace_vcs_refresh(
-        &state,
+        &handle,
         workspace_a,
         vec![
             worktree_b.id,
@@ -1862,7 +1899,7 @@ async fn workspace_vcs_refresh_plan_filters_workspace_and_respects_tier() {
     assert!(summary.detail_refresh_worktree_ids.is_empty());
 
     let details = plan_workspace_vcs_refresh(
-        &state,
+        &handle,
         workspace_a,
         vec![worktree_b.id, worktree_a2.id],
         WorktreeVcsStreamTier::Details,
@@ -1873,15 +1910,98 @@ async fn workspace_vcs_refresh_plan_filters_workspace_and_respects_tier() {
 }
 
 #[tokio::test]
+async fn workspace_vcs_refresh_suppresses_fresh_snapshots_and_invokes_effect_for_stale_details() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let (workspace_id, fresh_summary) = create_workspace_worktree(&state, root.path()).await;
+    let fresh_detail = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
+    let stale_detail = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
+    let (_foreign_workspace, foreign) = create_workspace_worktree(&state, root.path()).await;
+
+    let calls = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let refresh_effect = Arc::new({
+        let calls = Arc::clone(&calls);
+        move |worktree: Worktree, summary: bool, details: bool| {
+            let calls = Arc::clone(&calls);
+            Box::pin(async move {
+                calls.lock().await.push((worktree.id, summary, details));
+                Ok(())
+            }) as crate::daemon::handle::WorkspaceVcsStreamRefreshFuture
+        }
+    }) as crate::daemon::handle::WorkspaceVcsStreamRefreshEffect;
+    let handle = DaemonHandle::new(Arc::clone(&state))
+        .workspace_vcs_stream_with_refresh_effect(refresh_effect);
+
+    handle
+        .runtime()
+        .cache_worktree_vcs_snapshot_for_test(test_vcs_snapshot(
+            fresh_summary.id,
+            WorktreeVcsFreshness::Fresh,
+            WorktreeVcsTouchedFilesState::NotLoaded,
+        ))
+        .await;
+    handle
+        .runtime()
+        .cache_worktree_vcs_snapshot_for_test(test_vcs_snapshot(
+            fresh_detail.id,
+            WorktreeVcsFreshness::Fresh,
+            WorktreeVcsTouchedFilesState::Ready,
+        ))
+        .await;
+    handle
+        .runtime()
+        .cache_worktree_vcs_snapshot_for_test(test_vcs_snapshot(
+            stale_detail.id,
+            WorktreeVcsFreshness::Stale,
+            WorktreeVcsTouchedFilesState::NotLoaded,
+        ))
+        .await;
+
+    let summary_plan = plan_workspace_vcs_refresh(
+        &handle,
+        workspace_id,
+        vec![foreign.id, fresh_summary.id, fresh_summary.id],
+        WorktreeVcsStreamTier::Summary,
+    )
+    .await;
+    refresh_worktree_vcs_for_worktrees(
+        &handle,
+        &summary_plan.summary_refresh_worktree_ids,
+        &summary_plan.detail_refresh_worktree_ids,
+    )
+    .await;
+
+    let detail_plan = plan_workspace_vcs_refresh(
+        &handle,
+        workspace_id,
+        vec![fresh_detail.id, stale_detail.id],
+        WorktreeVcsStreamTier::Details,
+    )
+    .await;
+    refresh_worktree_vcs_for_worktrees(
+        &handle,
+        &detail_plan.summary_refresh_worktree_ids,
+        &detail_plan.detail_refresh_worktree_ids,
+    )
+    .await;
+
+    assert_eq!(
+        *calls.lock().await,
+        vec![(stale_detail.id, true, true)],
+        "refresh effect should only receive loaded in-workspace worktrees that need refresh",
+    );
+}
+
+#[tokio::test]
 async fn workspace_vcs_release_clears_final_demand_state() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
-    let handle = DaemonHandle::new(state.clone()).workspaces();
+    let handle = workspace_vcs_stream_handle(&state);
     let workspace_id = create_workspace_worktree(&state, root.path()).await.0;
     let summary = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
     let detail = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
     let plan = plan_workspace_vcs_subscription_update(
-        &state,
+        &handle,
         workspace_id,
         WorkspaceVcsDemandState::default(),
         vec![summary.id],
@@ -1892,7 +2012,7 @@ async fn workspace_vcs_release_clears_final_demand_state() {
     assert!(handle.is_worktree_vcs_active_for_test(detail.id).await);
     assert!(handle.is_worktree_vcs_pane_open_for_test(detail.id).await);
 
-    release_workspace_vcs_demand(&state, &plan.state).await;
+    release_workspace_vcs_demand(&handle, &plan.state).await;
 
     assert!(!handle.is_worktree_vcs_active_for_test(summary.id).await);
     assert!(!handle.is_worktree_vcs_active_for_test(detail.id).await);

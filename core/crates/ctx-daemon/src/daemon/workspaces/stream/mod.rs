@@ -58,7 +58,7 @@ pub use vcs::{
     plan_workspace_vcs_subscription_update, refresh_worktree_vcs_for_worktrees,
     release_workspace_vcs_demand, route_workspace_vcs_snapshot, WorkspaceVcsDemandState,
     WorkspaceVcsLagReseedPlan, WorkspaceVcsRefreshPlan, WorkspaceVcsSnapshotRoute,
-    WorkspaceVcsSnapshotSeed, WorkspaceVcsSubscriptionPlan,
+    WorkspaceVcsSnapshotSeed, WorkspaceVcsStreamRuntime, WorkspaceVcsSubscriptionPlan,
 };
 
 #[cfg(test)]

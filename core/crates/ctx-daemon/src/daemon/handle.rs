@@ -1007,6 +1007,50 @@ impl DaemonHandle {
         })
     }
 
+    pub fn workspace_vcs_stream(&self) -> WorkspaceVcsStreamHandle {
+        let refresh_worktree_vcs = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, summary: bool, touched_files: bool| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state.ensure_git_status_watcher(worktree.clone()).await;
+                    crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
+                        &state,
+                        &worktree,
+                        summary,
+                        touched_files,
+                    )
+                    .await
+                }) as WorkspaceVcsStreamRefreshFuture
+            }
+        });
+        WorkspaceVcsStreamHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime::from_workspace_runtime(
+                &self.state.workspaces,
+            ),
+            self.state.telemetry.perf_telemetry.clone(),
+            refresh_worktree_vcs,
+        )
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn workspace_vcs_stream_with_refresh_effect(
+        &self,
+        refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
+    ) -> WorkspaceVcsStreamHandle {
+        WorkspaceVcsStreamHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime::from_workspace_runtime(
+                &self.state.workspaces,
+            ),
+            self.state.telemetry.perf_telemetry.clone(),
+            refresh_worktree_vcs,
+        )
+    }
+
     pub fn providers(&self) -> ProvidersHandle {
         ProvidersHandle::new(Arc::clone(&self.state))
     }
@@ -2169,6 +2213,18 @@ impl ProtectedWorkspaceStoreLookup {
             }
             Err(err) => Err(err),
         }
+    }
+
+    pub(in crate::daemon) async fn store_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Store> {
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_worktree(worktree_id)
+            .await?
+            .with_context(|| format!("workspace missing for worktree {}", worktree_id.0))?;
+        self.store_for_workspace(workspace_id).await
     }
 
     async fn protected_workspace_store_ids(&self) -> HashSet<WorkspaceId> {
@@ -4585,6 +4641,68 @@ impl WorkspaceStreamHandle {
         workspace_id: WorkspaceId,
     ) {
         (self.effects.activate_workspace_merge_queue)(workspace_id).await
+    }
+}
+
+pub(in crate::daemon) type WorkspaceVcsStreamRefreshFuture =
+    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+pub(in crate::daemon) type WorkspaceVcsStreamRefreshEffect =
+    Arc<dyn Fn(Worktree, bool, bool) -> WorkspaceVcsStreamRefreshFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct WorkspaceVcsStreamHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    runtime: crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime,
+    perf_telemetry: PerfTelemetry,
+    refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
+}
+
+impl WorkspaceVcsStreamHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        runtime: crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime,
+        perf_telemetry: PerfTelemetry,
+        refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            runtime,
+            perf_telemetry,
+            refresh_worktree_vcs,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn store_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores.store_for_worktree(worktree_id).await
+    }
+
+    pub(in crate::daemon) fn runtime(
+        &self,
+    ) -> &crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime {
+        &self.runtime
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
+    }
+
+    pub(in crate::daemon) async fn refresh_loaded_worktree_vcs(
+        &self,
+        worktree: Worktree,
+        summary: bool,
+        touched_files: bool,
+    ) -> anyhow::Result<()> {
+        (self.refresh_worktree_vcs)(worktree, summary, touched_files).await
     }
 }
 
