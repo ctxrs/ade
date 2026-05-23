@@ -5,7 +5,7 @@ use ctx_update_service::route_contract::{
     DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,
 };
 
-use crate::daemon::{CoreHandle, UpdateReleaseHandle};
+use crate::daemon::{UpdateActivityHandle, UpdateReleaseHandle};
 
 fn normalize_channel(raw: Option<&str>) -> Result<String, UpdateRouteError> {
     ctx_update_service::normalize_release_channel(raw.unwrap_or("stable"))
@@ -185,18 +185,19 @@ impl UpdateReleaseHandle {
     }
 }
 
-impl CoreHandle {
+impl UpdateActivityHandle {
     pub async fn update_activity_snapshot(
         &self,
     ) -> Result<UpdateActivitySnapshot, UpdateRouteError> {
-        let activity = crate::daemon::daemon_turn_activity_summary(&self.state)
-            .await
-            .map_err(UpdateRouteError::internal)?;
+        let activity = crate::daemon::activity::daemon_turn_activity_summary_parts(
+            self.global_store(),
+            self.stores(),
+            self.update_drain(),
+        )
+        .await
+        .map_err(UpdateRouteError::internal)?;
         let managed_daemon_auto_update =
-            ctx_update_service::managed_daemon_auto_update_status_snapshot(
-                &self.state.core.data_root,
-            )
-            .await;
+            ctx_update_service::managed_daemon_auto_update_status_snapshot(self.data_root()).await;
         Ok(UpdateActivitySnapshot {
             activity,
             managed_daemon_auto_update,

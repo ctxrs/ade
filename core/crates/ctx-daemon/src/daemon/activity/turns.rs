@@ -1,12 +1,28 @@
-use super::collect::collect_turns_by_statuses;
+use super::collect::collect_turns_by_statuses_parts;
 use super::types::{active_turn_record, DaemonTurnActivitySummary};
 use super::*;
+use ctx_store::{Store, StoreManager};
+use ctx_update_service::UpdateDrainCoordinator;
 
 pub async fn daemon_turn_activity_summary(
     state: &Arc<DaemonState>,
 ) -> Result<DaemonTurnActivitySummary> {
-    let (workspace_count, turns) = collect_turns_by_statuses(
-        state,
+    daemon_turn_activity_summary_parts(
+        state.global_store(),
+        &state.core.stores,
+        state.core.update_drain.as_ref(),
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn daemon_turn_activity_summary_parts(
+    global_store: &Store,
+    stores: &StoreManager,
+    update_drain: &UpdateDrainCoordinator,
+) -> Result<DaemonTurnActivitySummary> {
+    let (workspace_count, turns) = collect_turns_by_statuses_parts(
+        global_store,
+        stores,
         &[
             SessionTurnStatus::Queued,
             SessionTurnStatus::Starting,
@@ -39,6 +55,6 @@ pub async fn daemon_turn_activity_summary(
         running_turn_count,
         scanned_workspace_count: workspace_count,
         turns: records,
-        update_drain: state.core.update_drain.snapshot().await,
+        update_drain: update_drain.snapshot().await,
     })
 }

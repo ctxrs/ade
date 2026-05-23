@@ -23,6 +23,24 @@ async fn post_json(
     (status, body)
 }
 
+async fn get_json(app: &axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = if body.is_empty() {
+        json!(null)
+    } else {
+        serde_json::from_slice(&body).unwrap()
+    };
+    (status, body)
+}
+
 #[tokio::test]
 async fn update_check_rejects_path_traversal_channel() {
     let data_dir = tempfile::tempdir().unwrap();
@@ -38,6 +56,38 @@ async fn update_check_rejects_path_traversal_channel() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn update_activity_reports_idle_and_update_drain_state() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
+
+    let (status, body) = post_json(
+        &app,
+        "/api/updates/drain/begin",
+        json!({"confirm": true, "reason": "test_update", "owner": "unit_test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["acquired"], json!(true));
+
+    let (status, body) = get_json(&app, "/api/updates/activity").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["activity"]["idle"], json!(true));
+    assert_eq!(
+        body["activity"]["update_drain"]["reason"],
+        json!("test_update")
+    );
+    assert_eq!(
+        body["activity"]["update_drain"]["owner"],
+        json!("unit_test")
+    );
+    assert!(body["activity"]["update_drain"]["acquired_at_ms"].is_number());
+    assert!(body.get("managed_daemon_auto_update").is_none());
 }
 
 #[tokio::test]

@@ -1,16 +1,23 @@
 use super::*;
+use ctx_store::{Store, StoreManager};
 
 pub(super) async fn collect_turns_by_statuses(
     state: &Arc<DaemonState>,
     statuses: &[SessionTurnStatus],
 ) -> Result<(usize, Vec<(WorkspaceId, SessionTurn)>)> {
-    let workspaces = state.global_store().list_workspaces().await?;
+    collect_turns_by_statuses_parts(state.global_store(), &state.core.stores, statuses).await
+}
+
+pub(in crate::daemon) async fn collect_turns_by_statuses_parts(
+    global_store: &Store,
+    stores: &StoreManager,
+    statuses: &[SessionTurnStatus],
+) -> Result<(usize, Vec<(WorkspaceId, SessionTurn)>)> {
+    let workspaces = global_store.list_workspaces().await?;
     let workspace_count = workspaces.len();
     let mut matching_turns = Vec::new();
     for workspace in workspaces {
-        let store = state
-            .core
-            .stores
+        let store = stores
             .workspace_transient(workspace.id)
             .await
             .with_context(|| {

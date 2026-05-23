@@ -10,8 +10,9 @@ use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
-use ctx_store::Store;
+use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::terminals::TerminalManager;
+use ctx_update_service::UpdateDrainCoordinator;
 use tokio::sync::Mutex;
 
 use super::{
@@ -88,6 +89,15 @@ impl DaemonHandle {
 
     pub fn update_release(&self) -> UpdateReleaseHandle {
         UpdateReleaseHandle::new(self.state.core.data_root.clone())
+    }
+
+    pub fn update_activity(&self) -> UpdateActivityHandle {
+        UpdateActivityHandle::new(
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.core.update_drain),
+            self.state.core.data_root.clone(),
+        )
     }
 
     pub fn settings(&self) -> SettingsHandle {
@@ -468,6 +478,46 @@ pub struct UpdateReleaseHandle {
 impl UpdateReleaseHandle {
     pub(in crate::daemon) fn new(data_root: PathBuf) -> Self {
         Self { data_root }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+}
+
+#[derive(Clone)]
+pub struct UpdateActivityHandle {
+    global_store: Store,
+    stores: StoreManager,
+    update_drain: Arc<UpdateDrainCoordinator>,
+    data_root: PathBuf,
+}
+
+impl UpdateActivityHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        stores: StoreManager,
+        update_drain: Arc<UpdateDrainCoordinator>,
+        data_root: PathBuf,
+    ) -> Self {
+        Self {
+            global_store,
+            stores,
+            update_drain,
+            data_root,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub(in crate::daemon) fn update_drain(&self) -> &UpdateDrainCoordinator {
+        self.update_drain.as_ref()
     }
 
     pub(in crate::daemon) fn data_root(&self) -> &Path {

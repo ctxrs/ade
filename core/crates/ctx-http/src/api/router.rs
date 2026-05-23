@@ -9,7 +9,8 @@ use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle,
     ExecutionHandle, HealthHandle, LogsHandle, MobileStoreHandle, OrgPolicyHandle, ProvidersHandle,
     RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
-    TransportHandle, UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    TransportHandle, UpdateActivityHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
+    WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -82,6 +83,7 @@ pub struct RouteHandles {
     pub(in crate::api) org_policy: OrgPolicyHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
+    pub(in crate::api) update_activity: UpdateActivityHandle,
     pub(in crate::api) settings: SettingsHandle,
     pub(in crate::api) mobile_store: MobileStoreHandle,
     pub(in crate::api) sessions: SessionsHandle,
@@ -107,6 +109,7 @@ impl RouteHandles {
             org_policy: handle.org_policy(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
+            update_activity: handle.update_activity(),
             settings: handle.settings(),
             mobile_store: handle.mobile_store(),
             sessions: handle.sessions(),
@@ -137,6 +140,7 @@ impl_route_state_extractors! {
     OrgPolicyHandle, org_policy;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;
+    UpdateActivityHandle, update_activity;
     SettingsHandle, settings;
     MobileStoreHandle, mobile_store;
     SessionsHandle, sessions;
