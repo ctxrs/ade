@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(in crate::api) async fn archive_task(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskLifecycleHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ArchiveTaskRouteResponse>, StatusCode> {
     let outcome = tasks

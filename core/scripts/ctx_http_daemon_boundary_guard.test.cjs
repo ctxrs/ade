@@ -208,6 +208,9 @@ const {
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
+  scanTaskLifecycleDaemonImplementationRatchet,
+  scanTaskLifecycleHandleFieldRatchet,
+  scanTaskLifecycleHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -1114,6 +1117,57 @@ test("appstate guard rejects task admission broad daemon seams", () => {
   assert.deepEqual(fieldViolations, [
     "task admission capability stores broad handle or daemon state",
     "task admission capability stores broad handle or daemon state",
+  ]);
+});
+
+test("appstate guard rejects task lifecycle broad route handles", () => {
+  const violations = scanTaskLifecycleHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/tasks/handlers/archive.rs",
+    contents: `
+      async fn archive_task(
+        State(tasks): State<TasksHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, ["task lifecycle route extracts broad tasks handle"]);
+});
+
+test("appstate guard rejects task lifecycle broad daemon seams", () => {
+  const daemonViolations = scanTaskLifecycleDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/lifecycle.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, TasksHandle, SessionsHandle, ProvidersHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+      impl TasksHandle {
+        fn archive(handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "task lifecycle daemon implementation uses broad daemon handle",
+    "task lifecycle daemon implementation uses broad task/session/provider/workspace handle",
+    "task lifecycle daemon implementation accepts daemon state",
+  ]));
+
+  const fieldViolations = scanTaskLifecycleHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct TaskLifecycleHandle {
+        tasks: TasksHandle,
+      }
+      fn task_creation(&self) -> TaskCreationHandle {
+        let delete_loaded_task_with_cleanup = Arc::new(move || {
+          let tasks = TasksHandle::new(Arc::clone(&state));
+        });
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "task lifecycle capability stores broad handle or daemon state",
+    "task creation cleanup reconstructs broad tasks handle",
   ]);
 });
 

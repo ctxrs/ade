@@ -79,7 +79,7 @@ pub use handle::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
-    RequestBaseHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
+    RequestBaseHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
     TaskSessionAdmissionHandle, TasksHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
     WorkspacesHandle,

@@ -102,7 +102,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             },
         ));
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");
@@ -122,7 +122,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     )
     .await;
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(unarchived_task) = unarchive_task(tasks, Path(task.id.0.to_string()))
         .await
         .unwrap_or_else(|status| {

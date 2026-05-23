@@ -38,7 +38,7 @@ async fn delete_task_cleanup_errors_preserve_worktree_row_and_index() {
         .await
         .expect("insert worktree");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("delete task");

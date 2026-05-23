@@ -56,7 +56,7 @@ async fn delete_task_cleans_up_archived_subagent_worktree() {
         .await
         .expect("archive child session"));
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("delete task");

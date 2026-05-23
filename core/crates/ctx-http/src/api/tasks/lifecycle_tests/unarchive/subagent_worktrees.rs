@@ -78,11 +78,11 @@ async fn unarchive_task_does_not_recreate_archived_subagent_worktrees() {
         "test setup should remove the archived child managed worktree root"
     );
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(unarchived) = unarchive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("unarchive task");

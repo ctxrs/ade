@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn delete_task(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskLifecycleHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     tasks

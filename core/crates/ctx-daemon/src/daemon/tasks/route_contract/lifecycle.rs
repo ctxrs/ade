@@ -2,11 +2,8 @@ use ctx_route_contracts::tasks::UpdateTaskTitleRouteRequest;
 
 use crate::daemon::TasksHandle;
 
-use super::common::{
-    classified_internal_route_error, task_route_error_from_task_lifecycle, TaskRouteError,
-    TaskRouteParams,
-};
-use super::responses::{ArchiveTaskRouteResponse, SessionRouteResponse, TaskRouteResponse};
+use super::common::{classified_internal_route_error, TaskRouteError, TaskRouteParams};
+use super::responses::{SessionRouteResponse, TaskRouteResponse};
 
 impl TasksHandle {
     pub async fn list_task_sessions_for_route(
@@ -67,37 +64,5 @@ impl TasksHandle {
             })?
             .ok_or_else(|| TaskRouteError::not_found("task not found"))?;
         Ok(TaskRouteResponse::from(task))
-    }
-
-    pub async fn archive_task_for_route(
-        &self,
-        params: TaskRouteParams,
-    ) -> Result<ArchiveTaskRouteResponse, TaskRouteError> {
-        let task_id = params.parse_task_id()?;
-        self.archive_task(task_id)
-            .await
-            .map(ArchiveTaskRouteResponse::from)
-            .map_err(task_route_error_from_task_lifecycle)
-    }
-
-    pub async fn unarchive_task_for_route(
-        &self,
-        params: TaskRouteParams,
-    ) -> Result<TaskRouteResponse, TaskRouteError> {
-        let task_id = params.parse_task_id()?;
-        self.unarchive_task(task_id)
-            .await
-            .map(TaskRouteResponse::from)
-            .map_err(task_route_error_from_task_lifecycle)
-    }
-
-    pub async fn delete_task_for_route(
-        &self,
-        params: TaskRouteParams,
-    ) -> Result<(), TaskRouteError> {
-        let task_id = params.parse_task_id()?;
-        self.delete_task(task_id)
-            .await
-            .map_err(task_route_error_from_task_lifecycle)
     }
 }

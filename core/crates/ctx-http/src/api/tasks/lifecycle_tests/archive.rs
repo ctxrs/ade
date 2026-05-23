@@ -48,7 +48,7 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");
@@ -106,7 +106,7 @@ async fn archive_task_reports_cleanup_failure_when_branch_reclaim_fails() {
         .to_string();
     let _branch_lock = create_branch_lock(&repo_root, &branch);
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(response) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");

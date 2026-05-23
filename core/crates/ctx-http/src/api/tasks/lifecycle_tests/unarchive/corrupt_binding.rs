@@ -57,12 +57,12 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = unarchive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect_err("corrupt binding snapshot should fail closed");

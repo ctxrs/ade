@@ -33,7 +33,7 @@ async fn delete_task_preserves_worktree_for_archived_sibling_session_reference()
         .await
         .expect("archive sibling task");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = delete_task(tasks, Path(active_task.id.0.to_string()))
         .await
         .expect("delete active task");

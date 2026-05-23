@@ -19,7 +19,7 @@ async fn delete_task_removes_standalone_managed_worktree_when_workspace_root_is_
         .await
         .expect("remove source workspace root");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("delete task");

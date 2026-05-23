@@ -25,6 +25,7 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
 
 async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task_id: TaskId) {
     let tasks = task_api_task_state(state);
+    let lifecycle = task_api_lifecycle_state(state);
 
     let task_sessions_status =
         list_task_sessions(tasks.clone(), Path(missing_task_id.0.to_string()))
@@ -54,12 +55,12 @@ async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task
     assert_eq!(title_status, StatusCode::NOT_FOUND);
     assert_eq!(title_body.error, "task not found");
 
-    let archive_status = archive_task(tasks.clone(), Path(missing_task_id.0.to_string()))
+    let archive_status = archive_task(lifecycle.clone(), Path(missing_task_id.0.to_string()))
         .await
         .expect_err("missing task archive should fail");
     assert_eq!(archive_status, StatusCode::NOT_FOUND);
 
-    let unarchive_status = unarchive_task(tasks, Path(missing_task_id.0.to_string()))
+    let unarchive_status = unarchive_task(lifecycle, Path(missing_task_id.0.to_string()))
         .await
         .expect_err("missing task unarchive should fail");
     assert_eq!(unarchive_status, StatusCode::NOT_FOUND);

@@ -4,9 +4,9 @@ use ctx_store::Store;
 use ctx_task_service::lifecycle::{self, LifecycleCleanupTarget};
 use ctx_worktree_vcs_service::ensure_worktree_attached;
 
-use crate::daemon::handle::TasksHandle;
-use crate::daemon::workspaces::{self, BranchCleanupErrorMode, TaskWorktreeCleanupTarget};
-use crate::daemon::DaemonState;
+use crate::daemon::handle::TaskLifecycleHandle;
+use crate::daemon::workspaces::{BranchCleanupErrorMode, TaskWorktreeCleanupTarget};
+use crate::daemon::WorkspaceStoreAccessError;
 
 pub use ctx_task_service::lifecycle::TaskLifecycleError;
 
@@ -15,7 +15,47 @@ pub struct ArchiveTaskOutcome {
     pub cleanup_failed: bool,
 }
 
-impl TasksHandle {
+impl TaskLifecycleHandle {
+    async fn task_store_or_none(&self, task_id: TaskId) -> anyhow::Result<Option<Store>> {
+        let Some(workspace_id) = self
+            .global_store()
+            .get_workspace_id_for_task(task_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        match self.existing_workspace_store(workspace_id).await {
+            Ok(store) => Ok(Some(store)),
+            Err(WorkspaceStoreAccessError::NotFound) => Ok(None),
+            Err(WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
+        }
+    }
+
+    async fn load_task_context(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<(Store, Task, Workspace)>, TaskLifecycleError> {
+        let Some(store) = self.task_store_or_none(task_id).await? else {
+            return Ok(None);
+        };
+        let Some(task) = store
+            .get_task(task_id)
+            .await
+            .map_err(TaskLifecycleError::Internal)?
+        else {
+            return Ok(None);
+        };
+        let workspace = self
+            .global_store()
+            .get_workspace(task.workspace_id)
+            .await
+            .map_err(TaskLifecycleError::Internal)?;
+        let Some(workspace) = workspace else {
+            return Ok(None);
+        };
+        Ok(Some((store, task, workspace)))
+    }
+
     pub async fn archive_task(
         &self,
         task_id: TaskId,
@@ -25,22 +65,23 @@ impl TasksHandle {
         };
         let plan = lifecycle::load_archive_task_plan(&store, &task).await?;
         for session in &plan.sessions {
-            self.state.cleanup_session(session.id).await;
+            self.effects().cleanup_session(session.id).await;
         }
 
         let task = lifecycle::archive_task_record(&store, task_id).await?;
         let service_cleanup_targets =
             lifecycle::collect_archive_cleanup_targets(&store, task_id, &plan.worktrees).await;
         let cleanup_targets =
-            daemon_cleanup_targets(self.state.as_ref(), &workspace, &service_cleanup_targets);
-        let errors = workspaces::cleanup_task_worktrees(
-            self.state.as_ref(),
-            &workspace,
-            task_id,
-            &cleanup_targets,
-            BranchCleanupErrorMode::Report,
-        )
-        .await;
+            daemon_cleanup_targets(self.workspace(), &workspace, &service_cleanup_targets);
+        let errors = self
+            .workspace()
+            .cleanup_task_worktrees(
+                &workspace,
+                task_id,
+                &cleanup_targets,
+                BranchCleanupErrorMode::Report,
+            )
+            .await;
         let cleanup_failed = !errors.is_empty();
         if cleanup_failed {
             tracing::warn!(
@@ -48,18 +89,15 @@ impl TasksHandle {
                 "archive cleanup had errors after task state was persisted"
             );
         }
-        let _ = self
-            .state
+        self.effects()
             .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Archived)
             .await;
-        if let Err(error) = self.state.emit_workspace_task_upsert(task_id).await {
+        if let Err(error) = self.effects().emit_workspace_task_upsert(task_id).await {
             tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {error:?}");
         }
         for session_id in plan.session_ids {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
-                .remove_session(session_id)
+            self.effects()
+                .remove_active_snapshot_session(session_id)
                 .await;
         }
         Ok(ArchiveTaskOutcome {
@@ -75,9 +113,7 @@ impl TasksHandle {
         let plan = lifecycle::load_unarchive_worktree_plan(&store, &task).await?;
 
         for worktree in &plan.worktrees {
-            let Some(root) =
-                workspaces::managed_worktree_root(self.state.as_ref(), &workspace, worktree)
-            else {
+            let Some(root) = self.workspace().managed_worktree_root(&workspace, worktree) else {
                 continue;
             };
             let branch = worktree.git_branch.as_deref().unwrap_or_default();
@@ -104,51 +140,41 @@ impl TasksHandle {
                 .await
                 .map_err(TaskLifecycleError::Internal)?;
             if let Some(binding) = sandbox_binding.as_ref() {
-                let refreshed_binding = workspaces::rematerialize_sandbox_binding_for_worktree(
-                    &self.state,
-                    &workspace,
-                    worktree,
-                    binding,
-                )
-                .await
-                .map_err(|error| {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        "failed to rematerialize sandbox worktree on unarchive: {error:#}"
-                    );
-                    TaskLifecycleError::Internal(error)
-                })?;
+                let refreshed_binding = self
+                    .workspace()
+                    .rematerialize_sandbox_binding_for_worktree(&workspace, worktree, binding)
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            "failed to rematerialize sandbox worktree on unarchive: {error:#}"
+                        );
+                        TaskLifecycleError::Internal(error)
+                    })?;
                 store
                     .upsert_sandbox_binding(refreshed_binding)
                     .await
                     .map_err(TaskLifecycleError::Internal)?;
             }
-            if let Err(error) = workspaces::ensure_worktree_attachment_mounts_if_materialized(
-                self.state.as_ref(),
-                &workspace,
-                worktree,
-            )
-            .await
+            if let Err(error) = self
+                .workspace()
+                .ensure_worktree_attachment_mounts_if_materialized(&workspace, worktree)
+                .await
             {
                 tracing::warn!(task_id = %task_id.0, "attachment mounts failed: {error:?}");
             }
-            if let Err(error) = workspaces::spawn_worktree_bootstrap(
-                self.state.clone(),
-                workspace.clone(),
-                worktree.clone(),
-            )
-            .await
+            if let Err(error) = self
+                .workspace()
+                .spawn_worktree_bootstrap(&workspace, worktree)
+                .await
             {
                 tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {error:?}");
             }
-            if let Err(error) = workspaces::ensure_task_commit_hook(
-                self.state.as_ref(),
-                &workspace,
-                worktree,
-                task_id,
-            )
-            .await
+            if let Err(error) = self
+                .workspace()
+                .ensure_task_commit_hook(&workspace, worktree, task_id)
+                .await
             {
                 tracing::warn!(
                     task_id = %task_id.0,
@@ -159,23 +185,20 @@ impl TasksHandle {
         }
 
         let task = lifecycle::unarchive_task_record(&store, task_id).await?;
-        let _ = self
-            .state
+        self.effects()
             .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Unarchived)
             .await;
-        if let Err(error) = self.state.emit_workspace_task_upsert(task_id).await {
+        if let Err(error) = self.effects().emit_workspace_task_upsert(task_id).await {
             tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {error:?}");
         }
-        self.state
+        self.effects()
             .emit_workspace_archived_task_delete(task.workspace_id, task_id)
             .await;
         for session_id in plan.session_ids {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
-                .remove_session(session_id)
+            self.effects()
+                .remove_active_snapshot_session(session_id)
                 .await;
-            self.state.refresh_session_head_cache(session_id).await;
+            self.effects().refresh_session_head_cache(session_id).await;
         }
         Ok(task)
     }
@@ -197,21 +220,22 @@ impl TasksHandle {
         let task_id = task.id;
         let plan = lifecycle::load_delete_task_plan(store, task).await?;
         let cleanup_targets =
-            daemon_cleanup_targets(self.state.as_ref(), workspace, &plan.cleanup_targets);
+            daemon_cleanup_targets(self.workspace(), workspace, &plan.cleanup_targets);
 
         for session in &plan.sessions {
-            self.state.cleanup_session(session.id).await;
+            self.effects().cleanup_session(session.id).await;
         }
         lifecycle::delete_task_record(store, task_id).await?;
 
-        let cleanup_errors = workspaces::cleanup_task_worktrees(
-            self.state.as_ref(),
-            workspace,
-            task_id,
-            &cleanup_targets,
-            BranchCleanupErrorMode::BestEffort,
-        )
-        .await;
+        let cleanup_errors = self
+            .workspace()
+            .cleanup_task_worktrees(
+                workspace,
+                task_id,
+                &cleanup_targets,
+                BranchCleanupErrorMode::BestEffort,
+            )
+            .await;
         if !cleanup_errors.is_empty() {
             tracing::warn!(
                 task_id = %task_id.0,
@@ -228,7 +252,6 @@ impl TasksHandle {
         .await;
         for worktree_id in deleted_worktree_ids {
             if let Err(error) = self
-                .state
                 .global_store()
                 .delete_workspace_worktree_index(worktree_id)
                 .await
@@ -241,7 +264,6 @@ impl TasksHandle {
             }
         }
         if let Err(error) = self
-            .state
             .global_store()
             .delete_workspace_task_index(task_id)
             .await
@@ -250,7 +272,6 @@ impl TasksHandle {
         }
         for session in plan.sessions {
             if let Err(error) = self
-                .state
                 .global_store()
                 .delete_workspace_session_index(session.id)
                 .await
@@ -262,11 +283,11 @@ impl TasksHandle {
                 );
             }
         }
-        self.state
+        self.effects()
             .emit_workspace_task_delete(task.workspace_id, task_id)
             .await;
         if task.archived_at.is_some() {
-            self.state
+            self.effects()
                 .emit_workspace_archived_task_delete(task.workspace_id, task_id)
                 .await;
         }
@@ -275,14 +296,14 @@ impl TasksHandle {
 }
 
 fn daemon_cleanup_targets(
-    state: &DaemonState,
+    workspace_runtime: &crate::daemon::handle::TaskLifecycleWorkspaceRuntime,
     workspace: &Workspace,
     targets: &[LifecycleCleanupTarget],
 ) -> Vec<TaskWorktreeCleanupTarget> {
     targets
         .iter()
         .map(|target| TaskWorktreeCleanupTarget {
-            managed_root: workspaces::managed_worktree_root(state, workspace, &target.worktree),
+            managed_root: workspace_runtime.managed_worktree_root(workspace, &target.worktree),
             sandbox_binding: target.sandbox_binding.clone(),
             worktree: target.worktree.clone(),
             destroy_worktree_on_cleanup: target.destroy_worktree_on_cleanup,

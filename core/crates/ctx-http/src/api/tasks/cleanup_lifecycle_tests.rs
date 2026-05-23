@@ -113,7 +113,7 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
         .await
         .expect("standaloneize managed worktree");
 
-    let tasks = task_api_task_state(&state);
+    let tasks = task_api_lifecycle_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("delete task");

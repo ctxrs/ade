@@ -26,7 +26,9 @@ use super::errors::ApiErrorResp;
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
-use ctx_daemon::daemon::{TaskCreationHandle, TaskSessionAdmissionHandle, TasksHandle};
+use ctx_daemon::daemon::{
+    TaskCreationHandle, TaskLifecycleHandle, TaskSessionAdmissionHandle, TasksHandle,
+};
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
 use ctx_route_contracts::tasks::{
@@ -40,6 +42,11 @@ use ctx_route_contracts::tasks::{
 #[cfg(test)]
 pub(super) fn task_api_task_state(daemon: &TestDaemon) -> State<TasksHandle> {
     State(daemon.handle().tasks())
+}
+
+#[cfg(test)]
+pub(super) fn task_api_lifecycle_state(daemon: &TestDaemon) -> State<TaskLifecycleHandle> {
+    State(daemon.handle().task_lifecycle())
 }
 
 fn task_route_status(error: &TaskRouteError) -> StatusCode {
