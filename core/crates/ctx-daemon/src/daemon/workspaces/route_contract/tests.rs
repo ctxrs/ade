@@ -107,6 +107,38 @@ async fn create_route_contract_worktree(
         .expect("worktree exists")
 }
 
+#[tokio::test]
+async fn registry_route_params_reject_invalid_workspace_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_registry();
+    let error = handle
+        .get_workspace_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn registry_route_maps_missing_workspace_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_registry();
+    let error = handle
+        .get_workspace_for_route_params(WorkspaceRouteParams::new(uuid::Uuid::new_v4().to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(error.message(), "workspace not found");
+}
+
 #[test]
 fn workspace_route_response_matches_workspace_wire_shape() {
     let workspace = Workspace {
@@ -469,6 +501,20 @@ fn workspace_file_completion_storage_errors_map_to_507_class() {
         route_error.kind(),
         WorkspaceRouteErrorKind::InsufficientStorage
     );
+}
+
+#[test]
+fn workspace_store_route_error_preserves_not_found_vs_unavailable() {
+    let not_found = super::super::workspace_store_route_error(
+        crate::daemon::WorkspaceStoreAccessError::NotFound,
+    );
+    assert_eq!(not_found.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(not_found.message(), "workspace not found");
+
+    let unavailable = super::super::workspace_store_route_error(
+        crate::daemon::WorkspaceStoreAccessError::Unavailable(anyhow::anyhow!("store offline")),
+    );
+    assert_eq!(unavailable.kind(), WorkspaceRouteErrorKind::Internal);
 }
 
 #[tokio::test]

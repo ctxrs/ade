@@ -116,6 +116,14 @@ impl DaemonHandle {
         OrgPolicyHandle::new(self.state.global_store().clone())
     }
 
+    pub fn workspace_registry(&self) -> WorkspaceRegistryHandle {
+        WorkspaceRegistryHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            self.state.telemetry.telemetry.clone(),
+        )
+    }
+
     pub fn workspace_org_policy(&self) -> WorkspaceOrgPolicyHandle {
         WorkspaceOrgPolicyHandle::new(
             self.state.global_store().clone(),
@@ -1420,6 +1428,44 @@ impl WorkspaceFileCompletionsHandle {
 
     pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
         &self.perf_telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceRegistryHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    telemetry: Telemetry,
+}
+
+impl WorkspaceRegistryHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        telemetry: Telemetry,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            telemetry,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
+        &self.telemetry
     }
 }
 

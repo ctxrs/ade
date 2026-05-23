@@ -7,9 +7,9 @@ pub(in crate::api) use create::create_workspace;
 pub(in crate::api) use delete::delete_workspace;
 
 pub(in crate::api) async fn list_workspaces(
-    State(workspaces): State<WorkspacesHandle>,
+    State(registry): State<WorkspaceRegistryHandle>,
 ) -> Result<Json<Vec<WorkspaceRouteResponse>>, StatusCode> {
-    workspaces
+    registry
         .list_workspaces_for_route()
         .await
         .map(Json)
@@ -17,10 +17,10 @@ pub(in crate::api) async fn list_workspaces(
 }
 
 pub(in crate::api) async fn get_workspace(
-    State(workspaces): State<WorkspacesHandle>,
+    State(registry): State<WorkspaceRegistryHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceRouteResponse>, StatusCode> {
-    workspaces
+    registry
         .get_workspace_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map(Json)

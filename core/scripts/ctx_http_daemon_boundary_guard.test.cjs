@@ -232,6 +232,9 @@ const {
   scanWorkspaceWorktreeDaemonImplementationRatchet,
   scanWorkspaceWorktreeHandleFieldRatchet,
   scanWorkspaceWorktreeRouteExtractorRatchet,
+  scanWorkspaceRegistryDaemonImplementationRatchet,
+  scanWorkspaceRegistryHandleFieldRatchet,
+  scanWorkspaceRegistryRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -3014,6 +3017,184 @@ test("appstate guard rejects workspace worktree broad handle fields", () => {
         global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
         data_root: PathBuf,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace registry extraction outside allowed routes", () => {
+  const violations = scanWorkspaceRegistryRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceRegistryHandle;
+      async fn handler(
+        State(state): State<WorkspaceRegistryHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace registry route extracts WorkspaceRegistryHandle outside registry read/create route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceRegistryRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+      contents: `
+        async fn list_workspaces(
+          State(registry): State<WorkspaceRegistryHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace registry broad route and router composition", () => {
+  const routeViolations = scanWorkspaceRegistryRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      pub(in crate::api) async fn list_workspaces(
+        State(workspaces): State<WorkspacesHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "workspace registry read/create route uses broad workspace handle",
+  ]);
+
+  const routerViolations = scanWorkspaceRegistryRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_registry: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace registry router composed from broad workspace handle",
+  ]);
+
+  const deleteViolations = scanWorkspaceRegistryRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      pub(in crate::api) async fn delete_workspace(
+        State(registry): State<WorkspaceRegistryHandle>,
+      ) {
+        registry.delete_workspace_for_route(params).await?;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    deleteViolations.includes("workspace registry read/create route owns delete behavior"),
+  );
+});
+
+test("appstate guard rejects workspace registry daemon facade broad seams", () => {
+  const violations = scanWorkspaceRegistryDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace registry daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace registry daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace registry daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace registry daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+
+  const deleteViolations = scanWorkspaceRegistryDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
+    contents: `
+      impl WorkspaceRegistryHandle {
+        pub async fn delete_workspace_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(deleteViolations, [
+    "workspace registry read/create daemon facade owns delete behavior",
+  ]);
+});
+
+test("appstate guard rejects legacy workspace registry read/create facades on broad handle", () => {
+  const violations = scanWorkspaceRegistryDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_config.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn list_workspaces_for_route(&self) {}
+        pub async fn get_workspace_for_route_params(&self) {}
+        pub async fn get_workspace_for_route(&self) {}
+        pub async fn create_workspace_for_request(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace registry read/create facade remains on broad workspace handle",
+    "workspace registry read/create facade remains on broad workspace handle",
+    "workspace registry read/create facade remains on broad workspace handle",
+    "workspace registry read/create facade remains on broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace registry broad handle fields", () => {
+  const fieldViolations = scanWorkspaceRegistryHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceRegistryHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace registry capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace registry capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceRegistryHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceRegistryHandle {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        telemetry: Telemetry,
       }
     `,
   });

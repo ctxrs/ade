@@ -26,7 +26,7 @@ use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
     WorkspaceActiveHandle, WorkspaceExecutionConfigHandle, WorkspaceHarnessContainerHandle,
     WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspaceRegistryHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 use ctx_observability::logs;
 use ctx_route_contracts::workspaces::{
