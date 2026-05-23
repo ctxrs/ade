@@ -143,6 +143,15 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_harness_container(&self) -> WorkspaceHarnessContainerHandle {
+        WorkspaceHarnessContainerHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            self.state.core.daemon_url.clone(),
+            Arc::clone(&self.state.execution.harness),
+        )
+    }
+
     pub fn workspace_provider_model_preferences(&self) -> WorkspaceProviderModelPreferenceHandle {
         WorkspaceProviderModelPreferenceHandle::new(self.provider_workspace_launch_runtime())
     }
@@ -1441,6 +1450,51 @@ impl WorkspaceExecutionConfigHandle {
         self.workspace_stores
             .existing_workspace_store(workspace_id)
             .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceHarnessContainerHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    daemon_url: String,
+    harness: Arc<HarnessRuntimeManager>,
+}
+
+impl WorkspaceHarnessContainerHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        daemon_url: String,
+        harness: Arc<HarnessRuntimeManager>,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            daemon_url,
+            harness,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+
+    pub(in crate::daemon) fn harness(&self) -> &HarnessRuntimeManager {
+        self.harness.as_ref()
     }
 }
 

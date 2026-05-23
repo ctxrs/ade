@@ -226,6 +226,9 @@ const {
   scanWorkspaceFileCompletionsDaemonImplementationRatchet,
   scanWorkspaceFileCompletionsHandleFieldRatchet,
   scanWorkspaceFileCompletionsRouteExtractorRatchet,
+  scanWorkspaceHarnessContainerDaemonImplementationRatchet,
+  scanWorkspaceHarnessContainerHandleFieldRatchet,
+  scanWorkspaceHarnessContainerRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -2722,6 +2725,143 @@ test("appstate guard rejects workspace file completions broad handle fields", ()
         global_store: Store,
         workspace_file_completions_cache: WorkspaceFileCompletionsCache,
         perf_telemetry: PerfTelemetry,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace harness container extraction outside allowed route", () => {
+  const violations = scanWorkspaceHarnessContainerRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceHarnessContainerHandle;
+      async fn handler(
+        State(state): State<WorkspaceHarnessContainerHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace harness container route extracts WorkspaceHarnessContainerHandle outside harness container route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceHarnessContainerRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+      contents: `
+        async fn get_workspace_harness_container(
+          State(state): State<WorkspaceHarnessContainerHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace harness container broad route and router composition", () => {
+  const routeViolations = scanWorkspaceHarnessContainerRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+    contents: `
+      pub(in crate::api) async fn get_workspace_harness_container(
+        State(workspaces): State<WorkspacesHandle>,
+        Path(id): Path<String>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "workspace harness container route uses broad workspace handle",
+  ]);
+
+  const routerViolations = scanWorkspaceHarnessContainerRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_harness_container: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace harness container router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace harness container daemon facade broad seams", () => {
+  const violations = scanWorkspaceHarnessContainerDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/harness_container.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = execution_effective::effective_execution_settings_classified(state.as_ref(), workspace_id).await;
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace harness container daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace harness container daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace harness container daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace harness container daemon facade reuses full-state execution settings helper",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace harness container daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects workspace harness container broad handle fields", () => {
+  const fieldViolations = scanWorkspaceHarnessContainerHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceHarnessContainerHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace harness container capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace harness container capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceHarnessContainerHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceHarnessContainerHandle {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        daemon_url: String,
+        harness: Arc<HarnessRuntimeManager>,
       }
     `,
   });

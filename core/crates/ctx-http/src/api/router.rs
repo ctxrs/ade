@@ -17,8 +17,9 @@ use ctx_daemon::daemon::{
     TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceExecutionConfigHandle,
-    WorkspaceFileCompletionsHandle, WorkspaceOrgPolicyHandle, WorkspacePromptBootstrapConfigHandle,
-    WorkspaceProviderModelPreferenceHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle,
+    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -93,6 +94,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_prompt_bootstrap_config: WorkspacePromptBootstrapConfigHandle,
     pub(in crate::api) workspace_execution_config: WorkspaceExecutionConfigHandle,
     pub(in crate::api) workspace_file_completions: WorkspaceFileCompletionsHandle,
+    pub(in crate::api) workspace_harness_container: WorkspaceHarnessContainerHandle,
     pub(in crate::api) workspace_provider_model_preferences: WorkspaceProviderModelPreferenceHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
@@ -149,6 +151,7 @@ impl RouteHandles {
             workspace_prompt_bootstrap_config: handle.workspace_prompt_bootstrap_config(),
             workspace_execution_config: handle.workspace_execution_config(),
             workspace_file_completions: handle.workspace_file_completions(),
+            workspace_harness_container: handle.workspace_harness_container(),
             workspace_provider_model_preferences: handle.workspace_provider_model_preferences(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
@@ -210,6 +213,7 @@ impl_route_state_extractors! {
     WorkspacePromptBootstrapConfigHandle, workspace_prompt_bootstrap_config;
     WorkspaceExecutionConfigHandle, workspace_execution_config;
     WorkspaceFileCompletionsHandle, workspace_file_completions;
+    WorkspaceHarnessContainerHandle, workspace_harness_container;
     WorkspaceProviderModelPreferenceHandle, workspace_provider_model_preferences;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;

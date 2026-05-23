@@ -24,8 +24,8 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
-    WorkspaceActiveHandle, WorkspaceExecutionConfigHandle, WorkspacePromptBootstrapConfigHandle,
-    WorkspaceProviderModelPreferenceHandle, WorkspacesHandle,
+    WorkspaceActiveHandle, WorkspaceExecutionConfigHandle, WorkspaceHarnessContainerHandle,
+    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle, WorkspacesHandle,
 };
 use ctx_observability::logs;
 use ctx_route_contracts::workspaces::{

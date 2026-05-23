@@ -8,6 +8,7 @@ use super::common::{
 };
 use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
 use crate::test_support::TestDaemon;
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
@@ -42,6 +43,15 @@ async fn create_route_contract_workspace(daemon: &TestDaemon, name: &str) -> Wor
         )
         .await
         .expect("create workspace")
+}
+
+async fn create_route_contract_workspace_with_store(daemon: &TestDaemon, name: &str) -> Workspace {
+    let root = daemon.data_root().join(name);
+    std::fs::create_dir_all(&root).expect("create workspace root");
+    daemon
+        .seed_workspace_for_test(name, &root, VcsKind::Git)
+        .await
+        .expect("seed workspace")
 }
 
 #[test]
@@ -179,6 +189,120 @@ fn workspace_route_error_helpers_preserve_status_classes() {
     );
     assert_eq!(harness_ensure.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(harness_ensure.message(), "bad container request");
+}
+
+#[tokio::test]
+async fn harness_container_routes_reject_invalid_workspace_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_harness_container();
+
+    let status_error = handle
+        .workspace_harness_container_status_for_route_params(WorkspaceRouteParams::new(
+            "not-a-workspace",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(status_error.kind(), WorkspaceRouteErrorKind::BadRequest);
+
+    let stop_error = handle
+        .stop_workspace_harness_container_for_route(WorkspaceRouteParams::new("not-a-workspace"))
+        .await
+        .unwrap_err();
+    assert_eq!(stop_error.kind(), WorkspaceRouteErrorKind::BadRequest);
+
+    let ensure_error = handle
+        .ensure_workspace_harness_container_for_route(WorkspaceRouteParams::new("not-a-workspace"))
+        .await
+        .unwrap_err();
+    assert_eq!(ensure_error.kind(), WorkspaceRouteErrorKind::BadRequest);
+}
+
+#[tokio::test]
+async fn harness_container_routes_map_missing_workspace_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_harness_container();
+    let missing = WorkspaceId::new().0.to_string();
+
+    let status_error = handle
+        .workspace_harness_container_status_for_route_params(WorkspaceRouteParams::new(
+            missing.clone(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(status_error.kind(), WorkspaceRouteErrorKind::NotFound);
+
+    let stop_error = handle
+        .stop_workspace_harness_container_for_route(WorkspaceRouteParams::new(missing.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(stop_error.kind(), WorkspaceRouteErrorKind::NotFound);
+
+    let ensure_error = handle
+        .ensure_workspace_harness_container_for_route(WorkspaceRouteParams::new(missing))
+        .await
+        .unwrap_err();
+    assert_eq!(ensure_error.kind(), WorkspaceRouteErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn harness_container_routes_are_hermetic_without_running_container() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace_with_store(&daemon, "no-container").await;
+    let handle = daemon.handle().workspace_harness_container();
+    let params = WorkspaceRouteParams::new(workspace.id.0.to_string());
+
+    let status = handle
+        .workspace_harness_container_status_for_route_params(params.clone())
+        .await
+        .expect("status route");
+    assert!(status.is_none());
+
+    let stop_error = handle
+        .stop_workspace_harness_container_for_route(params)
+        .await
+        .unwrap_err();
+    assert_eq!(stop_error.kind(), WorkspaceRouteErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn ensure_harness_container_preserves_settings_error_mapping() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace =
+        create_route_contract_workspace_with_store(&daemon, "invalid-runtime-settings").await;
+    daemon
+        .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{ not json")
+        .await
+        .expect("seed invalid runtime settings");
+    let handle = daemon.handle().workspace_harness_container();
+
+    let error = handle
+        .ensure_workspace_harness_container_for_route(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert!(
+        error.message().contains("workspace runtime settings"),
+        "unexpected error: {}",
+        error.message()
+    );
 }
 
 #[test]

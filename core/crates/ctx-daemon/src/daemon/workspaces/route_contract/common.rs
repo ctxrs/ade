@@ -39,7 +39,7 @@ pub(super) fn route_file_download_error(error: RouteFileDownloadError) -> Worksp
     }
 }
 
-pub(super) fn workspace_harness_container_status_error(
+pub(in crate::daemon::workspaces) fn workspace_harness_container_status_error(
     error: WorkspaceHarnessContainerError,
 ) -> WorkspaceRouteError {
     match error {
@@ -72,7 +72,7 @@ pub(super) fn effective_execution_settings_route_error(
     }
 }
 
-pub(super) fn workspace_harness_container_ensure_error(
+pub(in crate::daemon::workspaces) fn workspace_harness_container_ensure_error(
     error: WorkspaceHarnessContainerError,
 ) -> WorkspaceRouteError {
     match error {
