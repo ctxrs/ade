@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::RunArchiveHandle;
 use ctx_route_contracts::run_archive::{
     AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
     AcknowledgeRunArchiveIngestBatchRouteResponse, BuildRunArchiveIngestBatchRouteRequest,
@@ -8,7 +8,7 @@ use ctx_route_contracts::run_archive::{
 };
 
 pub(super) async fn build_workspace_run_archive_ingest_batch(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<RunArchiveHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
     Query(query): Query<RunArchiveBatchRouteQuery>,
 ) -> Result<Json<BuildRunArchiveIngestBatchRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -24,7 +24,7 @@ pub(super) async fn build_workspace_run_archive_ingest_batch(
 }
 
 pub(super) async fn acknowledge_workspace_run_archive_ingest_batch(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<RunArchiveHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
     Query(query): Query<RunArchiveBatchRouteQuery>,
     Json(body): Json<AcknowledgeRunArchiveIngestBatchRouteBody>,

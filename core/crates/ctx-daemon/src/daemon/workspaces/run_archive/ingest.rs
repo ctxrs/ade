@@ -1,7 +1,7 @@
 use ctx_core::ids::{RunId, WorkspaceId};
 use ctx_core::models::{RunArchiveIngestBatch, RunArchiveIngestCursor};
 
-use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{RunArchiveHandle, WorkspaceStoreAccessError};
 
 #[derive(Debug)]
 pub enum RunArchiveIngestError {
@@ -10,7 +10,7 @@ pub enum RunArchiveIngestError {
     Internal(anyhow::Error),
 }
 
-impl WorkspacesHandle {
+impl RunArchiveHandle {
     pub async fn build_run_archive_ingest_batch(
         &self,
         workspace_id: WorkspaceId,

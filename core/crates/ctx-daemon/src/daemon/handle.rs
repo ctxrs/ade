@@ -104,6 +104,10 @@ impl DaemonHandle {
         RepoOnboardingHandle::new(self.state.core.data_root.clone())
     }
 
+    pub fn run_archive(&self) -> RunArchiveHandle {
+        RunArchiveHandle::new(self.protected_workspace_store_lookup())
+    }
+
     pub fn logs(&self) -> LogsHandle {
         LogsHandle::new(self.state.core.data_root.clone())
     }
@@ -1512,6 +1516,26 @@ impl RepoOnboardingHandle {
 
     pub(in crate::daemon) fn data_root(&self) -> &Path {
         &self.data_root
+    }
+}
+
+#[derive(Clone)]
+pub struct RunArchiveHandle {
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+impl RunArchiveHandle {
+    pub(in crate::daemon) fn new(workspace_stores: ProtectedWorkspaceStoreLookup) -> Self {
+        Self { workspace_stores }
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
     }
 }
 

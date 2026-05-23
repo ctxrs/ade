@@ -128,6 +128,15 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
         );
     }
 
+    for query in ["?max_items=0", "?max_items=1001"] {
+        let (status, body) = post_ingest_ack_json(&app, workspace.id, run_id, query, &batch).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body,
+            json!({"error": "max_items must be between 1 and 1000"})
+        );
+    }
+
     let mut wrong_workspace_batch = batch.clone();
     wrong_workspace_batch.run.workspace_id = WorkspaceId::new();
     let (status, body) =

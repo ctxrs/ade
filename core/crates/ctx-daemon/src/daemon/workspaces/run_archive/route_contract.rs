@@ -1,4 +1,4 @@
-use crate::daemon::WorkspacesHandle;
+use crate::daemon::RunArchiveHandle;
 
 use super::ingest::RunArchiveIngestError;
 
@@ -8,7 +8,7 @@ use ctx_route_contracts::run_archive::{
     RunArchiveRouteError,
 };
 
-impl WorkspacesHandle {
+impl RunArchiveHandle {
     pub async fn build_run_archive_ingest_batch_for_route(
         &self,
         req: BuildRunArchiveIngestBatchRouteRequest,

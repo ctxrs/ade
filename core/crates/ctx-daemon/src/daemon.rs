@@ -79,11 +79,12 @@ pub use handle::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
-    RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, SessionArtifactsHandle,
-    SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
-    TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
-    TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
+    SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
+    TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
+    TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
+    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

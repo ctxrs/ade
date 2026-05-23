@@ -211,6 +211,9 @@ const {
   scanResourceUtilizationDaemonImplementationRatchet,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
+  scanRunArchiveDaemonImplementationRatchet,
+  scanRunArchiveHandleFieldRatchet,
+  scanRunArchiveRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
@@ -2076,6 +2079,108 @@ test("appstate guard rejects repo onboarding broad handle fields", () => {
     contents: `
       pub struct RepoOnboardingHandle {
         data_root: PathBuf,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects run archive route extraction outside run archive route", () => {
+  const violations = scanRunArchiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::RunArchiveHandle;
+      async fn handler(
+        State(state): State<RunArchiveHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "run archive route extracts RunArchiveHandle outside run archive route",
+  ]);
+
+  assert.deepEqual(
+    scanRunArchiveRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/run_archive.rs",
+      contents: `
+        async fn handler(
+          State(state): State<RunArchiveHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects run archive broad route and router composition", () => {
+  const routeViolations = scanRunArchiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/run_archive.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(routeViolations.includes("run archive route uses broad workspace handle"));
+
+  const routerViolations = scanRunArchiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            run_archive: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, ["run archive router composed from broad workspace handle"]);
+});
+
+test("appstate guard rejects run archive daemon facade broad seams", () => {
+  const violations = scanRunArchiveDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/run_archive/ingest.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("run archive daemon facade uses broad daemon state"));
+  assert(violations.includes("run archive daemon facade uses broad daemon handle"));
+  assert(violations.includes("run archive daemon facade uses broad workspace handle"));
+});
+
+test("appstate guard rejects run archive broad handle fields", () => {
+  const fieldViolations = scanRunArchiveHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct RunArchiveHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(fieldViolations.includes("run archive capability stores broad handle or daemon state"));
+  assert(
+    fieldViolations.includes("run archive capability exposes generic full-state escape hatch"),
+  );
+
+  const narrowViolations = scanRunArchiveHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct RunArchiveHandle {
+        workspace_stores: ProtectedWorkspaceStoreLookup,
       }
     `,
   });
