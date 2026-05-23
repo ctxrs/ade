@@ -50,7 +50,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
     .expect("seed codex account");
 
     let err = set_codex_active_account(
-        State(fixture.providers()),
+        State(fixture.provider_accounts()),
         Json(
             serde_json::from_value(serde_json::json!({ "account_id": "acct" }))
                 .expect("deserialize active-account request"),
@@ -100,15 +100,15 @@ async fn delete_codex_account_keeps_account_when_restart_fails() {
     .expect("write broker auth");
 
     let err = match fixture
-        .providers()
-        .remove_codex_account_for_test("acct-delete")
+        .provider_accounts()
+        .delete_codex_account_for_route("acct-delete")
         .await
     {
         Ok(_) => panic!("restart failure should surface before deletion"),
         Err(err) => err,
     };
     assert!(err
-        .to_string()
+        .message()
         .contains("provider auth removed but immediate restart failed"));
 
     let registry = provider_accounts::load_codex_registry(daemon.data_root())
@@ -162,8 +162,8 @@ async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup()
     .expect("write broker auth");
 
     fixture
-        .providers()
-        .remove_codex_account_for_test("acct-delete")
+        .provider_accounts()
+        .delete_codex_account_for_route("acct-delete")
         .await
         .expect("remove account");
 
@@ -192,14 +192,14 @@ async fn delete_unknown_codex_account_does_not_stop_provider() {
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
 
     let err = match fixture
-        .providers()
-        .remove_codex_account_for_test("missing")
+        .provider_accounts()
+        .delete_codex_account_for_route("missing")
         .await
     {
         Ok(_) => panic!("missing account should not be deleted"),
         Err(err) => err,
     };
-    assert!(err.to_string().contains("unknown account"));
+    assert!(err.message().contains("unknown account"));
     assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 0);
 }
 
@@ -235,15 +235,15 @@ async fn delete_codex_account_keeps_account_when_broker_cleanup_fails() {
         .expect("write broker root file");
 
     let err = match fixture
-        .providers()
-        .remove_codex_account_for_test("acct-delete")
+        .provider_accounts()
+        .delete_codex_account_for_route("acct-delete")
         .await
     {
         Ok(_) => panic!("broker cleanup failure should surface before deletion"),
         Err(err) => err,
     };
     assert!(err
-        .to_string()
+        .message()
         .contains("removing Codex broker home directory"));
 
     let registry = provider_accounts::load_codex_registry(daemon.data_root())

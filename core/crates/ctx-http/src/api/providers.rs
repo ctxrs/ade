@@ -12,7 +12,7 @@ use axum::Json;
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::ProvidersHandle;
+use ctx_daemon::daemon::{ProviderAccountsHandle, ProvidersHandle};
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
 #[cfg(test)]

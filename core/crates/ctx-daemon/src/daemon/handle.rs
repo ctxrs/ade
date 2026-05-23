@@ -155,6 +155,13 @@ impl DaemonHandle {
         ProvidersHandle::new(Arc::clone(&self.state))
     }
 
+    pub fn provider_accounts(&self) -> ProviderAccountsHandle {
+        ProviderAccountsHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+        )
+    }
+
     pub fn telemetry(&self) -> TelemetryHandle {
         TelemetryHandle::new(self.state.core.data_root.clone(), &self.state.telemetry)
     }
@@ -655,6 +662,29 @@ impl MobileSecureProxyHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderAccountsHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl ProviderAccountsHandle {
+    pub(in crate::daemon) fn new(data_root: PathBuf, providers: Arc<ProviderRuntime>) -> Self {
+        Self {
+            data_root,
+            providers,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
     }
 }
 

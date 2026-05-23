@@ -2,7 +2,7 @@ use super::common::provider_account_route_error;
 use super::*;
 
 pub(crate) async fn list_mistral_accounts(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
         .mistral_accounts_for_route()
@@ -12,7 +12,7 @@ pub(crate) async fn list_mistral_accounts(
 }
 
 pub(crate) async fn upsert_mistral_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<MistralAccountUpsertRouteRequest>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -23,7 +23,7 @@ pub(crate) async fn upsert_mistral_account(
 }
 
 pub(crate) async fn set_mistral_active_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<ProviderActiveAccountRouteRequest>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -34,7 +34,7 @@ pub(crate) async fn set_mistral_active_account(
 }
 
 pub(crate) async fn delete_mistral_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers

@@ -12,6 +12,10 @@ impl ProviderRestartFixture {
     pub(super) fn providers(&self) -> ctx_daemon::daemon::ProvidersHandle {
         self.fixture.providers()
     }
+
+    pub(super) fn provider_accounts(&self) -> ctx_daemon::daemon::ProviderAccountsHandle {
+        self.fixture.provider_accounts()
+    }
 }
 
 pub(super) async fn fixture_with_adapter(

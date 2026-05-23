@@ -9,9 +9,9 @@ use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
-    ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle,
-    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderAccountsHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle,
+    TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
+    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -93,6 +93,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspaces: WorkspacesHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) providers: ProvidersHandle,
+    pub(in crate::api) provider_accounts: ProviderAccountsHandle,
     pub(in crate::api) telemetry: TelemetryHandle,
     pub(in crate::api) transport: TransportHandle,
     pub(in crate::api) execution_launch: ExecutionLaunchHandle,
@@ -123,6 +124,7 @@ impl RouteHandles {
             workspaces: handle.workspaces(),
             workspace_stream: handle.workspace_stream(),
             providers: handle.providers(),
+            provider_accounts: handle.provider_accounts(),
             telemetry: handle.telemetry(),
             transport: handle.transport(),
             execution_launch: handle.execution_launch(),
@@ -158,6 +160,7 @@ impl_route_state_extractors! {
     WorkspacesHandle, workspaces;
     WorkspaceStreamHandle, workspace_stream;
     ProvidersHandle, providers;
+    ProviderAccountsHandle, provider_accounts;
     TelemetryHandle, telemetry;
     TransportHandle, transport;
     ExecutionLaunchHandle, execution_launch;

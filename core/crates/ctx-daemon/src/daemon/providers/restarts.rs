@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
+use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::ProviderRestartMode;
 
 use crate::daemon::DaemonState;
 
-pub async fn invalidate_provider_runtime_state(state: &Arc<DaemonState>, provider_id: &str) {
-    ctx_provider_runtime::provider_cache::invalidate_provider_probe_caches(
-        &state.providers,
-        provider_id,
-    )
-    .await;
+pub(in crate::daemon::providers) async fn invalidate_provider_runtime_state_for_runtime(
+    providers: &ProviderRuntime,
+    provider_id: &str,
+) {
+    ctx_provider_runtime::provider_cache::invalidate_provider_probe_caches(providers, provider_id)
+        .await;
 }
 
 pub async fn restart_provider_for_auth_change(
@@ -18,9 +19,16 @@ pub async fn restart_provider_for_auth_change(
     provider_id: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
-    invalidate_provider_runtime_state(state, provider_id).await;
-    state
-        .providers
+    restart_provider_for_auth_change_with_runtime(&state.providers, provider_id, reason).await
+}
+
+pub(in crate::daemon::providers) async fn restart_provider_for_auth_change_with_runtime(
+    providers: &ProviderRuntime,
+    provider_id: &str,
+    reason: &str,
+) -> anyhow::Result<()> {
+    invalidate_provider_runtime_state_for_runtime(providers, provider_id).await;
+    providers
         .drain_restart_provider_adapters_for_auth_change(provider_id, reason)
         .await
 }
@@ -30,9 +38,16 @@ pub async fn stop_provider_for_auth_removal(
     provider_id: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
-    invalidate_provider_runtime_state(state, provider_id).await;
-    let adapters = state
-        .providers
+    stop_provider_for_auth_removal_with_runtime(&state.providers, provider_id, reason).await
+}
+
+pub(in crate::daemon::providers) async fn stop_provider_for_auth_removal_with_runtime(
+    providers: &ProviderRuntime,
+    provider_id: &str,
+    reason: &str,
+) -> anyhow::Result<()> {
+    invalidate_provider_runtime_state_for_runtime(providers, provider_id).await;
+    let adapters = providers
         .provider_adapter_entries_for_provider(provider_id)
         .await;
     let mut failures = Vec::new();
@@ -112,13 +127,6 @@ pub async fn restart_kimi_providers_for_auth_change(
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "kimi", reason).await
-}
-
-pub async fn restart_copilot_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "copilot", reason).await
 }
 
 pub async fn restart_cursor_providers_for_auth_change(

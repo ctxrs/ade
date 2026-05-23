@@ -6,9 +6,8 @@ mod mutations;
 mod routes;
 
 pub use codex::{
-    import_host_codex_auth, load_codex_account_registry, load_codex_accounts_snapshot,
-    persist_successful_codex_login, prepare_codex_login_start, probe_host_codex_auth_candidate,
-    remove_codex_account, set_active_codex_account, CodexAccountsSnapshot,
+    load_codex_accounts_snapshot, persist_successful_codex_login, prepare_codex_login_start,
+    probe_host_codex_auth_candidate, CodexAccountsSnapshot,
 };
 pub use login_paths::{
     amp_login_provider_env, gemini_login_provider_env, mistral_login_provider_env,
@@ -17,19 +16,12 @@ pub use login_paths::{
     PreparedQwenLoginPaths,
 };
 pub use mutations::{
-    add_claude_account, add_claude_account_for_login, add_copilot_account, add_cursor_account,
-    add_cursor_oauth_account_for_login, add_gemini_account, add_gemini_account_for_login,
-    add_kimi_account, add_kimi_oauth_account_for_login, add_qwen_account,
-    add_qwen_account_for_login, ensure_amp_account_registry_from_runtime_auth,
-    load_amp_account_registry, load_claude_account_registry, load_copilot_account_registry,
-    load_cursor_account_registry, load_gemini_account_registry, load_kimi_account_registry,
-    load_mistral_account_registry, load_qwen_account_registry, remove_amp_account,
-    remove_claude_account, remove_copilot_account, remove_cursor_account, remove_gemini_account,
-    remove_kimi_account, remove_mistral_account, remove_qwen_account, set_active_amp_account,
-    set_active_claude_account, set_active_copilot_account, set_active_cursor_account,
-    set_active_gemini_account, set_active_kimi_account, set_active_mistral_account,
-    set_active_qwen_account, upsert_amp_account, upsert_amp_account_for_login,
-    upsert_mistral_account, upsert_mistral_account_for_login,
+    add_claude_account_for_login, add_cursor_oauth_account_for_login, add_gemini_account_for_login,
+    add_kimi_oauth_account_for_login, add_qwen_account_for_login,
+    ensure_amp_account_registry_from_runtime_auth, load_claude_account_registry,
+    load_copilot_account_registry, load_cursor_account_registry, load_gemini_account_registry,
+    load_kimi_account_registry, load_mistral_account_registry, load_qwen_account_registry,
+    upsert_amp_account_for_login, upsert_mistral_account_for_login,
 };
 #[derive(Debug)]
 pub enum ProviderAccountMutationError {
@@ -60,13 +52,6 @@ impl ProviderAccountLoginMutation {
             None => Ok(()),
         };
         (self.active_account_id, restart_result)
-    }
-
-    pub fn into_http_result(self) -> Result<(), ProviderAccountMutationError> {
-        match self.restart_error {
-            Some(err) => Err(ProviderAccountMutationError::Internal(err)),
-            None => Ok(()),
-        }
     }
 
     pub fn restart_error_message(&self) -> Option<String> {

@@ -4,7 +4,6 @@ use anyhow::Context;
 use chrono::Utc;
 use ctx_provider_accounts as provider_accounts;
 
-use super::ProviderAccountMutationError;
 use crate::daemon::DaemonState;
 
 pub struct CodexAccountsSnapshot {
@@ -82,85 +81,6 @@ pub async fn prepare_codex_login_start(
             Err(err)
         }
     }
-}
-
-pub async fn import_host_codex_auth(
-    state: &Arc<DaemonState>,
-    label: Option<String>,
-) -> Result<(), ProviderAccountMutationError> {
-    provider_accounts::import_host_codex_auth_to_secret_store(&state.core.data_root, label)
-        .await
-        .map_err(ProviderAccountMutationError::BadRequest)?;
-    crate::daemon::providers::restart_codex_providers_for_auth_change(state, "codex auth updated")
-        .await
-        .map_err(ProviderAccountMutationError::Internal)
-}
-
-pub async fn set_active_codex_account(
-    state: &Arc<DaemonState>,
-    account_id: Option<String>,
-) -> Result<CodexAccountsSnapshot, ProviderAccountMutationError> {
-    provider_accounts::set_active_codex_account(&state.core.data_root, account_id)
-        .await
-        .map_err(ProviderAccountMutationError::BadRequest)?;
-    crate::daemon::providers::restart_codex_providers_for_auth_change(state, "codex auth updated")
-        .await
-        .map_err(ProviderAccountMutationError::Internal)?;
-    load_codex_accounts_snapshot(state)
-        .await
-        .map_err(ProviderAccountMutationError::Internal)
-}
-
-pub async fn remove_codex_account(
-    state: &Arc<DaemonState>,
-    account_id: &str,
-) -> Result<CodexAccountsSnapshot, ProviderAccountMutationError> {
-    let previous_active =
-        provider_accounts::begin_codex_account_deletion(&state.core.data_root, account_id)
-            .await
-            .map_err(ProviderAccountMutationError::Delete)?;
-    let stop_result = crate::daemon::providers::stop_codex_providers_for_auth_removal(
-        state,
-        "codex auth account removed",
-    )
-    .await;
-    if let Err(err) = stop_result {
-        if let Err(rollback_err) = provider_accounts::abort_codex_account_deletion(
-            &state.core.data_root,
-            account_id,
-            previous_active,
-        )
-        .await
-        {
-            tracing::warn!(
-                account_id,
-                error = %rollback_err,
-                "failed to roll back Codex account deletion marker after provider stop failure"
-            );
-        }
-        return Err(ProviderAccountMutationError::Internal(err));
-    }
-    provider_accounts::cleanup_codex_account_broker_home(&state.core.data_root, account_id)
-        .await
-        .map_err(ProviderAccountMutationError::Delete)?;
-    let registry = provider_accounts::remove_codex_account(&state.core.data_root, account_id)
-        .await
-        .map_err(ProviderAccountMutationError::Delete)?;
-    if let Err(err) =
-        provider_accounts::finish_codex_account_deletion(&state.core.data_root, account_id).await
-    {
-        tracing::warn!(
-            account_id,
-            error = %err,
-            "failed to remove Codex account deletion marker after account deletion"
-        );
-    }
-    let logins = crate::daemon::providers::remove_codex_login_session(state, account_id).await;
-    Ok(CodexAccountsSnapshot {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-        logins,
-    })
 }
 
 pub async fn persist_successful_codex_login(

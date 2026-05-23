@@ -2,7 +2,7 @@ use super::common::provider_account_route_error;
 use super::*;
 
 pub(crate) async fn list_claude_accounts(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
         .claude_accounts_for_route()
@@ -12,7 +12,7 @@ pub(crate) async fn list_claude_accounts(
 }
 
 pub(crate) async fn upsert_claude_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<ClaudeAccountUpsertRouteRequest>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -23,7 +23,7 @@ pub(crate) async fn upsert_claude_account(
 }
 
 pub(crate) async fn set_claude_active_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<ProviderActiveAccountRouteRequest>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -34,7 +34,7 @@ pub(crate) async fn set_claude_active_account(
 }
 
 pub(crate) async fn delete_claude_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers

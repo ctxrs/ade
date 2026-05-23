@@ -334,6 +334,20 @@ const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/types/accounts/",
 ];
 
+const providerAccountCrudApiRoots = [
+  "core/crates/ctx-http/src/api/providers/accounts.rs",
+  "core/crates/ctx-http/src/api/providers/accounts/",
+];
+
+const providerAccountProvidersHandleAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+]);
+
+const providerAccountDaemonRoutePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/operations.rs",
+]);
+
 const providerUsageApiRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status/usage.rs",
@@ -6755,6 +6769,62 @@ function scanExecutionHandleRouteExtractorRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderAccountHandleRatchet({ filePath, contents }) {
+  if (!providerAccountCrudApiRoots.some((root) => filePath.startsWith(root))) {
+    return [];
+  }
+  if (providerAccountProvidersHandleAllowedPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider account route extracts broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function scanProviderAccountDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerAccountDaemonRoutePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider account daemon facade implemented on broad providers handle",
+      regex: /\bimpl\s+ProvidersHandle\s*\{|\buse\s+crate::daemon::ProvidersHandle\b/gu,
+    },
+    {
+      name: "provider account route operation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -6787,6 +6857,10 @@ function scanRepo() {
         patterns: apiPatternsForPath(relativePath),
       }),
       ...scanExecutionHandleRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderAccountHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -6850,6 +6924,10 @@ function scanRepo() {
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
       }),
       ...scanDaemonHandleConstructionRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderAccountDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7444,6 +7522,8 @@ module.exports = {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanExecutionHandleRouteExtractorRatchet,
+  scanProviderAccountDaemonFacadeRatchet,
+  scanProviderAccountHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

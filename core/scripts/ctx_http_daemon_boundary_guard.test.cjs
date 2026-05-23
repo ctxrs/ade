@@ -189,6 +189,8 @@ const {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanExecutionHandleRouteExtractorRatchet,
+  scanProviderAccountDaemonFacadeRatchet,
+  scanProviderAccountHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -445,6 +447,69 @@ test("appstate execution handle extractor ratchet allows only shutdown route", (
       `,
     }),
     [],
+  );
+});
+
+test("appstate provider account route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderAccountHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/accounts/amp.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.amp_accounts_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider account route extracts broad providers handle",
+      "provider account route extracts broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderAccountHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+      contents: `
+        use ctx_daemon::daemon::ProvidersHandle;
+        async fn route(State(providers): State<ProvidersHandle>) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate provider account daemon facade ratchet rejects full-state route seam", () => {
+  assert.deepEqual(
+    scanProviderAccountDaemonFacadeRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/handle.rs",
+      contents: `
+        use crate::daemon::ProvidersHandle;
+        impl ProvidersHandle {
+          pub async fn amp_accounts_for_route(&self) {}
+        }
+      `,
+    }).map((violation) => violation.name),
+    [
+      "provider account daemon facade implemented on broad providers handle",
+      "provider account daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderAccountDaemonFacadeRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/operations.rs",
+      contents: `
+        use crate::daemon::{providers::accounts, DaemonState};
+        async fn amp_accounts_response(state: &Arc<DaemonState>) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "provider account route operation accepts daemon state",
+      "provider account route operation accepts daemon state",
+    ],
   );
 });
 

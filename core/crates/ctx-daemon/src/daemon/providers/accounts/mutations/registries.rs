@@ -4,12 +4,6 @@ use ctx_provider_accounts as provider_accounts;
 
 use crate::daemon::DaemonState;
 
-pub async fn load_amp_account_registry(
-    state: &Arc<DaemonState>,
-) -> anyhow::Result<provider_accounts::AmpAccountRegistry> {
-    provider_accounts::load_amp_registry(&state.core.data_root).await
-}
-
 pub async fn ensure_amp_account_registry_from_runtime_auth(
     state: &Arc<DaemonState>,
 ) -> anyhow::Result<provider_accounts::AmpAccountRegistry> {

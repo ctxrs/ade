@@ -2,7 +2,7 @@ use super::common::provider_account_route_error;
 use super::*;
 
 pub(crate) async fn list_cursor_accounts(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
         .cursor_accounts_for_route()
@@ -12,7 +12,7 @@ pub(crate) async fn list_cursor_accounts(
 }
 
 pub(crate) async fn upsert_cursor_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<CursorAccountUpsertRouteRequest>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -23,7 +23,7 @@ pub(crate) async fn upsert_cursor_account(
 }
 
 pub(crate) async fn set_cursor_active_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Json(req): Json<ProviderActiveAccountRouteRequest>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
@@ -34,7 +34,7 @@ pub(crate) async fn set_cursor_active_account(
 }
 
 pub(crate) async fn delete_cursor_account(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers

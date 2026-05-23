@@ -223,12 +223,4 @@ impl ProvidersHandle {
     pub fn data_root(&self) -> &StdPath {
         &self.state.core.data_root
     }
-
-    #[cfg(feature = "test-support")]
-    pub async fn remove_codex_account_for_test(&self, account_id: &str) -> anyhow::Result<()> {
-        accounts::remove_codex_account(&self.state, account_id)
-            .await
-            .map(|_| ())
-            .map_err(|err| anyhow::anyhow!(err.to_string()))
-    }
 }
