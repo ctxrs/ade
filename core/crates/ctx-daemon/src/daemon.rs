@@ -85,9 +85,10 @@ pub use handle::{
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
     WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
-    WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
-    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
+    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
+    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
+    WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

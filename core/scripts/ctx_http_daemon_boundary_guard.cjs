@@ -277,6 +277,14 @@ const workspaceRegistryDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
 ]);
 
+const workspaceMergeQueueConfigRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+]);
+
+const workspaceMergeQueueConfigDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/merge_queue_config.rs",
+]);
+
 const workspacePrimaryBranchRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
 ]);
@@ -10116,6 +10124,218 @@ function scanWorkspaceRegistryHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceMergeQueueConfigRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const extractorRegex =
+    /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceMergeQueueConfigHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceMergeQueueConfigHandle\s*>)/gu;
+
+  if (!workspaceMergeQueueConfigRouteExtractorAllowedPaths.has(filePath)) {
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace merge queue config route extracts WorkspaceMergeQueueConfigHandle outside merge queue config route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/workspaces/management.rs") {
+    const mergeQueueConfigBlocks = [
+      "get_merge_queue_config",
+      "update_merge_queue_config",
+    ]
+      .map((fnName) => rustFunctionBlockForName({ contents, fnName }))
+      .filter(Boolean);
+
+    const isInMergeQueueConfigBlock = (index) =>
+      mergeQueueConfigBlocks.some(
+        (block) => index >= block.index && index < block.index + block.text.length,
+      );
+
+    extractorRegex.lastIndex = 0;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      if (!isInMergeQueueConfigBlock(match.index)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "workspace merge queue config handle used outside merge queue config route",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    for (const mergeQueueConfigBlock of mergeQueueConfigBlocks) {
+      if (/\bWorkspacesHandle\b/u.test(mergeQueueConfigBlock.text)) {
+        const line = contents.slice(0, mergeQueueConfigBlock.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "workspace merge queue config route uses broad workspace handle",
+          text: lines[line - 1]?.trim() ?? "workspace merge queue config route",
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_merge_queue_config\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace merge queue config router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
+  filePath,
+  contents,
+}) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/workspaces/management.rs" ||
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/management_route_params.rs"
+  ) {
+    const legacyFacadeRegex =
+      /\bpub\s+(?:async\s+)?fn\s+(?:workspace_merge_queue_config_for_route|update_workspace_merge_queue_config_for_route|workspace_merge_queue_config_for_route_params|update_workspace_merge_queue_config_for_route_params|schedule_workspace_merge_queue_if_enabled_and_queued|cancel_queued_entries_for_disabled_workspace)\b/gu;
+    for (
+      let match = legacyFacadeRegex.exec(contents);
+      match;
+      match = legacyFacadeRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace merge queue config facade remains on broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (!workspaceMergeQueueConfigDaemonImplementationPaths.has(filePath)) {
+    return violations;
+  }
+
+  const checks = [
+    {
+      name: "workspace merge queue config daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace merge queue config daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace merge queue config daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace merge queue config daemon facade reuses full-state merge queue helper",
+      regex: /\bcrate::daemon::merge_queue::/gu,
+    },
+    {
+      name: "workspace merge queue config daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceMergeQueueConfigHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|WorkspaceProviderModelPreferenceHandle|WorkspacePrimaryBranchHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspaceMergeQueueConfigHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace merge queue config capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace merge queue config capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanWorkspacePrimaryBranchRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -10689,6 +10909,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceMergeQueueConfigRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspacePrimaryBranchRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -10803,6 +11027,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceRegistryHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceMergeQueueConfigHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10937,6 +11165,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceRegistryDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -11585,6 +11817,9 @@ module.exports = {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceMergeQueueConfigDaemonImplementationRatchet,
+  scanWorkspaceMergeQueueConfigHandleFieldRatchet,
+  scanWorkspaceMergeQueueConfigRouteExtractorRatchet,
   scanWorkspacePrimaryBranchDaemonImplementationRatchet,
   scanWorkspacePrimaryBranchHandleFieldRatchet,
   scanWorkspacePrimaryBranchRouteExtractorRatchet,

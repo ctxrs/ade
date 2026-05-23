@@ -17,10 +17,10 @@ use ctx_daemon::daemon::{
     TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceExecutionConfigHandle,
-    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle,
-    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
-    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
-    WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle,
+    WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
+    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
+    WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -99,6 +99,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_provider_model_preferences: WorkspaceProviderModelPreferenceHandle,
     pub(in crate::api) workspace_worktree: WorkspaceWorktreeHandle,
     pub(in crate::api) workspace_registry: WorkspaceRegistryHandle,
+    pub(in crate::api) workspace_merge_queue_config: WorkspaceMergeQueueConfigHandle,
     pub(in crate::api) workspace_primary_branch: WorkspacePrimaryBranchHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
@@ -159,6 +160,7 @@ impl RouteHandles {
             workspace_provider_model_preferences: handle.workspace_provider_model_preferences(),
             workspace_worktree: handle.workspace_worktree(),
             workspace_registry: handle.workspace_registry(),
+            workspace_merge_queue_config: handle.workspace_merge_queue_config(),
             workspace_primary_branch: handle.workspace_primary_branch(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
@@ -224,6 +226,7 @@ impl_route_state_extractors! {
     WorkspaceProviderModelPreferenceHandle, workspace_provider_model_preferences;
     WorkspaceWorktreeHandle, workspace_worktree;
     WorkspaceRegistryHandle, workspace_registry;
+    WorkspaceMergeQueueConfigHandle, workspace_merge_queue_config;
     WorkspacePrimaryBranchHandle, workspace_primary_branch;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;

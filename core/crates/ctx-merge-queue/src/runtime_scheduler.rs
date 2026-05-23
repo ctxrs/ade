@@ -20,11 +20,24 @@ pub async fn schedule_workspace_if_enabled_and_queued<H: MergeQueueHost>(
     workspace_id: WorkspaceId,
 ) -> Result<bool> {
     let store = H::raw_workspace_store(state.as_ref(), workspace_id).await?;
-    let cfg = load_merge_queue_config(&store).await?;
+    schedule_store_if_enabled_and_queued(
+        H::merge_queue_runtime(state.as_ref()),
+        &store,
+        workspace_id,
+    )
+    .await
+}
+
+pub async fn schedule_store_if_enabled_and_queued(
+    runtime: &MergeQueueRuntime,
+    store: &ctx_store::Store,
+    workspace_id: WorkspaceId,
+) -> Result<bool> {
+    let cfg = load_merge_queue_config(store).await?;
     if !cfg.enabled || store.list_queued_merge_queue_entries().await?.is_empty() {
         return Ok(false);
     }
-    H::merge_queue_runtime(state.as_ref()).schedule(workspace_id);
+    runtime.schedule(workspace_id);
     Ok(true)
 }
 
@@ -246,6 +259,19 @@ pub async fn cancel_queued_entries_for_disabled_workspace<H: MergeQueueHost>(
     store: &ctx_store::Store,
     workspace_id: WorkspaceId,
 ) -> Result<()> {
+    cancel_store_queued_entries_for_disabled_workspace(
+        H::merge_queue_runtime(state.as_ref()),
+        store,
+        workspace_id,
+    )
+    .await
+}
+
+pub async fn cancel_store_queued_entries_for_disabled_workspace(
+    runtime: &MergeQueueRuntime,
+    store: &ctx_store::Store,
+    workspace_id: WorkspaceId,
+) -> Result<()> {
     let cfg = load_merge_queue_config(store).await?;
     if cfg.enabled {
         tracing::debug!(
@@ -274,6 +300,6 @@ pub async fn cancel_queued_entries_for_disabled_workspace<H: MergeQueueHost>(
         cancelled = true,
         "cancelled queued merge queue entries because the workspace queue is disabled"
     );
-    H::merge_queue_runtime(state.as_ref()).notify_waiters();
+    runtime.notify_waiters();
     Ok(())
 }

@@ -235,6 +235,9 @@ const {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceMergeQueueConfigDaemonImplementationRatchet,
+  scanWorkspaceMergeQueueConfigHandleFieldRatchet,
+  scanWorkspaceMergeQueueConfigRouteExtractorRatchet,
   scanWorkspacePrimaryBranchDaemonImplementationRatchet,
   scanWorkspacePrimaryBranchHandleFieldRatchet,
   scanWorkspacePrimaryBranchRouteExtractorRatchet,
@@ -3198,6 +3201,159 @@ test("appstate guard rejects workspace registry broad handle fields", () => {
         global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
         telemetry: Telemetry,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace merge queue config extraction outside allowed route", () => {
+  const violations = scanWorkspaceMergeQueueConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      async fn handler(
+        State(state): State<WorkspaceMergeQueueConfigHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace merge queue config route extracts WorkspaceMergeQueueConfigHandle outside merge queue config route",
+  ]);
+});
+
+test("appstate guard rejects workspace merge queue config broad route and router composition", () => {
+  const routeViolations = scanWorkspaceMergeQueueConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      pub(in crate::api) async fn get_merge_queue_config(
+        State(workspaces): State<WorkspacesHandle>,
+      ) {}
+      pub(in crate::api) async fn update_merge_queue_config(
+        State(mut merge_queue_config): State<WorkspaceMergeQueueConfigHandle>,
+      ) {}
+      pub(in crate::api) async fn get_execution_config(
+        State(merge_queue_config): State<WorkspaceMergeQueueConfigHandle>,
+      ) {}
+      pub(in crate::api) async fn get_workspace_primary_branch(
+        mut merge_queue_config: State<WorkspaceMergeQueueConfigHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes("workspace merge queue config route uses broad workspace handle"),
+  );
+  assert.equal(
+    routeViolations.filter(
+      (name) => name === "workspace merge queue config handle used outside merge queue config route",
+    ).length,
+    2,
+  );
+
+  const routerViolations = scanWorkspaceMergeQueueConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_merge_queue_config: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace merge queue config router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace merge queue config daemon facade broad seams", () => {
+  const violations = scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/merge_queue_config.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, DaemonState, WorkspacesHandle};
+      impl WorkspaceMergeQueueConfigHandle {
+        pub async fn bad(&self, daemon: DaemonHandle, state: Arc<DaemonState>, workspaces: WorkspacesHandle) {
+          self.state.clone();
+          crate::daemon::merge_queue::schedule_workspace_if_enabled_and_queued(&state, WorkspaceId::new()).await;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace merge queue config daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace merge queue config daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace merge queue config daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace merge queue config daemon facade reuses full-state merge queue helper",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace merge queue config daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects legacy workspace merge queue config facades on broad handle", () => {
+  const violations = scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn workspace_merge_queue_config_for_route(&self) {}
+        pub async fn update_workspace_merge_queue_config_for_route(&self) {}
+        pub async fn schedule_workspace_merge_queue_if_enabled_and_queued(&self) {}
+        pub async fn cancel_queued_entries_for_disabled_workspace(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.equal(
+    violations.filter(
+      (name) => name === "workspace merge queue config facade remains on broad workspace handle",
+    ).length,
+    4,
+  );
+});
+
+test("appstate guard rejects workspace merge queue config broad handle fields", () => {
+  const fieldViolations = scanWorkspaceMergeQueueConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceMergeQueueConfigHandle {
+        state: Arc<DaemonState>,
+        workspaces: WorkspacesHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace merge queue config capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace merge queue config capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceMergeQueueConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceMergeQueueConfigHandle {
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        merge_queue: Arc<MergeQueueRuntime>,
       }
     `,
   });

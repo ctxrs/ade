@@ -1,9 +1,8 @@
 use crate::daemon::workspaces::WorkspacesHandle;
 use ctx_route_contracts::workspaces::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspaceRouteError, WorkspaceRouteParams,
+    SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentRouteResponse, WorkspaceRouteError,
+    WorkspaceRouteParams,
 };
 
 impl WorkspacesHandle {
@@ -43,25 +42,6 @@ impl WorkspacesHandle {
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
         self.delete_and_sync_workspace_attachment_for_route(workspace_id, request)
-            .await
-    }
-
-    pub async fn workspace_merge_queue_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-    ) -> Result<WorkspaceMergeQueueConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.workspace_merge_queue_config_for_route(workspace_id)
-            .await
-    }
-
-    pub async fn update_workspace_merge_queue_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-        request: UpdateWorkspaceMergeQueueConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.update_workspace_merge_queue_config_for_route(workspace_id, request)
             .await
     }
 }

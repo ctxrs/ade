@@ -37,9 +37,11 @@ use context::*;
 use execution::*;
 pub use runtime_scheduler::{
     activate_workspace_merge_queue, begin_workspace_drain,
-    cancel_queued_entries_for_disabled_workspace, finish_workspace_drain,
-    reschedule_workspace_after_drain, schedule_workspace_drain,
-    schedule_workspace_if_enabled_and_queued, spawn_merge_queue_runner, WorkspaceDrainStop,
+    cancel_queued_entries_for_disabled_workspace,
+    cancel_store_queued_entries_for_disabled_workspace, finish_workspace_drain,
+    reschedule_workspace_after_drain, schedule_store_if_enabled_and_queued,
+    schedule_workspace_drain, schedule_workspace_if_enabled_and_queued, spawn_merge_queue_runner,
+    WorkspaceDrainStop,
 };
 use storage::{merge_queue_log_path, open_log_file, write_log_line, write_patch_file};
 use sync::maybe_update_worktree_base_commit_for_path;

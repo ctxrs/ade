@@ -124,6 +124,13 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_merge_queue_config(&self) -> WorkspaceMergeQueueConfigHandle {
+        WorkspaceMergeQueueConfigHandle::new(
+            self.protected_workspace_store_lookup(),
+            Arc::clone(&self.state.transport.merge_queue),
+        )
+    }
+
     pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
         let refresh_vcs_snapshot = Arc::new({
             let state = Arc::clone(&self.state);
@@ -1498,6 +1505,59 @@ impl WorkspaceRegistryHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceMergeQueueConfigHandle {
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    merge_queue: Arc<MergeQueueRuntime>,
+}
+
+impl WorkspaceMergeQueueConfigHandle {
+    pub(in crate::daemon) fn new(
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        merge_queue: Arc<MergeQueueRuntime>,
+    ) -> Self {
+        Self {
+            workspace_stores,
+            merge_queue,
+        }
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn schedule_store_if_enabled_and_queued(
+        &self,
+        store: &Store,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<bool> {
+        ctx_merge_queue::schedule_store_if_enabled_and_queued(
+            self.merge_queue.as_ref(),
+            store,
+            workspace_id,
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn cancel_store_queued_entries_for_disabled_workspace(
+        &self,
+        store: &Store,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        ctx_merge_queue::cancel_store_queued_entries_for_disabled_workspace(
+            self.merge_queue.as_ref(),
+            store,
+            workspace_id,
+        )
+        .await
     }
 }
 

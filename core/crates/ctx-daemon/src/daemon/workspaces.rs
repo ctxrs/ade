@@ -24,6 +24,7 @@ mod file_completions;
 mod harness_container;
 mod hydration;
 mod management;
+mod merge_queue_config;
 mod model_preferences;
 mod primary_branch;
 mod prompt_bootstrap_config;

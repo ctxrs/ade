@@ -17,11 +17,11 @@ pub(in crate::api) use worktree_bootstrap::{
 };
 
 pub(in crate::api) async fn update_merge_queue_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(merge_queue_config): State<WorkspaceMergeQueueConfigHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkspaceMergeQueueConfigRequest>,
 ) -> Result<Json<WorkspaceConfigUpdateResult>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    merge_queue_config
         .update_workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(id), req)
         .await
         .map_err(workspace_route_api_error)
@@ -29,10 +29,10 @@ pub(in crate::api) async fn update_merge_queue_config(
 }
 
 pub(in crate::api) async fn get_merge_queue_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(merge_queue_config): State<WorkspaceMergeQueueConfigHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceMergeQueueConfigRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    merge_queue_config
         .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map_err(workspace_route_api_error)

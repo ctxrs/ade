@@ -15,16 +15,17 @@ use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrati
 use crate::test_support::TestDaemon;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
-    WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
-    WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
+    AttachmentMode, AttachmentUpdatePolicy, MergeQueueEntryStatus, VcsKind, Workspace,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceAttachment,
+    WorkspaceAttachmentKind, WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
 use ctx_route_contracts::workspaces::{
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
-    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceFileCompletionsRouteQuery, WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery,
+    WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind, WorkspaceRouteParams,
+    WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 use ctx_store::WorktreeBootstrapResultUpdate;
 
@@ -684,19 +685,193 @@ async fn attachment_route_params_reject_invalid_workspace_id() {
 }
 
 #[tokio::test]
-async fn management_config_route_params_reject_invalid_workspace_id() {
+async fn merge_queue_config_route_params_reject_invalid_workspace_id() {
     let temp = tempfile::tempdir().expect("tempdir");
     let daemon =
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.handle().workspaces();
+    let handle = daemon.handle().workspace_merge_queue_config();
     let error = handle
         .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
         .unwrap_err();
     assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn merge_queue_config_routes_treat_deleting_workspace_as_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "deleting-merge-queue-config").await;
+    daemon.stores().begin_workspace_delete(workspace.id).await;
+    let handle = daemon.handle().workspace_merge_queue_config();
+
+    let get_error = handle
+        .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(get_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(get_error.message(), "workspace not found");
+
+    let post_error = handle
+        .update_workspace_merge_queue_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspaceMergeQueueConfigRequest {
+                enabled: true,
+                target_branch: Some("main".to_string()),
+                verify_command: None,
+                push_on_success: None,
+                push_remote: None,
+                push_branch: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(post_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(post_error.message(), "workspace not found");
+    daemon.stores().finish_workspace_delete(workspace.id).await;
+}
+
+#[tokio::test]
+async fn merge_queue_config_routes_map_unavailable_workspace_store_to_internal() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "unavailable-merge-queue").await;
+    daemon
+        .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
+        .await
+        .expect("block workspace store");
+    let handle = daemon.handle().workspace_merge_queue_config();
+
+    let get_error = handle
+        .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(get_error.kind(), WorkspaceRouteErrorKind::Internal);
+
+    let post_error = handle
+        .update_workspace_merge_queue_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspaceMergeQueueConfigRequest {
+                enabled: true,
+                target_branch: Some("main".to_string()),
+                verify_command: None,
+                push_on_success: None,
+                push_remote: None,
+                push_branch: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(post_error.kind(), WorkspaceRouteErrorKind::Internal);
+}
+
+#[tokio::test]
+async fn merge_queue_config_disable_transition_cancels_queued_entries() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace =
+        create_route_contract_workspace_with_store(&daemon, "disable-merge-queue").await;
+    let handle = daemon.handle().workspace_merge_queue_config();
+    handle
+        .update_workspace_merge_queue_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspaceMergeQueueConfigRequest {
+                enabled: true,
+                target_branch: Some("main".to_string()),
+                verify_command: None,
+                push_on_success: None,
+                push_remote: None,
+                push_branch: None,
+            },
+        )
+        .await
+        .expect("enable merge queue");
+    let entry = daemon
+        .seed_workspace_merge_queue_queued_entry_for_test(workspace.id, "queued-before-disable")
+        .await
+        .expect("seed queued entry");
+
+    handle
+        .update_workspace_merge_queue_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspaceMergeQueueConfigRequest {
+                enabled: false,
+                target_branch: Some("main".to_string()),
+                verify_command: None,
+                push_on_success: None,
+                push_remote: None,
+                push_branch: None,
+            },
+        )
+        .await
+        .expect("disable merge queue");
+
+    let disabled = daemon
+        .load_workspace_merge_queue_entry_for_test(workspace.id, entry.id)
+        .await
+        .expect("load entry");
+    assert_eq!(disabled.status, MergeQueueEntryStatus::Cancelled);
+    assert_eq!(
+        disabled.error_message.as_deref(),
+        Some("merge queue disabled while entry was queued")
+    );
+}
+
+#[tokio::test]
+async fn merge_queue_config_unchanged_disabled_state_does_not_cancel_queued_entries() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace =
+        create_route_contract_workspace_with_store(&daemon, "unchanged-merge-queue").await;
+    let entry = daemon
+        .seed_workspace_merge_queue_queued_entry_for_test(workspace.id, "queued-while-disabled")
+        .await
+        .expect("seed queued entry");
+    let handle = daemon.handle().workspace_merge_queue_config();
+
+    handle
+        .update_workspace_merge_queue_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspaceMergeQueueConfigRequest {
+                enabled: false,
+                target_branch: Some("main".to_string()),
+                verify_command: None,
+                push_on_success: None,
+                push_remote: None,
+                push_branch: None,
+            },
+        )
+        .await
+        .expect("keep merge queue disabled");
+
+    let unchanged = daemon
+        .load_workspace_merge_queue_entry_for_test(workspace.id, entry.id)
+        .await
+        .expect("load entry");
+    assert_eq!(unchanged.status, MergeQueueEntryStatus::Queued);
+    assert_ne!(
+        unchanged.error_message.as_deref(),
+        Some("merge queue disabled while entry was queued")
+    );
 }
 
 #[tokio::test]
