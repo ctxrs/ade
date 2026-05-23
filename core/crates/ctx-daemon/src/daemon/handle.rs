@@ -11,9 +11,10 @@ use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::{Store, StoreManager};
+use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use super::{
     blobs::BlobHandle,
@@ -30,8 +31,8 @@ impl DaemonHandle {
         Self { state }
     }
 
-    pub fn core(&self) -> CoreHandle {
-        CoreHandle::new(Arc::clone(&self.state))
+    pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
+        self.state.core.shutdown_tx.subscribe()
     }
 
     pub fn auth(&self) -> AuthHandle {
@@ -116,6 +117,23 @@ impl DaemonHandle {
         MobileStoreHandle::new(self.state.global_store().clone())
     }
 
+    pub fn mobile_runtime(&self) -> MobileRuntimeHandle {
+        MobileRuntimeHandle::new(
+            self.state.global_store().clone(),
+            self.state.transport.mobile_tunnel.clone(),
+            self.state.core.daemon_url.clone(),
+            self.state.core.auth_token.is_some(),
+        )
+    }
+
+    pub fn mobile_secure_proxy(&self) -> MobileSecureProxyHandle {
+        MobileSecureProxyHandle::new(
+            self.state.global_store().clone(),
+            self.health(),
+            self.state.telemetry.telemetry.clone(),
+        )
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -152,66 +170,6 @@ impl DaemonHandle {
 impl From<Arc<DaemonState>> for DaemonHandle {
     fn from(state: Arc<DaemonState>) -> Self {
         Self::new(state)
-    }
-}
-
-impl CoreHandle {
-    pub async fn insert_blob(
-        &self,
-        id: &str,
-        sha256: &str,
-        bytes: i64,
-        mime_type: &str,
-        name: Option<&str>,
-        created_at: chrono::DateTime<chrono::Utc>,
-    ) -> anyhow::Result<()> {
-        self.state
-            .global_store()
-            .insert_blob(id, sha256, bytes, mime_type, name, created_at)
-            .await
-    }
-
-    pub async fn get_blob(
-        &self,
-        id: &str,
-    ) -> anyhow::Result<
-        Option<(
-            String,
-            String,
-            i64,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-        )>,
-    > {
-        self.state.global_store().get_blob(id).await
-    }
-
-    pub fn data_root(&self) -> &Path {
-        &self.state.core.data_root
-    }
-
-    pub fn daemon_url(&self) -> &str {
-        &self.state.core.daemon_url
-    }
-
-    pub fn public_base_url(&self) -> Option<&str> {
-        self.state.core.public_base_url.as_deref()
-    }
-
-    pub fn auth_token(&self) -> Option<&str> {
-        self.state.core.auth_token.as_deref()
-    }
-
-    pub fn has_auth_token(&self) -> bool {
-        self.auth_token().is_some()
-    }
-
-    pub fn subscribe_shutdown(&self) -> tokio::sync::broadcast::Receiver<()> {
-        self.state.core.shutdown_tx.subscribe()
-    }
-
-    pub fn storage_guard_snapshot(&self) -> StorageGuardStatus {
-        self.state.storage_guard_snapshot()
     }
 }
 
@@ -601,6 +559,75 @@ impl MobileStoreHandle {
     }
 }
 
+#[derive(Clone)]
+pub struct MobileRuntimeHandle {
+    store: Store,
+    mobile_tunnel: MobileTunnelManager,
+    daemon_url: String,
+    auth_token_configured: bool,
+}
+
+impl MobileRuntimeHandle {
+    pub(in crate::daemon) fn new(
+        store: Store,
+        mobile_tunnel: MobileTunnelManager,
+        daemon_url: String,
+        auth_token_configured: bool,
+    ) -> Self {
+        Self {
+            store,
+            mobile_tunnel,
+            daemon_url,
+            auth_token_configured,
+        }
+    }
+
+    pub(in crate::daemon) fn store(&self) -> &Store {
+        &self.store
+    }
+
+    pub(in crate::daemon) fn mobile_tunnel(&self) -> &MobileTunnelManager {
+        &self.mobile_tunnel
+    }
+
+    pub(in crate::daemon) fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+
+    pub(in crate::daemon) fn auth_token_configured(&self) -> bool {
+        self.auth_token_configured
+    }
+}
+
+#[derive(Clone)]
+pub struct MobileSecureProxyHandle {
+    store: Store,
+    health: HealthHandle,
+    telemetry: Telemetry,
+}
+
+impl MobileSecureProxyHandle {
+    pub(in crate::daemon) fn new(store: Store, health: HealthHandle, telemetry: Telemetry) -> Self {
+        Self {
+            store,
+            health,
+            telemetry,
+        }
+    }
+
+    pub(in crate::daemon) fn store(&self) -> &Store {
+        &self.store
+    }
+
+    pub(in crate::daemon) fn health(&self) -> &HealthHandle {
+        &self.health
+    }
+
+    pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
+        &self.telemetry
+    }
+}
+
 macro_rules! domain_handle_with_accessor {
     ($name:ident, $accessor:ident) => {
         #[allow(dead_code)]
@@ -617,7 +644,6 @@ macro_rules! domain_handle_with_accessor {
     };
 }
 
-domain_handle_with_accessor!(CoreHandle, core);
 domain_handle_with_accessor!(SessionsHandle, sessions);
 domain_handle_with_accessor!(TasksHandle, tasks);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);

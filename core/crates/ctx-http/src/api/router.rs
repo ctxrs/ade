@@ -6,11 +6,11 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 use ctx_daemon::daemon::{
-    AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle,
-    ExecutionHandle, HealthHandle, LogsHandle, MobileStoreHandle, OrgPolicyHandle, ProvidersHandle,
-    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
-    TransportHandle, UpdateActivityHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
-    WorkspacesHandle,
+    AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
+    HealthHandle, LogsHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
+    OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle,
+    TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -73,7 +73,6 @@ macro_rules! impl_route_state_extractors {
 
 #[derive(Clone)]
 pub struct RouteHandles {
-    pub(in crate::api) core: CoreHandle,
     pub(in crate::api) auth: AuthHandle,
     pub(in crate::api) health: HealthHandle,
     pub(in crate::api) diagnostics: DiagnosticsHandle,
@@ -86,6 +85,8 @@ pub struct RouteHandles {
     pub(in crate::api) update_activity: UpdateActivityHandle,
     pub(in crate::api) settings: SettingsHandle,
     pub(in crate::api) mobile_store: MobileStoreHandle,
+    pub(in crate::api) mobile_runtime: MobileRuntimeHandle,
+    pub(in crate::api) mobile_secure_proxy: MobileSecureProxyHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
@@ -99,7 +100,6 @@ pub struct RouteHandles {
 impl RouteHandles {
     pub fn from_daemon_handle(handle: DaemonHandle) -> Self {
         Self {
-            core: handle.core(),
             auth: handle.auth(),
             health: handle.health(),
             diagnostics: handle.diagnostics(),
@@ -112,6 +112,8 @@ impl RouteHandles {
             update_activity: handle.update_activity(),
             settings: handle.settings(),
             mobile_store: handle.mobile_store(),
+            mobile_runtime: handle.mobile_runtime(),
+            mobile_secure_proxy: handle.mobile_secure_proxy(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
@@ -130,7 +132,6 @@ pub(in crate::api) struct RouteState {
 }
 
 impl_route_state_extractors! {
-    CoreHandle, core;
     AuthHandle, auth;
     HealthHandle, health;
     DiagnosticsHandle, diagnostics;
@@ -143,6 +144,8 @@ impl_route_state_extractors! {
     UpdateActivityHandle, update_activity;
     SettingsHandle, settings;
     MobileStoreHandle, mobile_store;
+    MobileRuntimeHandle, mobile_runtime;
+    MobileSecureProxyHandle, mobile_secure_proxy;
     SessionsHandle, sessions;
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;

@@ -9,11 +9,11 @@ use ctx_mobile_access_service::{
 use http::{header, Method, StatusCode};
 use serde::Serialize;
 
-use crate::daemon::CoreHandle;
+use crate::daemon::MobileSecureProxyHandle;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
 
-impl CoreHandle {
+impl MobileSecureProxyHandle {
     pub async fn proxy_mobile_secure_request_for_route(
         &self,
         mobile_auth: Option<MobileAuthContext>,
@@ -39,7 +39,7 @@ impl CoreHandle {
 }
 
 async fn dispatch_scoped_secure_proxy_request(
-    core: &CoreHandle,
+    proxy: &MobileSecureProxyHandle,
     method: &Method,
     uri: &str,
     headers: &[(String, String)],
@@ -50,14 +50,17 @@ async fn dispatch_scoped_secure_proxy_request(
         return Ok(empty_response(StatusCode::METHOD_NOT_ALLOWED));
     }
     if path == "/api/health" {
-        let include_sensitive = health_request_is_authorized(core, headers);
-        let Ok(snapshot) = core.health_snapshot(package_version, include_sensitive) else {
+        let include_sensitive = health_request_is_authorized(proxy, headers);
+        let Ok(snapshot) = proxy
+            .health()
+            .health_snapshot(package_version, include_sensitive)
+        else {
             return Ok(empty_response(StatusCode::INTERNAL_SERVER_ERROR));
         };
         return json_response(StatusCode::OK, &snapshot);
     }
     if path == "/api/workspaces" {
-        let Ok(workspaces) = core.state.global_store().list_workspaces().await else {
+        let Ok(workspaces) = proxy.store().list_workspaces().await else {
             return Ok(empty_response(StatusCode::INTERNAL_SERVER_ERROR));
         };
         return json_response(StatusCode::OK, &workspaces);
@@ -67,13 +70,12 @@ async fn dispatch_scoped_secure_proxy_request(
             return Ok(empty_response(StatusCode::BAD_REQUEST));
         };
         let workspace_id = WorkspaceId(workspace_uuid);
-        let Ok(workspace) = core.state.global_store().get_workspace(workspace_id).await else {
+        let Ok(workspace) = proxy.store().get_workspace(workspace_id).await else {
             return Ok(empty_response(StatusCode::INTERNAL_SERVER_ERROR));
         };
         if let Some(workspace) = workspace {
-            core.state
-                .telemetry
-                .telemetry
+            proxy
+                .telemetry()
                 .emit(ctx_observability::telemetry::TelemetryEvent::workspace_opened())
                 .await;
             return json_response(StatusCode::OK, &workspace);
@@ -83,8 +85,11 @@ async fn dispatch_scoped_secure_proxy_request(
     Ok(empty_response(StatusCode::NOT_FOUND))
 }
 
-fn health_request_is_authorized(core: &CoreHandle, headers: &[(String, String)]) -> bool {
-    let Some(expected) = core.auth_token() else {
+fn health_request_is_authorized(
+    proxy: &MobileSecureProxyHandle,
+    headers: &[(String, String)],
+) -> bool {
+    let Some(expected) = proxy.health().auth_token() else {
         return true;
     };
     headers.iter().any(|(name, value)| {

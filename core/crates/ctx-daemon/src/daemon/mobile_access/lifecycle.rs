@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 use ctx_mobile_access_service::{
     persist_mobile_access_enable_bootstrap,
@@ -9,6 +7,8 @@ use ctx_mobile_access_service::{
     },
     MobileAccessConfigSnapshot, PersistMobileAccessEnableBootstrapRequest,
 };
+use ctx_store::Store;
+use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use serde_json::json;
 use url::Url;
 
@@ -17,7 +17,6 @@ use super::control_plane::{
     ControlPlaneEnableResp, PAIRING_TOKEN_TTL_SECS,
 };
 use super::StartMobileTunnelRequest;
-use crate::daemon::DaemonState;
 
 pub fn mobile_public_url_is_allowed(url: &Url) -> bool {
     if url.scheme() == "https" {
@@ -40,10 +39,13 @@ pub fn mobile_public_url_is_allowed(url: &Url) -> bool {
 }
 
 pub(super) async fn enable_mobile_access_for_route(
-    state: &Arc<DaemonState>,
+    store: &Store,
+    mobile_tunnel: &MobileTunnelManager,
+    daemon_url: &str,
+    auth_token_configured: bool,
     request: EnableMobileAccessRequest,
 ) -> Result<EnableMobileAccessResult, MobileAccessRouteError> {
-    if state.core.auth_token.is_none() {
+    if !auth_token_configured {
         return Err(MobileAccessRouteError::bad_request(
             "daemon auth token is not configured; refusing to expose daemon publicly",
         ));
@@ -55,7 +57,7 @@ pub(super) async fn enable_mobile_access_for_route(
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     let bootstrap = persist_mobile_access_enable_bootstrap(
-        state.global_store(),
+        store,
         PersistMobileAccessEnableBootstrapRequest {
             public_base_url: public_url.as_str().trim_end_matches('/').to_string(),
             relay_base_url: payload.relay_base_url.clone(),
@@ -69,7 +71,8 @@ pub(super) async fn enable_mobile_access_for_route(
     )
     .await?;
     super::start_mobile_tunnel_best_effort(
-        state,
+        mobile_tunnel,
+        daemon_url,
         StartMobileTunnelRequest {
             relay_base_url: payload.relay_base_url.clone(),
             tunnel_id: payload.tunnel_id.clone(),
@@ -88,11 +91,12 @@ pub(super) async fn enable_mobile_access_for_route(
 }
 
 pub(super) async fn disable_mobile_access_for_route(
-    state: &Arc<DaemonState>,
+    store: &Store,
+    mobile_tunnel: &MobileTunnelManager,
     supabase_token: String,
 ) -> Result<(), DisableMobileAccessError> {
     revoke_control_plane_mobile_access_best_effort(&supabase_token).await;
-    super::disable_mobile_access_runtime(state).await
+    super::disable_mobile_access_runtime(store, mobile_tunnel).await
 }
 
 fn parse_allowed_public_url(raw_public_base_url: &str) -> Result<Url, MobileAccessRouteError> {

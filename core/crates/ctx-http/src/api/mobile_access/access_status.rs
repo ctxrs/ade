@@ -1,6 +1,6 @@
 use super::*;
 pub(in crate::api) async fn get_mobile_access_status(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileRuntimeHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
 ) -> Result<Json<MobileAccessStatus>, StatusCode> {
     if mobile_auth.is_some() {

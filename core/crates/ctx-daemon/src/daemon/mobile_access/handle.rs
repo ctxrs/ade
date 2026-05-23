@@ -1,5 +1,5 @@
 use super::{lifecycle, profiles, runtime, MobileAccessStatusError, StartMobileTunnelRequest};
-use crate::daemon::{CoreHandle, MobileStoreHandle};
+use crate::daemon::{MobileRuntimeHandle, MobileStoreHandle};
 use chrono::{DateTime, Utc};
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
 use ctx_core::models::{MobileConnectionProfile, MobileDeviceRegistration};
@@ -19,19 +19,31 @@ use ctx_mobile_access_service::{
     OpenMobileSecureRequestResult,
 };
 
-impl CoreHandle {
+impl MobileRuntimeHandle {
     pub async fn enable_mobile_access_for_route(
         &self,
         request: EnableMobileAccessRequest,
     ) -> Result<EnableMobileAccessResult, MobileAccessRouteError> {
-        lifecycle::enable_mobile_access_for_route(&self.state, request).await
+        lifecycle::enable_mobile_access_for_route(
+            self.store(),
+            self.mobile_tunnel(),
+            self.daemon_url(),
+            self.auth_token_configured(),
+            request,
+        )
+        .await
     }
 
     pub async fn disable_mobile_access_for_route(
         &self,
         supabase_token: String,
     ) -> Result<(), DisableMobileAccessError> {
-        lifecycle::disable_mobile_access_for_route(&self.state, supabase_token).await
+        lifecycle::disable_mobile_access_for_route(
+            self.store(),
+            self.mobile_tunnel(),
+            supabase_token,
+        )
+        .await
     }
 }
 
@@ -261,19 +273,20 @@ impl MobileStoreHandle {
     }
 }
 
-impl CoreHandle {
+impl MobileRuntimeHandle {
     pub async fn mobile_access_status(
         &self,
     ) -> Result<MobileAccessStatusSnapshot, MobileAccessStatusError> {
-        runtime::mobile_access_status(&self.state).await
+        runtime::mobile_access_status(self.store(), self.mobile_tunnel()).await
     }
 
     pub async fn disable_mobile_access_runtime(&self) -> Result<(), DisableMobileAccessError> {
-        runtime::disable_mobile_access_runtime(&self.state).await
+        runtime::disable_mobile_access_runtime(self.store(), self.mobile_tunnel()).await
     }
 
     pub async fn start_mobile_tunnel_best_effort(&self, request: StartMobileTunnelRequest) {
-        runtime::start_mobile_tunnel_best_effort(&self.state, request).await;
+        runtime::start_mobile_tunnel_best_effort(self.mobile_tunnel(), self.daemon_url(), request)
+            .await;
     }
 }
 

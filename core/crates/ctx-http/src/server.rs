@@ -27,7 +27,7 @@ async fn serve_runtime(runtime: daemon::DaemonRuntime) -> Result<()> {
     let mut servers = tokio::task::JoinSet::new();
     for listener in listeners {
         let app = app.clone();
-        let mut shutdown_rx = handle.core().subscribe_shutdown();
+        let mut shutdown_rx = handle.subscribe_shutdown();
         servers.spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {

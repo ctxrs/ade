@@ -3,7 +3,7 @@ use ctx_route_contracts::health::{DaemonHealthSnapshot, HealthCompatibility};
 use ctx_update_service::BuildIdentity;
 use serde::Serialize;
 
-use crate::daemon::{CoreHandle, HealthHandle};
+use crate::daemon::HealthHandle;
 
 const MOBILE_API_MIN_VERSION: i64 = 1;
 const MOBILE_API_MAX_VERSION: i64 = 1;
@@ -64,23 +64,6 @@ impl HealthHandle {
     ) -> Result<DaemonHealthSnapshot, HealthSnapshotError> {
         let identity = ctx_update_service::current_build_identity(package_version)?;
         build_health_snapshot(self, identity, include_sensitive)
-    }
-}
-
-impl CoreHandle {
-    pub fn health_snapshot(
-        &self,
-        package_version: &'static str,
-        include_sensitive: bool,
-    ) -> Result<DaemonHealthSnapshot, HealthSnapshotError> {
-        let identity = ctx_update_service::current_build_identity(package_version)?;
-        let health = HealthHandle::new(
-            self.state.core.data_root.clone(),
-            self.state.core.daemon_url.clone(),
-            self.state.core.auth_token.clone(),
-            self.state.core.storage_guard.clone(),
-        );
-        build_health_snapshot(&health, identity, include_sensitive)
     }
 }
 

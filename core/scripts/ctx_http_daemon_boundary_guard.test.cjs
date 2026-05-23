@@ -262,7 +262,7 @@ test("daemon boundary guard rejects broad daemon handle access in API code", () 
 });
 
 test("appstate route handle ratchet rejects new full-state handle families", () => {
-  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("CoreHandle"), true);
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("CoreHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TelemetryHandle"), false);
   const violations = scanAppStateRouteHandleRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
@@ -276,7 +276,6 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
           }
         };
       }
-      domain_handle_with_accessor!(CoreHandle, core);
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(TasksHandle, tasks);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
@@ -310,7 +309,6 @@ test("appstate route handle ratchet rejects migrated telemetry full-state reintr
           }
         };
       }
-      domain_handle_with_accessor!(CoreHandle, core);
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(TasksHandle, tasks);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);

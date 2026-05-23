@@ -956,7 +956,6 @@ const HANDLE_BACKDOOR_PATTERNS = [
 ];
 
 const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
-  "CoreHandle",
   "SessionsHandle",
   "TasksHandle",
   "WorkspacesHandle",

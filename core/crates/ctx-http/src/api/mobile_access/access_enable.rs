@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn enable_mobile_access(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileRuntimeHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<EnableMobileAccessReq>,
 ) -> Result<Json<EnableMobileAccessResp>, (StatusCode, Json<ApiErrorResp>)> {
