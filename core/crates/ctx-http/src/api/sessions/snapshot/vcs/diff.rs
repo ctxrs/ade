@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn get_session_diff(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionVcsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionVcsRouteQuery>,
 ) -> Result<Json<SessionVcsDiffRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -13,7 +13,7 @@ pub(crate) async fn get_session_diff(
 }
 
 pub(crate) async fn get_session_diff_summary(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionVcsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionVcsRouteQuery>,
 ) -> Result<Json<SessionVcsDiffSummaryRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

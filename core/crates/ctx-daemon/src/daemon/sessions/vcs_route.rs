@@ -11,9 +11,9 @@ use crate::daemon::sessions::vcs::{
     SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
     SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
 };
-use crate::daemon::SessionsHandle;
+use crate::daemon::SessionVcsHandle;
 
-impl SessionsHandle {
+impl SessionVcsHandle {
     pub async fn get_session_vcs_diff_for_route(
         &self,
         params: SessionRouteParams,

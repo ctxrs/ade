@@ -8,7 +8,7 @@ use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SandboxBinding, Session, SessionEvent, Task, TaskDeltaKind, Workspace,
-    Worktree,
+    Worktree, WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
@@ -24,6 +24,7 @@ use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_session_runtime::runtime::SessionRuntime;
 use ctx_session_tools::model_resolution::ModelCatalog;
+use ctx_session_vcs_service::vcs::SessionVcsDiffBaseQuery;
 use ctx_settings_model::ExecutionSettings;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::manager::WorkspaceStoreAccessOutcome;
@@ -32,6 +33,10 @@ use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_runtime::HarnessRuntimeManager;
+use ctx_worktree_vcs_service::{
+    GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsCommitLookupSource,
+    WorktreeVcsDiffBaseQuery, WorktreeVcsDiffSummaryCounts,
+};
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use super::{
@@ -178,6 +183,137 @@ impl DaemonHandle {
             self.state.core.tool_output_spool_dir.clone(),
             self.session_artifact_effects(),
         )
+    }
+
+    fn session_vcs_effects(&self) -> Arc<SessionVcsEffects> {
+        let worktree_has_vcs_repo = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::git_status::worktree_has_vcs_repo(&state, &worktree).await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let load_git_status_snapshot = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, include_untracked_files: bool, include_entries: bool| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::git_status::load_git_status_snapshot(
+                        &state,
+                        &worktree,
+                        include_untracked_files,
+                        include_entries,
+                    )
+                    .await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let resolve_worktree_commit = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, revision: String| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    let source =
+                        crate::daemon::git_status::HttpWorktreeVcsSource::new(&state, &worktree);
+                    source.resolve_commit(&revision).await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let diff_worktree_for_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, base_commit_sha: String| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::diff_worktree_for_session(
+                        &state,
+                        &worktree,
+                        &base_commit_sha,
+                    )
+                    .await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let diff_worktree_summary_for_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, base_commit_sha: String| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::diff_worktree_summary_for_session(
+                        &state,
+                        &worktree,
+                        &base_commit_sha,
+                    )
+                    .await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let resolve_worktree_diff_base = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree, query: SessionVcsDiffBaseQuery| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    let source =
+                        crate::daemon::git_status::HttpWorktreeVcsSource::new(&state, &worktree);
+                    ctx_worktree_vcs_service::resolve_worktree_diff_base_from_source(
+                        &source,
+                        &worktree,
+                        WorktreeVcsDiffBaseQuery {
+                            base_commit_sha: query.base_commit_sha,
+                            target_branch: query.target_branch,
+                        },
+                    )
+                    .await
+                }) as SessionVcsFuture<_>
+            }
+        });
+        let apply_worktree_vcs_session_patch =
+            Arc::new(|worktree: Worktree, patch: String, reverse_patch: bool| {
+                Box::pin(async move {
+                    ctx_worktree_vcs_service::apply_worktree_vcs_session_patch(
+                        Path::new(&worktree.root_path),
+                        &patch,
+                        reverse_patch,
+                    )
+                    .await
+                }) as SessionVcsFuture<_>
+            });
+        let cached_worktree_vcs_snapshot = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree_id: WorktreeId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.get_worktree_vcs_snapshot(worktree_id).await })
+                    as SessionVcsFuture<_>
+            }
+        });
+        let emit_compat_payload_reject_counter = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |surface: &'static str, issue: &'static str| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state
+                        .emit_compat_payload_reject_counter(surface, issue, None)
+                        .await;
+                }) as SessionVcsFuture<_>
+            }
+        });
+        SessionVcsEffects::new(SessionVcsEffectsParts {
+            worktree_has_vcs_repo,
+            load_git_status_snapshot,
+            resolve_worktree_commit,
+            diff_worktree_for_session,
+            diff_worktree_summary_for_session,
+            resolve_worktree_diff_base,
+            apply_worktree_vcs_session_patch,
+            cached_worktree_vcs_snapshot,
+            emit_compat_payload_reject_counter,
+            is_no_vcs_repo_error: Arc::new(ctx_worktree_vcs_service::is_no_vcs_repo_error),
+        })
+    }
+
+    pub fn session_vcs(&self) -> SessionVcsHandle {
+        SessionVcsHandle::new(self.session_store_lookup(), self.session_vcs_effects())
     }
 
     fn task_lifecycle_workspace_runtime(&self) -> Arc<TaskLifecycleWorkspaceRuntime> {
@@ -1672,6 +1808,221 @@ impl SessionArtifactEffects {
 
     pub(in crate::daemon) async fn publish_event(&self, event: SessionEvent) {
         (self.publish_event)(event).await;
+    }
+}
+
+type SessionVcsFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type SessionVcsWorktreeBoolEffect =
+    Arc<dyn Fn(Worktree) -> SessionVcsFuture<anyhow::Result<bool>> + Send + Sync>;
+type SessionVcsGitStatusEffect = Arc<
+    dyn Fn(Worktree, bool, bool) -> SessionVcsFuture<anyhow::Result<GitStatusSnapshot>>
+        + Send
+        + Sync,
+>;
+type SessionVcsCommitEffect =
+    Arc<dyn Fn(Worktree, String) -> SessionVcsFuture<anyhow::Result<String>> + Send + Sync>;
+type SessionVcsDiffEffect =
+    Arc<dyn Fn(Worktree, String) -> SessionVcsFuture<anyhow::Result<String>> + Send + Sync>;
+type SessionVcsDiffSummaryEffect = Arc<
+    dyn Fn(Worktree, String) -> SessionVcsFuture<anyhow::Result<WorktreeVcsDiffSummaryCounts>>
+        + Send
+        + Sync,
+>;
+type SessionVcsDiffBaseEffect = Arc<
+    dyn Fn(Worktree, SessionVcsDiffBaseQuery) -> SessionVcsFuture<WorktreeDiffBaseResolution>
+        + Send
+        + Sync,
+>;
+type SessionVcsPatchEffect =
+    Arc<dyn Fn(Worktree, String, bool) -> SessionVcsFuture<anyhow::Result<()>> + Send + Sync>;
+type SessionVcsSnapshotEffect =
+    Arc<dyn Fn(WorktreeId) -> SessionVcsFuture<Option<WorktreeVcsSnapshot>> + Send + Sync>;
+type SessionVcsCompatMetricEffect =
+    Arc<dyn Fn(&'static str, &'static str) -> SessionVcsFuture<()> + Send + Sync>;
+type SessionVcsNoRepoClassifier = Arc<dyn Fn(&anyhow::Error) -> bool + Send + Sync>;
+
+pub(in crate::daemon) struct SessionVcsEffectsParts {
+    worktree_has_vcs_repo: SessionVcsWorktreeBoolEffect,
+    load_git_status_snapshot: SessionVcsGitStatusEffect,
+    resolve_worktree_commit: SessionVcsCommitEffect,
+    diff_worktree_for_session: SessionVcsDiffEffect,
+    diff_worktree_summary_for_session: SessionVcsDiffSummaryEffect,
+    resolve_worktree_diff_base: SessionVcsDiffBaseEffect,
+    apply_worktree_vcs_session_patch: SessionVcsPatchEffect,
+    cached_worktree_vcs_snapshot: SessionVcsSnapshotEffect,
+    emit_compat_payload_reject_counter: SessionVcsCompatMetricEffect,
+    is_no_vcs_repo_error: SessionVcsNoRepoClassifier,
+}
+
+pub(in crate::daemon) struct SessionVcsEffects {
+    worktree_has_vcs_repo: SessionVcsWorktreeBoolEffect,
+    load_git_status_snapshot: SessionVcsGitStatusEffect,
+    resolve_worktree_commit: SessionVcsCommitEffect,
+    diff_worktree_for_session: SessionVcsDiffEffect,
+    diff_worktree_summary_for_session: SessionVcsDiffSummaryEffect,
+    resolve_worktree_diff_base: SessionVcsDiffBaseEffect,
+    apply_worktree_vcs_session_patch: SessionVcsPatchEffect,
+    cached_worktree_vcs_snapshot: SessionVcsSnapshotEffect,
+    emit_compat_payload_reject_counter: SessionVcsCompatMetricEffect,
+    is_no_vcs_repo_error: SessionVcsNoRepoClassifier,
+}
+
+impl SessionVcsEffects {
+    pub(in crate::daemon) fn new(parts: SessionVcsEffectsParts) -> Arc<Self> {
+        Arc::new(Self {
+            worktree_has_vcs_repo: parts.worktree_has_vcs_repo,
+            load_git_status_snapshot: parts.load_git_status_snapshot,
+            resolve_worktree_commit: parts.resolve_worktree_commit,
+            diff_worktree_for_session: parts.diff_worktree_for_session,
+            diff_worktree_summary_for_session: parts.diff_worktree_summary_for_session,
+            resolve_worktree_diff_base: parts.resolve_worktree_diff_base,
+            apply_worktree_vcs_session_patch: parts.apply_worktree_vcs_session_patch,
+            cached_worktree_vcs_snapshot: parts.cached_worktree_vcs_snapshot,
+            emit_compat_payload_reject_counter: parts.emit_compat_payload_reject_counter,
+            is_no_vcs_repo_error: parts.is_no_vcs_repo_error,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionVcsHandle {
+    lookup: SessionStoreLookup,
+    effects: Arc<SessionVcsEffects>,
+}
+
+impl SessionVcsHandle {
+    pub(in crate::daemon) fn new(
+        lookup: SessionStoreLookup,
+        effects: Arc<SessionVcsEffects>,
+    ) -> Self {
+        Self { lookup, effects }
+    }
+
+    pub(in crate::daemon) async fn session_store_or_none(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Option<Store>> {
+        match self.lookup.existing_session_store(session_id).await {
+            Ok(store) => Ok(Some(store)),
+            Err(crate::daemon::SessionStoreAccessError::NotFound) => Ok(None),
+            Err(error) => Err(session_store_access_anyhow(error)),
+        }
+    }
+
+    pub(in crate::daemon) async fn session_store_for_write_or_none(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Option<Store>> {
+        match self
+            .lookup
+            .existing_session_store_for_write(session_id)
+            .await
+        {
+            Ok(store) => Ok(Some(store)),
+            Err(crate::daemon::SessionStoreAccessError::NotFound) => Ok(None),
+            Err(error) => Err(session_store_access_anyhow(error)),
+        }
+    }
+
+    pub(in crate::daemon) async fn worktree_has_vcs_repo(
+        &self,
+        worktree: &Worktree,
+    ) -> anyhow::Result<bool> {
+        (self.effects.worktree_has_vcs_repo)(worktree.clone()).await
+    }
+
+    pub(in crate::daemon) async fn load_git_status_snapshot(
+        &self,
+        worktree: &Worktree,
+        include_untracked_files: bool,
+        include_entries: bool,
+    ) -> anyhow::Result<GitStatusSnapshot> {
+        (self.effects.load_git_status_snapshot)(
+            worktree.clone(),
+            include_untracked_files,
+            include_entries,
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn resolve_worktree_commit(
+        &self,
+        worktree: &Worktree,
+        revision: &str,
+    ) -> anyhow::Result<String> {
+        (self.effects.resolve_worktree_commit)(worktree.clone(), revision.to_string()).await
+    }
+
+    pub(in crate::daemon) async fn diff_worktree_for_session(
+        &self,
+        worktree: &Worktree,
+        base_commit_sha: &str,
+    ) -> anyhow::Result<String> {
+        (self.effects.diff_worktree_for_session)(worktree.clone(), base_commit_sha.to_string())
+            .await
+    }
+
+    pub(in crate::daemon) async fn diff_worktree_summary_for_session(
+        &self,
+        worktree: &Worktree,
+        base_commit_sha: &str,
+    ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {
+        (self.effects.diff_worktree_summary_for_session)(
+            worktree.clone(),
+            base_commit_sha.to_string(),
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn resolve_worktree_diff_base(
+        &self,
+        worktree: &Worktree,
+        query: SessionVcsDiffBaseQuery,
+    ) -> WorktreeDiffBaseResolution {
+        (self.effects.resolve_worktree_diff_base)(worktree.clone(), query).await
+    }
+
+    pub(in crate::daemon) async fn apply_worktree_vcs_session_patch(
+        &self,
+        worktree: &Worktree,
+        patch: &str,
+        reverse_patch: bool,
+    ) -> anyhow::Result<()> {
+        (self.effects.apply_worktree_vcs_session_patch)(
+            worktree.clone(),
+            patch.to_string(),
+            reverse_patch,
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn cached_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        (self.effects.cached_worktree_vcs_snapshot)(worktree_id).await
+    }
+
+    pub(in crate::daemon) async fn emit_compat_payload_reject_counter(
+        &self,
+        surface: &'static str,
+        issue: &'static str,
+    ) {
+        (self.effects.emit_compat_payload_reject_counter)(surface, issue).await;
+    }
+
+    pub(in crate::daemon) fn is_no_vcs_repo_error(&self, error: &anyhow::Error) -> bool {
+        (self.effects.is_no_vcs_repo_error)(error)
+    }
+}
+
+fn session_store_access_anyhow(error: crate::daemon::SessionStoreAccessError) -> anyhow::Error {
+    match error {
+        crate::daemon::SessionStoreAccessError::NotFound => anyhow::anyhow!("session not found"),
+        crate::daemon::SessionStoreAccessError::LookupUnavailable(error) => error,
+        crate::daemon::SessionStoreAccessError::StoreUnavailable => {
+            anyhow::anyhow!("workspace store unavailable")
+        }
     }
 }
 

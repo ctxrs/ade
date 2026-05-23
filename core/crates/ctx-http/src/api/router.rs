@@ -12,7 +12,7 @@ use ctx_daemon::daemon::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
-    SessionArtifactsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
+    SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
     TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
@@ -94,6 +94,7 @@ pub struct RouteHandles {
     pub(in crate::api) mobile_runtime: MobileRuntimeHandle,
     pub(in crate::api) mobile_secure_proxy: MobileSecureProxyHandle,
     pub(in crate::api) session_artifacts: SessionArtifactsHandle,
+    pub(in crate::api) session_vcs: SessionVcsHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) task_creation: TaskCreationHandle,
     pub(in crate::api) task_lifecycle: TaskLifecycleHandle,
@@ -140,6 +141,7 @@ impl RouteHandles {
             mobile_runtime: handle.mobile_runtime(),
             mobile_secure_proxy: handle.mobile_secure_proxy(),
             session_artifacts: handle.session_artifacts(),
+            session_vcs: handle.session_vcs(),
             sessions: handle.sessions(),
             task_creation: handle.task_creation(),
             task_lifecycle: handle.task_lifecycle(),
@@ -191,6 +193,7 @@ impl_route_state_extractors! {
     MobileRuntimeHandle, mobile_runtime;
     MobileSecureProxyHandle, mobile_secure_proxy;
     SessionArtifactsHandle, session_artifacts;
+    SessionVcsHandle, session_vcs;
     SessionsHandle, sessions;
     TaskCreationHandle, task_creation;
     TaskLifecycleHandle, task_lifecycle;

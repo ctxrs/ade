@@ -217,6 +217,9 @@ const {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionVcsDaemonImplementationRatchet,
+  scanSessionVcsHandleFieldRatchet,
+  scanSessionVcsHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -1333,6 +1336,124 @@ test("appstate guard rejects session artifacts broad daemon seams", () => {
     "session artifacts capability stores broad handle or daemon state",
     "session artifacts capability stores broad handle or daemon state",
   ]);
+});
+
+test("appstate guard rejects session VCS broad route handles", () => {
+  const handlerViolations = scanSessionVcsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/vcs/diff.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn get_session_diff(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(handlerViolations), new Set([
+    "session VCS route extracts broad sessions handle",
+  ]));
+
+  const routerViolations = scanSessionVcsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_vcs: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionVcsHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session VCS route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session VCS broad daemon seams", () => {
+  const daemonViolations = scanSessionVcsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/vcs.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionVcsHandle {
+        fn diff(handle: DaemonHandle, sessions: SessionsHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "session VCS daemon implementation uses broad daemon handle",
+    "session VCS daemon implementation uses broad session handle",
+    "session VCS daemon implementation accepts daemon state",
+    "session VCS daemon capability impl uses broad daemon handle",
+    "session VCS daemon capability impl uses broad session handle",
+    "session VCS daemon capability impl accepts daemon state",
+  ]));
+
+  const laterMethodViolations = scanSessionVcsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/vcs_route.rs",
+    contents: `
+      impl SessionVcsHandle {
+        fn first(&self) {}
+
+        fn second(&self, sessions: SessionsHandle, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(laterMethodViolations.includes("session VCS daemon capability impl uses broad daemon handle"));
+  assert(laterMethodViolations.includes("session VCS daemon capability impl uses broad session handle"));
+  assert(laterMethodViolations.includes("session VCS daemon capability impl accepts daemon state"));
+});
+
+test("appstate guard rejects session VCS broad handle and generic effects fields", () => {
+  const fieldViolations = scanSessionVcsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionVcsHandle {
+        sessions: SessionsHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub struct SessionVcsEffectsParts {
+        with_state: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        daemon: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        state: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        broad_sessions: SessionsHandle,
+        broad_daemon: DaemonHandle,
+        broad_state: Arc<DaemonState>,
+      }
+
+      pub struct SessionVcsEffects {
+        with_state: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        daemon: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        state: Arc<dyn Fn() -> SessionVcsFuture<()>>,
+        broad_sessions: SessionsHandle,
+        broad_daemon: DaemonHandle,
+        broad_state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(fieldViolations.includes("session VCS capability stores broad handle or daemon state"));
+  assert(fieldViolations.includes("session VCS effects stores broad handle or daemon state"));
+  assert(fieldViolations.includes("session VCS effects exposes generic full-state escape hatch"));
+
+  const narrowClosureViolations = scanSessionVcsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionVcsEffects {
+        load_git_status_snapshot: Arc<dyn Fn(SessionId) -> SessionVcsFuture<Result<()>> + Send + Sync>,
+        apply_worktree_patch: Arc<dyn Fn(SessionId, String) -> SessionVcsFuture<Result<()>> + Send + Sync>,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowClosureViolations, []);
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {

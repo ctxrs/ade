@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn get_session_git_status(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionVcsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionVcsGitStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     state

@@ -659,6 +659,10 @@ impl TestDaemon {
         self.state.set_running(session_id, running).await;
     }
 
+    pub async fn cache_worktree_vcs_snapshot_for_test(&self, snapshot: WorktreeVcsSnapshot) {
+        self.state.test_cache_worktree_vcs_snapshot(snapshot).await;
+    }
+
     pub async fn is_session_running(&self, session_id: SessionId) -> bool {
         self.state.is_session_running(session_id).await
     }

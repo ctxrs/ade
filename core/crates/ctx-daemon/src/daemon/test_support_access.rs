@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ctx_core::ids::{TerminalId, WorkspaceId, WorktreeId};
-use ctx_core::models::{Session, SessionHeadDelta, SessionHeadSnapshot, Workspace, Worktree};
+use ctx_core::models::{
+    Session, SessionHeadDelta, SessionHeadSnapshot, Workspace, Worktree, WorktreeVcsSnapshot,
+};
 use ctx_harness_runtime::HarnessExecutionPlan;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{InstallId, InstallTarget};
@@ -245,6 +247,10 @@ impl DaemonState {
         self.workspaces
             .update_worktree_vcs_activity(previous, next)
             .await;
+    }
+
+    pub async fn test_cache_worktree_vcs_snapshot(&self, snapshot: WorktreeVcsSnapshot) {
+        self.workspaces.cache_worktree_vcs_snapshot(snapshot).await;
     }
 
     pub async fn test_set_provider_inactivity_timeout(&self, timeout: Duration) {

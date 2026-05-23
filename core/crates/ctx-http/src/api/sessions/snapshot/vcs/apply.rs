@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn apply_session_diff_patch(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionVcsHandle>,
     Path(id): Path<String>,
     Json(req): Json<ApplySessionVcsDiffPatchRouteRequest>,
 ) -> Result<Json<SessionVcsDiffRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

@@ -44,18 +44,18 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
-    async fn sessions_handle() -> SessionsHandle {
+    async fn session_vcs_handle() -> SessionVcsHandle {
         crate::test_support::TestDaemonFixture::new("http://127.0.0.1:0")
             .await
             .daemon()
             .handle()
-            .sessions()
+            .session_vcs()
     }
 
     #[tokio::test]
     async fn vcs_read_routes_return_json_invalid_id_errors() {
         let err = get_session_diff(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path("not-a-session".to_string()),
             Query(SessionVcsRouteQuery::default()),
         )
@@ -65,7 +65,7 @@ mod tests {
         assert_eq!(err.1 .0.error, "invalid session id");
 
         let err = get_session_diff_summary(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path("not-a-session".to_string()),
             Query(SessionVcsRouteQuery::default()),
         )
@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(err.1 .0.error, "invalid session id");
 
         let err = get_session_git_status(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path("not-a-session".to_string()),
         )
         .await
@@ -87,7 +87,7 @@ mod tests {
     #[tokio::test]
     async fn vcs_apply_route_returns_json_validation_errors() {
         let err = apply_session_diff_patch(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path("not-a-session".to_string()),
             Json(route_request::<ApplySessionVcsDiffPatchRouteRequest>(
                 json!({
@@ -103,7 +103,7 @@ mod tests {
 
         let valid_id = "00000000-0000-0000-0000-000000000001".to_string();
         let err = apply_session_diff_patch(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path(valid_id.clone()),
             Json(route_request::<ApplySessionVcsDiffPatchRouteRequest>(
                 json!({
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(err.1 .0.error, "patch is empty");
 
         let err = apply_session_diff_patch(
-            State(sessions_handle().await),
+            State(session_vcs_handle().await),
             Path(valid_id),
             Json(route_request::<ApplySessionVcsDiffPatchRouteRequest>(
                 json!({

@@ -199,6 +199,17 @@ const sessionArtifactsDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
 ]);
 
+const sessionVcsHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/snapshot/vcs/apply.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/vcs/diff.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/vcs/git_status.rs",
+]);
+
+const sessionVcsDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/vcs.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/vcs_route.rs",
+]);
+
 const mergeQueueSubmitApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
 ];
@@ -7727,6 +7738,45 @@ function scanSessionArtifactsHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionVcsHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionVcsHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session VCS route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_vcs\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionVcsHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session VCS route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function rustImplBlocksForType({ contents, typeName }) {
   const blocks = [];
   const regex = new RegExp(`\\bimpl\\s+${typeName}\\s*\\{`, "gu");
@@ -7753,6 +7803,37 @@ function rustImplBlocksForType({ contents, typeName }) {
     }
   }
   return blocks;
+}
+
+function rustStructBlockForType({ contents, typeName }) {
+  const regex = new RegExp(
+    `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?struct\\s+${typeName}(?:\\s*<[^>{]+>)?\\s*\\{`,
+    "gu",
+  );
+  const match = regex.exec(contents);
+  if (!match) {
+    return null;
+  }
+  const openBrace = contents.indexOf("{", match.index);
+  if (openBrace < 0) {
+    return null;
+  }
+  let depth = 0;
+  for (let index = openBrace; index < contents.length; index += 1) {
+    const char = contents[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+    }
+    if (depth === 0) {
+      return {
+        index: match.index,
+        text: contents.slice(match.index, index + 1),
+      };
+    }
+  }
+  return null;
 }
 
 function scanSessionArtifactsDaemonImplementationRatchet({ filePath, contents }) {
@@ -7820,6 +7901,69 @@ function scanSessionArtifactsDaemonImplementationRatchet({ filePath, contents })
   return violations;
 }
 
+function scanSessionVcsDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionVcsDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session VCS daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "session VCS daemon implementation uses broad session handle",
+      regex: /\bSessionsHandle\b/gu,
+    },
+    {
+      name: "session VCS daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "SessionVcsHandle" })) {
+    const implChecks = [
+      {
+        name: "session VCS daemon capability impl uses broad daemon handle",
+        regex: /\bDaemonHandle\b/gu,
+      },
+      {
+        name: "session VCS daemon capability impl uses broad session handle",
+        regex: /\bSessionsHandle\b/gu,
+      },
+      {
+        name: "session VCS daemon capability impl accepts daemon state",
+        regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+      },
+    ];
+    for (const check of implChecks) {
+      for (let match = check.regex.exec(impl.text); match; match = check.regex.exec(impl.text)) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -7843,6 +7987,76 @@ function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
         line,
         name: "session artifacts capability stores broad handle or daemon state",
         text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:SessionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+
+  const handleStruct = rustStructBlockForType({ contents, typeName: "SessionVcsHandle" });
+  if (handleStruct) {
+    for (
+      let broad = broadFieldRegex.exec(handleStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session VCS capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  const effectStructs = [
+    rustStructBlockForType({ contents, typeName: "SessionVcsEffectsParts" }),
+    rustStructBlockForType({ contents, typeName: "SessionVcsEffects" }),
+  ].filter(Boolean);
+
+  for (const effectsStruct of effectStructs) {
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(effectsStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(effectsStruct.text)
+    ) {
+      const offset = effectsStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session VCS effects stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    const genericEscapeFieldRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+    for (
+      let escape = genericEscapeFieldRegex.exec(effectsStruct.text);
+      escape;
+      escape = genericEscapeFieldRegex.exec(effectsStruct.text)
+    ) {
+      const offset = effectsStruct.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session VCS effects exposes generic full-state escape hatch",
+        text: lines[line - 1]?.trim() ?? escape[0],
       });
     }
   }
@@ -7933,6 +8147,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionVcsHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -7983,6 +8201,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionArtifactsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionVcsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8057,6 +8279,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionArtifactsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionVcsDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8679,6 +8905,9 @@ module.exports = {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionVcsDaemonImplementationRatchet,
+  scanSessionVcsHandleFieldRatchet,
+  scanSessionVcsHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
