@@ -41,6 +41,10 @@ test("classifies known environment failures from raw evidence snippets", () => {
       classId: "buildbuddy_remote_cache_input_error",
       text: "BuildBuddy remote cache failed to fetch inputs: CAS digest not found",
     },
+    {
+      classId: "bazel_external_repository_fetch_5xx",
+      text: "Bazel external repository rules_python failed: Error downloading https://bcr.bazel.build/modules/rules_python: GET returned 502 Bad Gateway",
+    },
   ];
 
   for (const entry of cases) {
@@ -70,6 +74,24 @@ test("does not classify benign free-space mentions as disk pressure", () => {
   const classification = classifyEnvironmentFailure("free space check passed before product assertion failed");
   assert.equal(classification.failure_kind, "product");
   assert.equal(classification.class_id, "product_failure");
+});
+
+test("does not classify deterministic Bazel download failures as retryable 5xx", () => {
+  const classification = classifyEnvironmentFailure(
+    "Bazel external repository rules_python failed: Error downloading https://bcr.bazel.build/modules/rules_python: GET returned 404 Not Found",
+  );
+  assert.equal(classification.failure_kind, "product");
+  assert.equal(classification.class_id, "product_failure");
+  assert.equal(classification.retry_policy.retryable, false);
+});
+
+test("does not classify Bazel-run product HTTP failures as external dependency failures", () => {
+  const classification = classifyEnvironmentFailure(
+    "bazel test //core/apps/web:api_tests failed: ctx JSON route returned HTTP 503 for /api/tasks",
+  );
+  assert.equal(classification.failure_kind, "product");
+  assert.equal(classification.class_id, "product_failure");
+  assert.equal(classification.retry_policy.retryable, false);
 });
 
 test("marks environment retry policy exhausted at the class max retry count", () => {

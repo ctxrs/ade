@@ -190,6 +190,30 @@ const ENVIRONMENT_FAILURE_CLASSES = Object.freeze([
       }),
     ]),
   }),
+  Object.freeze({
+    id: "bazel_external_repository_fetch_5xx",
+    title: "Bazel external repository or registry fetch 5xx",
+    category: "external_dependency",
+    retry_policy: Object.freeze({
+      retryable: true,
+      max_retries: 2,
+      backoff: "linear_seconds_60",
+    }),
+    required_evidence: Object.freeze([
+      "raw Bazel external repository, registry, BCR, or rules repository evidence",
+      "raw HTTP 5xx, bad-gateway, proxy, or service-unavailable evidence",
+    ]),
+    patterns: Object.freeze([
+      Object.freeze({
+        id: "bazel_registry_5xx_forward",
+        regex: /\b(?:bazel central registry|bcr|registry\.bazel\.build|bcr\.bazel\.build|rules_[a-z0-9_-]+|external repository)\b[\s\S]{0,600}\b(?:HTTP (?:5[0-9][0-9])|GET returned (?:5[0-9][0-9])|(?:^|[^\d])5(?:00|02|03|04)(?:[^\d]|$)|bad gateway|proxy error|service unavailable|gateway timeout)\b/iu,
+      }),
+      Object.freeze({
+        id: "bazel_registry_5xx_reverse",
+        regex: /\b(?:HTTP (?:5[0-9][0-9])|GET returned (?:5[0-9][0-9])|(?:^|[^\d])5(?:00|02|03|04)(?:[^\d]|$)|bad gateway|proxy error|service unavailable|gateway timeout)\b[\s\S]{0,600}\b(?:bazel central registry|bcr|registry\.bazel\.build|bcr\.bazel\.build|rules_[a-z0-9_-]+|external repository)\b/iu,
+      }),
+    ]),
+  }),
 ]);
 
 function trimValue(value) {
