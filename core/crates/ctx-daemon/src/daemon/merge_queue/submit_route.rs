@@ -6,11 +6,9 @@ use ctx_route_contracts::merge_queue::{
     MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError, SubmitMergeQueueEntryRouteRequest,
 };
 
-use crate::daemon::{
-    require_scoped_mcp_session_context, ScopedMcpSessionAccessError, WorkspacesHandle,
-};
+use crate::daemon::{MergeQueueApiHandle, ScopedMcpSessionAccessError};
 
-impl WorkspacesHandle {
+impl MergeQueueApiHandle {
     pub async fn submit_merge_queue_entry_for_route(
         &self,
         req: SubmitMergeQueueEntryRouteRequest,
@@ -35,7 +33,7 @@ impl WorkspacesHandle {
                     "scoped ctx-mcp merge queue submit is limited to the current session and worktree",
                 ));
             }
-            require_scoped_mcp_session_context(self.state.as_ref(), mcp_auth, scoped_session_id)
+            self.require_scoped_mcp_session_context(mcp_auth, scoped_session_id)
                 .await
                 .map_err(scoped_mcp_session_route_error)?;
             session_id = Some(scoped_session_id);

@@ -9,11 +9,13 @@ use ctx_merge_queue::MergeQueueSubmitParams;
 #[cfg(test)]
 use ctx_merge_queue::WorkspaceDrainStop;
 
-use crate::daemon::{DaemonState, WorkspacesHandle};
+use crate::daemon::DaemonState;
 
 mod host;
 mod route_contract;
 mod submit_route;
+
+pub(in crate::daemon) use host::MergeQueueRouteHost;
 
 pub async fn get_workspace_merge_queue_entry(
     state: &DaemonState,
@@ -61,39 +63,6 @@ pub async fn schedule_workspace_if_enabled_and_queued(
 
 pub async fn activate_workspace_merge_queue(state: &Arc<DaemonState>, workspace_id: WorkspaceId) {
     ctx_merge_queue::activate_workspace_merge_queue::<DaemonState>(state, workspace_id).await;
-}
-
-impl WorkspacesHandle {
-    pub(in crate::daemon) async fn submit_merge_queue_entry(
-        &self,
-        params: MergeQueueSubmitParams,
-    ) -> Result<MergeQueueEntry> {
-        submit_merge_queue_entry(&self.state, params).await
-    }
-
-    pub(in crate::daemon) async fn cancel_merge_queue_entry(
-        &self,
-        workspace_id: WorkspaceId,
-        entry_id: MergeQueueEntryId,
-    ) -> Result<MergeQueueEntry> {
-        cancel_merge_queue_entry(&self.state, workspace_id, entry_id).await
-    }
-
-    pub(in crate::daemon) async fn retry_merge_queue_entry(
-        &self,
-        workspace_id: WorkspaceId,
-        entry_id: MergeQueueEntryId,
-    ) -> Result<MergeQueueEntry> {
-        retry_merge_queue_entry(&self.state, workspace_id, entry_id).await
-    }
-
-    pub(in crate::daemon) async fn get_workspace_merge_queue_entry(
-        &self,
-        workspace_id: WorkspaceId,
-        entry_id: MergeQueueEntryId,
-    ) -> Result<MergeQueueEntry> {
-        get_workspace_merge_queue_entry(self.state.as_ref(), workspace_id, entry_id).await
-    }
 }
 
 pub async fn cancel_queued_entries_for_disabled_workspace(

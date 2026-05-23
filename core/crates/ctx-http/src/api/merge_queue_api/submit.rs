@@ -1,7 +1,7 @@
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::MergeQueueApiHandle;
 use ctx_route_contracts::merge_queue::{
     MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind,
     SubmitMergeQueueEntryRouteRequest,
@@ -10,11 +10,11 @@ use ctx_route_contracts::merge_queue::{
 use crate::api::errors::ApiErrorResp;
 
 pub(in crate::api) async fn submit_merge_queue_entry(
-    State(workspaces): State<WorkspacesHandle>,
+    State(merge_queue): State<MergeQueueApiHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Json(req): Json<SubmitMergeQueueEntryRouteRequest>,
 ) -> Result<Json<MergeQueueEntryRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let entry = workspaces
+    let entry = merge_queue
         .submit_merge_queue_entry_for_route(req, mcp_auth.map(|Extension(auth)| auth))
         .await
         .map_err(merge_queue_submit_route_error)?;

@@ -205,6 +205,9 @@ const {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanMergeQueueApiDaemonImplementationRatchet,
+  scanMergeQueueApiHandleFieldRatchet,
+  scanMergeQueueApiHttpRouteRatchet,
   scanRepoOnboardingDaemonImplementationRatchet,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,
@@ -7148,6 +7151,274 @@ test("daemon boundary guard scopes merge queue entry API route contracts", () =>
     }),
     [],
   );
+});
+
+test("appstate guard gates merge queue API route WorkspacesHandle ratchet on capability", () => {
+  const contents = `
+    use axum::extract::State;
+    use ctx_daemon::daemon::WorkspacesHandle;
+    async fn route(State(workspaces): State<WorkspacesHandle>) {}
+  `;
+
+  assert.deepEqual(
+    scanMergeQueueApiHttpRouteRatchet({
+      filePath: "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+      contents,
+      mergeQueueApiCapability: false,
+    }),
+    [],
+  );
+
+  const violations = scanMergeQueueApiHttpRouteRatchet({
+    filePath: "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+    contents,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert.equal(
+    violations.filter(
+      (name) =>
+        name
+        === "merge queue API route uses broad workspace handle after MergeQueueApiHandle capability",
+    ).length,
+    2,
+  );
+});
+
+test("appstate guard rejects merge queue API HTTP raw StoreManager access", () => {
+  const violations = scanMergeQueueApiHttpRouteRatchet({
+    filePath: "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn route(stores: StoreManager) {
+        let _store = daemon.stores().workspace(workspace_id).await?;
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("merge queue API route accesses raw StoreManager"),
+  );
+});
+
+test("appstate guard rejects merge queue route methods remaining on WorkspacesHandle", () => {
+  const violations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/route_contract.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn list_merge_queue_entry_responses_for_route(&self) {}
+        pub async fn cancel_merge_queue_entry_for_route(&self) {}
+        pub async fn retry_merge_queue_entry_for_route(&self) {}
+        pub async fn download_merge_queue_entry_logs_for_route_params(&self) {}
+        pub async fn download_merge_queue_entry_logs_for_route(&self) {}
+        pub async fn submit_merge_queue_entry_for_route(&self) {}
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert.equal(
+    violations.filter(
+      (name) => name === "merge queue API route method remains on WorkspacesHandle",
+    ).length,
+    6,
+  );
+});
+
+test("appstate guard rejects broad merge queue API capability fields", () => {
+  const violations = scanMergeQueueApiHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct MergeQueueApiHandle {
+        state: Arc<DaemonState>,
+        daemon: DaemonHandle,
+      }
+
+      pub struct MergeQueueRouteHost {
+        workspaces: WorkspacesHandle,
+        publish_event: SessionEventPublisher,
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("merge queue API capability stores broad handle or daemon state"),
+  );
+  assert(
+    violations.includes(
+      "merge queue notice publication effect uses generic session-event name or type",
+    ),
+  );
+
+  const narrowViolations = scanMergeQueueApiHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct MergeQueueApiHandle {
+        host: Arc<MergeQueueRouteHost>,
+      }
+
+      pub struct MergeQueueRouteHost {
+        stores: StoreManager,
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        session_stores: SessionStoreLookup,
+        merge_queue: Arc<ctx_merge_queue::MergeQueueRuntime>,
+        notices: MergeQueueNoticePublisher,
+      }
+    `,
+    mergeQueueApiCapability: true,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard confines merge queue raw StoreManager access to route host trait impl", () => {
+  const routeViolations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/route_contract.rs",
+    contents: `
+      use ctx_store::StoreManager;
+      impl MergeQueueApiHandle {
+        pub async fn list_merge_queue_entry_responses_for_route(&self) {
+          let _store = self.stores.workspace(workspace_id).await?;
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes("merge queue route method imports raw StoreManager"),
+  );
+  assert(
+    routeViolations.includes("merge queue API route method accesses raw StoreManager"),
+  );
+
+  const hostHelperViolations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
+    contents: `
+      pub struct MergeQueueRouteHost {
+        stores: StoreManager,
+      }
+
+      impl MergeQueueRouteHost {
+        async fn bad_raw_store_helper(&self, workspace_id: WorkspaceId) -> Result<Store> {
+          self.stores.workspace(workspace_id).await
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    hostHelperViolations.includes(
+      "merge queue raw StoreManager access outside MergeQueueRouteHost trait implementation",
+    ),
+  );
+
+  const hostViolations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
+    contents: `
+      use ctx_store::StoreManager;
+      pub struct MergeQueueRouteHost {
+        stores: StoreManager,
+      }
+
+      impl MergeQueueHost for MergeQueueRouteHost {
+        async fn raw_workspace_store(host: &Self, workspace_id: WorkspaceId) -> Result<Store> {
+          host.stores.workspace(workspace_id).await
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  });
+
+  assert.deepEqual(hostViolations, []);
+});
+
+test("appstate guard rejects daemon-level scoped MCP helper in merge queue submit code", () => {
+  const violations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/submit_route.rs",
+    contents: `
+      use crate::daemon::{
+        require_scoped_mcp_session_context,
+        ScopedMcpSessionAccessError,
+      };
+      impl MergeQueueApiHandle {
+        pub async fn submit_merge_queue_entry_for_route(&self) {
+          require_scoped_mcp_session_context(self.state.as_ref(), mcp_auth, session_id).await?;
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "merge queue submit code imports daemon-level scoped MCP session helper",
+    ),
+  );
+  assert(
+    violations.includes(
+      "merge queue submit code calls daemon-level scoped MCP session helper",
+    ),
+  );
+
+  const narrowViolations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/submit_route.rs",
+    contents: `
+      impl MergeQueueApiHandle {
+        pub async fn submit_merge_queue_entry_for_route(&self) {
+          self.session_stores
+            .require_scoped_mcp_session_context(mcp_auth, session_id)
+            .await?;
+          SessionStoreLookup::require_scoped_mcp_session_context(
+            &self.session_stores,
+            mcp_auth,
+            session_id,
+          ).await?;
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects generic merge queue notice publication effects", () => {
+  const violations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
+    contents: `
+      impl MergeQueueHost for MergeQueueRouteHost {
+        async fn publish_notice(host: &Arc<Self>, event: SessionEvent) -> Result<()> {
+          host.effects.publish_event(event).await;
+          Ok(())
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "merge queue notice publication uses generic session-event publisher name",
+  ]);
+
+  const narrowViolations = scanMergeQueueApiDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
+    contents: `
+      impl MergeQueueHost for MergeQueueRouteHost {
+        async fn publish_notice(host: &Arc<Self>, event: SessionEvent) -> Result<()> {
+          host.notices.publish_merge_queue_notice(event).await;
+          Ok(())
+        }
+      }
+    `,
+    mergeQueueApiCapability: true,
+  });
+
+  assert.deepEqual(narrowViolations, []);
 });
 
 test("daemon boundary guard rejects terminal REST raw route contracts", () => {

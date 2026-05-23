@@ -1,7 +1,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::MergeQueueApiHandle;
 use ctx_route_contracts::merge_queue::{
     ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
     MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse,
@@ -10,7 +10,7 @@ use ctx_route_contracts::merge_queue::{
 use crate::api::errors::ApiErrorResp;
 
 pub(in crate::api) async fn list_merge_queue_entries(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<MergeQueueApiHandle>,
     Query(params): Query<ListMergeQueueEntriesRouteRequest>,
 ) -> Result<Json<Vec<MergeQueueEntryRouteResponse>>, StatusCode> {
     let entries = state
@@ -21,7 +21,7 @@ pub(in crate::api) async fn list_merge_queue_entries(
 }
 
 pub(in crate::api) async fn cancel_merge_queue_entry(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<MergeQueueApiHandle>,
     Path(params): Path<MergeQueueEntryRouteParams>,
 ) -> Result<Json<MergeQueueEntryRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let entry = state
@@ -32,7 +32,7 @@ pub(in crate::api) async fn cancel_merge_queue_entry(
 }
 
 pub(in crate::api) async fn retry_merge_queue_entry(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<MergeQueueApiHandle>,
     Path(params): Path<MergeQueueEntryRouteParams>,
 ) -> Result<Json<MergeQueueEntryRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let entry = state

@@ -1,12 +1,17 @@
+use std::path::{Path, PathBuf};
+
+use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
+use ctx_core::models::{MergeQueueRun, Workspace};
 use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_route_contracts::merge_queue::{
     ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteParams,
     MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
 };
 
-use crate::daemon::{RouteFileDownloadError, WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
+use crate::daemon::{MergeQueueApiHandle, WorkspaceStoreAccessError};
 
-impl WorkspacesHandle {
+impl MergeQueueApiHandle {
     pub async fn list_merge_queue_entry_responses_for_route(
         &self,
         req: ListMergeQueueEntriesRouteRequest,
@@ -53,6 +58,57 @@ impl WorkspacesHandle {
         self.download_merge_queue_entry_logs_for_route(workspace_id, entry_id)
             .await
             .map_err(merge_queue_log_download_route_file_error)
+    }
+
+    pub async fn latest_merge_queue_run_for_route(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<Option<(Workspace, MergeQueueRun)>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        let Some(workspace) = store
+            .get_workspace(workspace_id)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?
+        else {
+            return Ok(None);
+        };
+        let run = store
+            .get_latest_merge_queue_run(entry_id)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?;
+        Ok(run.map(|run| (workspace, run)))
+    }
+
+    pub async fn download_merge_queue_entry_logs_for_route(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<TextRouteDownload, RouteFileDownloadError> {
+        self.get_workspace_merge_queue_entry(workspace_id, entry_id)
+            .await
+            .map_err(|_| RouteFileDownloadError::NotFound)?;
+        let (workspace, run) = self
+            .latest_merge_queue_run_for_route(workspace_id, entry_id)
+            .await
+            .map_err(|_| RouteFileDownloadError::Internal)?
+            .ok_or(RouteFileDownloadError::NotFound)?;
+        let Some(path) = run.log_path.as_deref() else {
+            return Err(RouteFileDownloadError::NotFound);
+        };
+        if path.trim().is_empty() {
+            return Err(RouteFileDownloadError::NotFound);
+        }
+        let log_root = PathBuf::from(&workspace.root_path)
+            .join(".ctx")
+            .join("merge-queue")
+            .join("logs");
+        read_text_route_file(
+            Path::new(path),
+            &log_root,
+            format!("merge-queue-{}.log", entry_id.0),
+        )
+        .await
     }
 }
 

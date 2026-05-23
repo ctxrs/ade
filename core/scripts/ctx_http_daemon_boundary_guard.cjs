@@ -340,6 +340,25 @@ const mergeQueueEntryApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
 ];
 
+const mergeQueueApiHttpRouteRoots = [
+  "core/crates/ctx-http/src/api/merge_queue_api/",
+];
+
+const mergeQueueApiDaemonRouteImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/merge_queue/",
+  "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
+];
+
+const mergeQueueApiLegacyWorkspacesRouteMethodNames = [
+  "list_merge_queue_entries_for_route",
+  "list_merge_queue_entry_responses_for_route",
+  "cancel_merge_queue_entry_for_route",
+  "retry_merge_queue_entry_for_route",
+  "download_merge_queue_entry_logs_for_route",
+  "download_merge_queue_entry_logs_for_route_params",
+  "submit_merge_queue_entry_for_route",
+];
+
 const terminalRestRouteApiRoots = [
   "core/crates/ctx-http/src/api/terminals.rs",
   "core/crates/ctx-http/src/api/terminals/",
@@ -5971,6 +5990,14 @@ function repoRelative(filePath) {
   return path.relative(repoRoot, filePath).split(path.sep).join("/");
 }
 
+function pathMatchesRoot(filePath, root) {
+  return root.endsWith("/") ? filePath.startsWith(root) : filePath === root;
+}
+
+function pathMatchesAnyRoot(filePath, roots) {
+  return roots.some((root) => pathMatchesRoot(filePath, root));
+}
+
 function apiPatternsForPath(relativePath) {
   const patterns = [
     ...API_RAW_DAEMON_PATTERNS,
@@ -7944,6 +7971,13 @@ function workspaceVcsStreamCapabilityPresent() {
   return /\bWorkspaceVcsStreamHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
 }
 
+function mergeQueueApiCapabilityPresent() {
+  if (!fs.existsSync(daemonHandlePath)) {
+    return false;
+  }
+  return /\bMergeQueueApiHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+}
+
 function workspaceVcsStreamRouteExtractorPresent() {
   const routeModulePath = path.join(apiRoot, "ws", "workspace_vcs.rs");
   if (!fs.existsSync(routeModulePath)) {
@@ -8029,6 +8063,37 @@ function rustImplBlocksForType({ contents, typeName }) {
   return blocks;
 }
 
+function rustTraitImplBlocksForType({ contents, traitName, typeName }) {
+  const blocks = [];
+  const regex = new RegExp(
+    `\\bimpl(?:\\s*<[^>]+>)?\\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*::)*)${traitName}\\s+for\\s+${typeName}\\s*\\{`,
+    "gu",
+  );
+  for (let match = regex.exec(contents); match; match = regex.exec(contents)) {
+    const openBrace = contents.indexOf("{", match.index);
+    if (openBrace < 0) {
+      continue;
+    }
+    let depth = 0;
+    for (let index = openBrace; index < contents.length; index += 1) {
+      const char = contents[index];
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+      }
+      if (depth === 0) {
+        blocks.push({
+          index: match.index,
+          text: contents.slice(match.index, index + 1),
+        });
+        break;
+      }
+    }
+  }
+  return blocks;
+}
+
 function rustStructBlockForType({ contents, typeName }) {
   const regex = new RegExp(
     `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?struct\\s+${typeName}(?:\\s*<[^>{]+>)?\\s*\\{`,
@@ -8089,6 +8154,291 @@ function rustFunctionBlockForName({ contents, fnName }) {
     }
   }
   return null;
+}
+
+function scanMergeQueueApiHttpRouteRatchet({
+  filePath,
+  contents,
+  mergeQueueApiCapability = true,
+}) {
+  if (
+    !mergeQueueApiCapability
+    || !pathMatchesAnyRoot(filePath, mergeQueueApiHttpRouteRoots)
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "merge queue API route uses broad workspace handle after MergeQueueApiHandle capability",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "merge queue API route accesses raw StoreManager",
+      regex: /\bStoreManager\b|\bctx_store::StoreManager\b|\.stores\s*\(/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function mergeQueueRouteHostTraitImplRanges(contents) {
+  return rustTraitImplBlocksForType({
+    contents,
+    traitName: "MergeQueueHost",
+    typeName: "MergeQueueRouteHost",
+  }).map((block) => [block.index, block.index + block.text.length]);
+}
+
+function isInAnyRange(index, ranges) {
+  return ranges.some(([start, end]) => index >= start && index < end);
+}
+
+function scanMergeQueueApiDaemonImplementationRatchet({
+  filePath,
+  contents,
+  mergeQueueApiCapability = true,
+}) {
+  if (!mergeQueueApiCapability) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const isMergeQueueDaemonRoutePath = pathMatchesAnyRoot(
+    filePath,
+    mergeQueueApiDaemonRouteImplementationRoots,
+  );
+
+  if (isMergeQueueDaemonRoutePath) {
+    const legacyMethodRegex = new RegExp(
+      `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+(?:${mergeQueueApiLegacyWorkspacesRouteMethodNames.join("|")})\\s*\\(`,
+      "gu",
+    );
+    for (const impl of rustImplBlocksForType({ contents, typeName: "WorkspacesHandle" })) {
+      legacyMethodRegex.lastIndex = 0;
+      for (
+        let match = legacyMethodRegex.exec(impl.text);
+        match;
+        match = legacyMethodRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "merge queue API route method remains on WorkspacesHandle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "MergeQueueApiHandle" })) {
+    const rawStoreRegex =
+      /\bStoreManager\b|\b(?:self|state|host)\s*\.\s*stores\b|\.stores\s*\(/gu;
+    rawStoreRegex.lastIndex = 0;
+    for (
+      let match = rawStoreRegex.exec(impl.text);
+      match;
+      match = rawStoreRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue API route method accesses raw StoreManager",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (isMergeQueueDaemonRoutePath) {
+    const allowedRawStoreRanges = mergeQueueRouteHostTraitImplRanges(contents);
+    const routeStoreManagerImportRegex =
+      /\buse\s+ctx_store::(?:\{[^;]*\bStoreManager\b[^;]*\}|StoreManager)\s*;/gmu;
+    if (allowedRawStoreRanges.length === 0) {
+      for (
+        let match = routeStoreManagerImportRegex.exec(contents);
+        match;
+        match = routeStoreManagerImportRegex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "merge queue route method imports raw StoreManager",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const rawStoreAccessRegex =
+      /\bStoreManager::[A-Za-z_][A-Za-z0-9_]*\s*\(|\b(?:self|host)\s*\.\s*stores\b|\bstores\s*\.\s*(?:global|workspace)\s*\(|\.stores\s*\(/gu;
+    for (
+      let match = rawStoreAccessRegex.exec(contents);
+      match;
+      match = rawStoreAccessRegex.exec(contents)
+    ) {
+      if (match[0].startsWith("stores") && contents[match.index - 1] === ".") {
+        continue;
+      }
+      if (isInAnyRange(match.index, allowedRawStoreRanges)) {
+        continue;
+      }
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue raw StoreManager access outside MergeQueueRouteHost trait implementation",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/merge_queue/submit_route.rs"
+    || /\bsubmit_merge_queue_entry_for_route\b/u.test(contents)
+  ) {
+    const scopedImportRegex =
+      /\buse\s+crate::daemon::(?:\{[^;]*\brequire_scoped_mcp_session_context\b[^;]*\}|require_scoped_mcp_session_context)\s*;/gmu;
+    for (
+      let match = scopedImportRegex.exec(contents);
+      match;
+      match = scopedImportRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue submit code imports daemon-level scoped MCP session helper",
+        text: match[0].trim().replace(/\s+/g, " "),
+      });
+    }
+
+    const scopedCallRegex = /\brequire_scoped_mcp_session_context\s*\(/gu;
+    for (
+      let match = scopedCallRegex.exec(contents);
+      match;
+      match = scopedCallRegex.exec(contents)
+    ) {
+      const previous = contents[match.index - 1] ?? "";
+      if (previous === "." || previous === ":") {
+        continue;
+      }
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue submit code calls daemon-level scoped MCP session helper",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (pathMatchesAnyRoot(filePath, ["core/crates/ctx-daemon/src/daemon/merge_queue/"])) {
+    const genericNoticePublisherRegex =
+      /\b(?:publish_event|publish_session_event|PublishEvent|SessionEventPublication|SessionEventPublisher)\b/gu;
+    const noticePublicationBlocks = [
+      ...rustImplBlocksForType({ contents, typeName: "MergeQueueRouteHost" }),
+      ...rustTraitImplBlocksForType({
+        contents,
+        traitName: "MergeQueueHost",
+        typeName: "MergeQueueRouteHost",
+      }),
+    ];
+    for (const block of noticePublicationBlocks) {
+      genericNoticePublisherRegex.lastIndex = 0;
+      for (
+        let match = genericNoticePublisherRegex.exec(block.text);
+        match;
+        match = genericNoticePublisherRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "merge queue notice publication uses generic session-event publisher name",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+function scanMergeQueueApiHandleFieldRatchet({
+  filePath,
+  contents,
+  mergeQueueApiCapability = true,
+}) {
+  if (!mergeQueueApiCapability) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  for (const typeName of ["MergeQueueApiHandle", "MergeQueueRouteHost"]) {
+    const block = rustStructBlockForType({ contents, typeName });
+    if (!block) {
+      continue;
+    }
+
+    const broadFieldRegex =
+      /\b(?:DaemonState|DaemonHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let match = broadFieldRegex.exec(block.text);
+      match;
+      match = broadFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue API capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+
+    const genericNoticeEffectRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:publish_event|publish_session_event)\s*:|\b(?:PublishEvent|SessionEventPublication|SessionEventPublisher)\b/gmu;
+    genericNoticeEffectRegex.lastIndex = 0;
+    for (
+      let match = genericNoticeEffectRegex.exec(block.text);
+      match;
+      match = genericNoticeEffectRegex.exec(block.text)
+    ) {
+      const offset = block.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "merge queue notice publication effect uses generic session-event name or type",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
 }
 
 function scanSessionArtifactsDaemonImplementationRatchet({ filePath, contents }) {
@@ -11174,6 +11524,7 @@ function scanRepo() {
 
   const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
   const hasWorkspaceVcsStreamRouteExtractor = workspaceVcsStreamRouteExtractorPresent();
+  const hasMergeQueueApiCapability = mergeQueueApiCapabilityPresent();
 
   for (const filePath of listRustFiles(apiRoot)) {
     if (isTestRustPath(filePath)) {
@@ -11222,6 +11573,11 @@ function scanRepo() {
       ...scanProviderLoginHandleRatchet({
         filePath: relativePath,
         contents,
+      }),
+      ...scanMergeQueueApiHttpRouteRatchet({
+        filePath: relativePath,
+        contents,
+        mergeQueueApiCapability: hasMergeQueueApiCapability,
       }),
       ...scanTaskAdmissionHandleRatchet({
         filePath: relativePath,
@@ -11575,6 +11931,16 @@ function scanRepo() {
       ...scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
+      }),
+      ...scanMergeQueueApiDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+        mergeQueueApiCapability: hasMergeQueueApiCapability,
+      }),
+      ...scanMergeQueueApiHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+        mergeQueueApiCapability: hasMergeQueueApiCapability,
       }),
       ...scanWorkspaceAttachmentsDaemonImplementationRatchet({
         filePath: relativePath,
@@ -12144,6 +12510,7 @@ module.exports = {
   mergeQueueIsolationStorePatternsForPath,
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
+  mergeQueueApiCapabilityPresent,
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
@@ -12199,6 +12566,9 @@ module.exports = {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanMergeQueueApiDaemonImplementationRatchet,
+  scanMergeQueueApiHandleFieldRatchet,
+  scanMergeQueueApiHttpRouteRatchet,
   scanRepoOnboardingDaemonImplementationRatchet,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,

@@ -7,7 +7,7 @@ use ctx_workspace_container::WorkspaceContainerStatus;
 use std::path::PathBuf;
 
 use super::handle::WorkspacesHandle;
-use crate::daemon::{settings, WorkspaceStoreAccessError};
+use crate::daemon::settings;
 
 mod active_snapshot_state;
 mod app_state;
@@ -104,13 +104,6 @@ impl WorkspacesHandle {
             .global_store()
             .create_workspace(name, root_path, vcs_kind)
             .await
-    }
-
-    pub(in crate::daemon) async fn existing_workspace_store(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Store, WorkspaceStoreAccessError> {
-        self.state.existing_workspace_store(workspace_id).await
     }
 
     pub async fn record_workspace_registered(&self) {

@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::MergeQueueApiHandle;
 use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_route_contracts::merge_queue::{
     MergeQueueEntryRouteParams, MergeQueueLogDownloadRouteError,
@@ -10,7 +10,7 @@ use ctx_route_contracts::merge_queue::{
 };
 
 pub(in crate::api) async fn get_merge_queue_entry_logs(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<MergeQueueApiHandle>,
     Path(params): Path<MergeQueueEntryRouteParams>,
 ) -> Result<Response, StatusCode> {
     let download = state
