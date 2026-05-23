@@ -5,7 +5,7 @@ use ctx_provider_auth_import::{
 };
 
 pub(crate) async fn list_provider_auth_import_candidates(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAuthImportHandle>,
 ) -> Result<Json<ProviderAuthImportCandidatesRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
         .list_provider_auth_import_candidates_for_route()
@@ -15,7 +15,7 @@ pub(crate) async fn list_provider_auth_import_candidates(
 }
 
 pub(crate) async fn list_provider_auth_import_profiles(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAuthImportHandle>,
 ) -> Result<Json<ProviderAuthImportProfilesRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
         .list_provider_auth_import_profiles_for_route()
@@ -25,7 +25,7 @@ pub(crate) async fn list_provider_auth_import_profiles(
 }
 
 pub(crate) async fn import_provider_auth_candidates(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAuthImportHandle>,
     Json(req): Json<ProviderAuthImportRouteRequest>,
 ) -> Result<Json<ProviderAuthImportRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers

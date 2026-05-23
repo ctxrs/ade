@@ -191,6 +191,8 @@ const {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderAuthImportDaemonFacadeRatchet,
+  scanProviderAuthImportHandleRatchet,
   scanProviderBootstrapDaemonFacadeRatchet,
   scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,
@@ -867,6 +869,104 @@ test("appstate provider install daemon facade ratchet rejects full-state route s
     [
       "provider install daemon facade accepts daemon state",
       "provider install daemon facade accepts daemon state",
+    ],
+  );
+});
+
+test("appstate provider auth import route ratchet rejects broad provider handles", () => {
+  const broadViolations = scanProviderAuthImportHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/imports.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.import_provider_auth_candidates_for_route(req).await;
+      }
+    `,
+  });
+  assert.deepEqual(
+    broadViolations.map((violation) => violation.name),
+    [
+      "provider auth import route extracts broad providers handle",
+      "provider auth import route extracts broad providers handle",
+    ],
+  );
+
+  const adminViolations = scanProviderAuthImportHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/imports.rs",
+    contents: `
+      use ctx_daemon::daemon::ProviderAdminHandle;
+      async fn route(State(admin): State<ProviderAdminHandle>) {
+        admin.refresh_provider_matrix_for_route().await;
+      }
+    `,
+  });
+  assert.deepEqual(
+    adminViolations.map((violation) => violation.name),
+    [
+      "provider auth import route extracts provider admin handle",
+      "provider auth import route extracts provider admin handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderAuthImportHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/providers/imports.rs",
+      contents: `
+        use ctx_daemon::daemon::ProviderAuthImportHandle;
+        async fn route(State(auth_import): State<ProviderAuthImportHandle>) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate provider auth import daemon facade ratchet rejects full-state route seam", () => {
+  const broadHandleViolations = scanProviderAuthImportDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/auth_import.rs",
+    contents: `
+      use crate::daemon::ProvidersHandle;
+      impl ProvidersHandle {
+        pub async fn import_provider_auth_candidates_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    broadHandleViolations,
+    [
+      "provider auth import daemon facade implemented on broad providers handle",
+      "provider auth import daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  const adminHandleViolations = scanProviderAuthImportDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/auth_import.rs",
+    contents: `
+      use crate::daemon::ProviderAdminHandle;
+      impl ProviderAdminHandle {
+        pub async fn import_provider_auth_candidates_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    adminHandleViolations,
+    [
+      "provider auth import daemon facade implemented on provider admin handle",
+      "provider auth import daemon facade implemented on provider admin handle",
+    ],
+  );
+
+  const daemonStateViolations = scanProviderAuthImportDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/auth_import.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      async fn import(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    daemonStateViolations,
+    [
+      "provider auth import daemon facade accepts daemon state",
+      "provider auth import daemon facade accepts daemon state",
     ],
   );
 });

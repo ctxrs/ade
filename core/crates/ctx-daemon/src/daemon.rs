@@ -76,7 +76,7 @@ pub use handle::{
     AuthHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
-    ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
     RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,

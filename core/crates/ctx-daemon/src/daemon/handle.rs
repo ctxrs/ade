@@ -232,6 +232,13 @@ impl DaemonHandle {
         )
     }
 
+    pub fn provider_auth_import(&self) -> ProviderAuthImportHandle {
+        ProviderAuthImportHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+        )
+    }
+
     pub fn provider_usage(&self) -> ProviderUsageHandle {
         ProviderUsageHandle::new(
             self.state.core.data_root.clone(),
@@ -1196,6 +1203,29 @@ impl ProviderInstallHandle {
         install_id: InstallId,
     ) -> Option<broadcast::Sender<InstallProgressEvent>> {
         self.providers.get_install_sender(install_id).await
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderAuthImportHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl ProviderAuthImportHandle {
+    pub(in crate::daemon) fn new(data_root: PathBuf, providers: Arc<ProviderRuntime>) -> Self {
+        Self {
+            data_root,
+            providers,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
     }
 }
 

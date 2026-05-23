@@ -9,7 +9,7 @@ use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
-    ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
     RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
@@ -97,6 +97,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) providers: ProvidersHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
+    pub(in crate::api) provider_auth_import: ProviderAuthImportHandle,
     pub(in crate::api) provider_status: ProviderStatusHandle,
     pub(in crate::api) provider_admin: ProviderAdminHandle,
     pub(in crate::api) provider_install: ProviderInstallHandle,
@@ -136,6 +137,7 @@ impl RouteHandles {
             workspace_stream: handle.workspace_stream(),
             providers: handle.providers(),
             provider_accounts: handle.provider_accounts(),
+            provider_auth_import: handle.provider_auth_import(),
             provider_status: handle.provider_status(),
             provider_admin: handle.provider_admin(),
             provider_install: handle.provider_install(),
@@ -180,6 +182,7 @@ impl_route_state_extractors! {
     WorkspaceStreamHandle, workspace_stream;
     ProvidersHandle, providers;
     ProviderAccountsHandle, provider_accounts;
+    ProviderAuthImportHandle, provider_auth_import;
     ProviderStatusHandle, provider_status;
     ProviderAdminHandle, provider_admin;
     ProviderInstallHandle, provider_install;

@@ -314,6 +314,14 @@ const providerAuthImportApiRoots = [
   "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
 ];
 
+const providerAuthImportHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/providers/imports.rs",
+]);
+
+const providerAuthImportDaemonFacadePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/auth_import.rs",
+]);
+
 const providerTestHelperDaemonImportRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/",
@@ -7147,6 +7155,70 @@ function scanProviderInstallDaemonFacadeRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderAuthImportHandleRatchet({ filePath, contents }) {
+  if (!providerAuthImportHandleApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const checks = [
+    {
+      name: "provider auth import route extracts broad providers handle",
+      regex: /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu,
+    },
+    {
+      name: "provider auth import route extracts provider admin handle",
+      regex: /\bProviderAdminHandle\b|State\s*<\s*ProviderAdminHandle\s*>/gu,
+    },
+  ];
+  const lines = contents.split(/\r?\n/u);
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanProviderAuthImportDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerAuthImportDaemonFacadePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider auth import daemon facade implemented on broad providers handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
+      name: "provider auth import daemon facade implemented on provider admin handle",
+      regex: /\bProviderAdminHandle\b/gu,
+    },
+    {
+      name: "provider auth import daemon facade accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7203,6 +7275,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderInstallHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderAuthImportHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7290,6 +7366,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderInstallDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderAuthImportDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7886,6 +7966,8 @@ module.exports = {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderAuthImportDaemonFacadeRatchet,
+  scanProviderAuthImportHandleRatchet,
   scanProviderBootstrapDaemonFacadeRatchet,
   scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,

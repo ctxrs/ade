@@ -13,7 +13,7 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
-    ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderStatusHandle, ProviderUsageHandle, ProvidersHandle,
 };
 #[cfg(test)]

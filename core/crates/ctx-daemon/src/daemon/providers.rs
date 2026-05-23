@@ -33,10 +33,6 @@ mod usage;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use accounts::persist_successful_codex_login;
 pub use auth_check::ProviderAuthCheckError;
-pub use auth_import::{
-    import_provider_auth_candidates, list_provider_auth_import_candidates,
-    list_provider_auth_import_profiles,
-};
 pub use diagnostics::provider_diagnostics_snapshot;
 pub(in crate::daemon) use diagnostics::provider_diagnostics_snapshot_for_runtime;
 pub use harness_config::{
@@ -112,19 +108,6 @@ impl ProvidersHandle {
         target: InstallTarget,
     ) -> Result<ProviderStatus, ProviderStatusResponseError> {
         provider_status_response(&self.state, provider_id, target).await
-    }
-
-    pub async fn list_provider_auth_import_profiles(
-        &self,
-    ) -> anyhow::Result<Vec<ctx_provider_auth_import::ProviderImportedAuthProfile>> {
-        list_provider_auth_import_profiles(&self.state).await
-    }
-
-    pub async fn import_provider_auth_candidates(
-        &self,
-        candidate_ids: Vec<String>,
-    ) -> anyhow::Result<Vec<ctx_provider_auth_import::ProviderAuthImportResult>> {
-        import_provider_auth_candidates(&self.state, candidate_ids).await
     }
 
     pub fn data_root(&self) -> &StdPath {
