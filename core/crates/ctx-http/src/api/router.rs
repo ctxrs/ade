@@ -10,10 +10,11 @@ use ctx_daemon::daemon::{
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
     ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
-    ProviderHarnessConfigHandle, ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle,
-    ProviderWorkspaceAuthHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
-    SettingsHandle, TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle,
-    UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
+    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
+    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -98,6 +99,7 @@ pub struct RouteHandles {
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
     pub(in crate::api) provider_status: ProviderStatusHandle,
     pub(in crate::api) provider_admin: ProviderAdminHandle,
+    pub(in crate::api) provider_install: ProviderInstallHandle,
     pub(in crate::api) provider_usage: ProviderUsageHandle,
     pub(in crate::api) provider_harness_config: ProviderHarnessConfigHandle,
     pub(in crate::api) provider_bootstrap: ProviderBootstrapHandle,
@@ -136,6 +138,7 @@ impl RouteHandles {
             provider_accounts: handle.provider_accounts(),
             provider_status: handle.provider_status(),
             provider_admin: handle.provider_admin(),
+            provider_install: handle.provider_install(),
             provider_usage: handle.provider_usage(),
             provider_harness_config: handle.provider_harness_config(),
             provider_bootstrap: handle.provider_bootstrap(),
@@ -179,6 +182,7 @@ impl_route_state_extractors! {
     ProviderAccountsHandle, provider_accounts;
     ProviderStatusHandle, provider_status;
     ProviderAdminHandle, provider_admin;
+    ProviderInstallHandle, provider_install;
     ProviderUsageHandle, provider_usage;
     ProviderHarnessConfigHandle, provider_harness_config;
     ProviderBootstrapHandle, provider_bootstrap;

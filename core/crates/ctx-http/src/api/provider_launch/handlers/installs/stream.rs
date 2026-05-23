@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn install_stream_sse(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, axum::Error>>>, StatusCode> {
     let route = providers
@@ -56,10 +56,13 @@ mod tests {
             )
             .await;
 
-        let response = install_stream_sse(State(fixture.providers()), Path(install_id.to_string()))
-            .await
-            .expect("install stream should open")
-            .into_response();
+        let response = install_stream_sse(
+            State(fixture.provider_install()),
+            Path(install_id.to_string()),
+        )
+        .await
+        .expect("install stream should open")
+        .into_response();
         let mut body = response.into_body();
 
         let history_chunk = next_sse_chunk_containing(&mut body, "history-probe").await;

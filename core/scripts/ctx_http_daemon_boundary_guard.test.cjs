@@ -195,6 +195,8 @@ const {
   scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,
   scanProviderHarnessConfigHandleRatchet,
+  scanProviderInstallDaemonFacadeRatchet,
+  scanProviderInstallHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
@@ -766,6 +768,105 @@ test("appstate provider workspace launch daemon facade ratchet rejects full-stat
     [
       "provider workspace launch daemon facade accepts daemon state",
       "provider workspace launch daemon facade accepts daemon state",
+    ],
+  );
+});
+
+test("appstate provider install route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderInstallHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.start_provider_install_for_route("codex", None).await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider install route extracts broad providers handle",
+      "provider install route extracts broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderInstallHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/installs/status.rs",
+      contents: `
+        use ctx_daemon::daemon::ProviderInstallHandle;
+        async fn route(State(installs): State<ProviderInstallHandle>) {}
+      `,
+    }),
+    [],
+  );
+
+  const adminViolations = scanProviderInstallHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+    contents: `
+      use ctx_daemon::daemon::ProviderAdminHandle;
+      async fn route(State(admin): State<ProviderAdminHandle>) {
+        admin.refresh_provider_matrix_for_route().await;
+      }
+    `,
+  });
+  assert.deepEqual(
+    adminViolations.map((violation) => violation.name),
+    [
+      "provider install route extracts provider admin handle",
+      "provider install route extracts provider admin handle",
+    ],
+  );
+});
+
+test("appstate provider install daemon facade ratchet rejects full-state route seam", () => {
+  const broadHandleViolations = scanProviderInstallDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/installs.rs",
+    contents: `
+      use crate::daemon::ProvidersHandle;
+      impl ProvidersHandle {
+        pub async fn start_provider_install_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    broadHandleViolations,
+    [
+      "provider install daemon facade implemented on broad providers handle",
+      "provider install daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  const adminHandleViolations = scanProviderInstallDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/installs.rs",
+    contents: `
+      use crate::daemon::ProviderAdminHandle;
+      impl ProviderAdminHandle {
+        pub async fn start_provider_install_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    adminHandleViolations,
+    [
+      "provider install daemon facade implemented on provider admin handle",
+      "provider install daemon facade implemented on provider admin handle",
+    ],
+  );
+
+  const daemonStateViolations = scanProviderInstallDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/installs.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      async fn status(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    daemonStateViolations,
+    [
+      "provider install daemon facade accepts daemon state",
+      "provider install daemon facade accepts daemon state",
     ],
   );
 });

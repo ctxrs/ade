@@ -10,7 +10,9 @@ use ctx_merge_queue::MergeQueueRuntime;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
-use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_install::install_state::{
+    InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
@@ -216,6 +218,14 @@ impl DaemonHandle {
 
     pub fn provider_admin(&self) -> ProviderAdminHandle {
         ProviderAdminHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    pub fn provider_install(&self) -> ProviderInstallHandle {
+        ProviderInstallHandle::new(
             self.state.core.data_root.clone(),
             Arc::clone(&self.state.providers),
             self.state.telemetry.ops_events.clone(),
@@ -1110,6 +1120,82 @@ impl ProviderAdminHandle {
 
     pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
         &self.ops_events
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderInstallHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+    ops_events: OpsEvents,
+}
+
+impl ProviderInstallHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        providers: Arc<ProviderRuntime>,
+        ops_events: OpsEvents,
+    ) -> Self {
+        Self {
+            data_root,
+            providers,
+            ops_events,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+
+    pub(in crate::daemon) async fn get_install_polling_info(
+        &self,
+        install_id: InstallId,
+    ) -> Option<InstallInfo> {
+        let outcome = self.providers.get_install_polling_info(install_id).await;
+        crate::daemon::provider_capability_hosts::emit_provider_install_ops_events(
+            &self.ops_events,
+            outcome.ops_events,
+        );
+        outcome.info
+    }
+
+    pub(in crate::daemon) async fn cancel_install(
+        &self,
+        install_id: InstallId,
+    ) -> Option<InstallInfo> {
+        let outcome = self.providers.cancel_install(install_id).await?;
+        crate::daemon::provider_capability_hosts::emit_provider_install_ops_events(
+            &self.ops_events,
+            outcome.ops_events,
+        );
+        Some(outcome.info)
+    }
+
+    pub(in crate::daemon) async fn list_install_events(
+        &self,
+        install_id: InstallId,
+    ) -> Option<Vec<InstallProgressEvent>> {
+        let outcome = self.providers.get_install_events(install_id).await;
+        crate::daemon::provider_capability_hosts::emit_provider_install_ops_events(
+            &self.ops_events,
+            outcome.ops_events,
+        );
+        outcome.events
+    }
+
+    pub(in crate::daemon) async fn install_event_sender(
+        &self,
+        install_id: InstallId,
+    ) -> Option<broadcast::Sender<InstallProgressEvent>> {
+        self.providers.get_install_sender(install_id).await
     }
 }
 

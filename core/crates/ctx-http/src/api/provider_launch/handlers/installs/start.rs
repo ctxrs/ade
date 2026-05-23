@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn install_provider(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Path(id): Path<String>,
     Query(query): Query<RawInstallTargetQuery>,
 ) -> Result<Json<ProviderInstallStartRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -14,7 +14,7 @@ pub(in crate::api) async fn install_provider(
 }
 
 pub(in crate::api) async fn install_all_providers(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Query(query): Query<RawInstallTargetQuery>,
 ) -> Result<Json<Vec<ProviderInstallStartRouteResponse>>, (StatusCode, Json<serde_json::Value>)> {
     let response = providers

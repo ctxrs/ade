@@ -389,6 +389,18 @@ const providerWorkspaceLaunchDaemonFacadePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/auth_check/workspace.rs",
 ]);
 
+const providerInstallHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/provider_launch.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs/status.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs/stream.rs",
+]);
+
+const providerInstallDaemonFacadePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/installs.rs",
+]);
+
 const providerUsageApiRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status/usage.rs",
@@ -7071,6 +7083,70 @@ function scanProviderWorkspaceLaunchDaemonFacadeRatchet({ filePath, contents }) 
   return violations;
 }
 
+function scanProviderInstallHandleRatchet({ filePath, contents }) {
+  if (!providerInstallHandleApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const checks = [
+    {
+      name: "provider install route extracts broad providers handle",
+      regex: /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu,
+    },
+    {
+      name: "provider install route extracts provider admin handle",
+      regex: /\bProviderAdminHandle\b|State\s*<\s*ProviderAdminHandle\s*>/gu,
+    },
+  ];
+  const lines = contents.split(/\r?\n/u);
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanProviderInstallDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerInstallDaemonFacadePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider install daemon facade implemented on broad providers handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
+      name: "provider install daemon facade implemented on provider admin handle",
+      regex: /\bProviderAdminHandle\b/gu,
+    },
+    {
+      name: "provider install daemon facade accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7123,6 +7199,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderWorkspaceLaunchHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderInstallHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7206,6 +7286,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderWorkspaceLaunchDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderInstallDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7806,6 +7890,8 @@ module.exports = {
   scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,
   scanProviderHarnessConfigHandleRatchet,
+  scanProviderInstallDaemonFacadeRatchet,
+  scanProviderInstallHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,

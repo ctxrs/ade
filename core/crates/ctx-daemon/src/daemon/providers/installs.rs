@@ -12,7 +12,7 @@ use ctx_provider_install::{
 };
 use tokio::sync::broadcast;
 
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::ProviderInstallHandle;
 
 pub use ctx_provider_runtime::provider_launch::install::StartProviderInstallError;
 
@@ -25,11 +25,14 @@ pub fn parse_provider_install_target(raw: Option<&str>) -> Result<InstallTarget,
     ctx_managed_installs::parse_install_target(raw).map_err(|error| error.to_string())
 }
 
-pub async fn start_provider_install(
-    state: &Arc<DaemonState>,
+pub async fn start_provider_install<H>(
+    state: &Arc<H>,
     provider_id: &str,
     target: InstallTarget,
-) -> Result<InstallId, StartProviderInstallError> {
+) -> Result<InstallId, StartProviderInstallError>
+where
+    H: ctx_provider_runtime::provider_launch::install::ProviderInstallHost,
+{
     let (install_id, _) = ctx_provider_runtime::provider_launch::install::start_provider_install(
         state,
         provider_id,
@@ -39,42 +42,17 @@ pub async fn start_provider_install(
     Ok(install_id)
 }
 
-pub async fn start_all_provider_installs(
-    state: &Arc<DaemonState>,
+pub async fn start_all_provider_installs<H>(
+    state: &Arc<H>,
     target: InstallTarget,
-) -> Result<Vec<(String, InstallId)>, StartProviderInstallError> {
+) -> Result<Vec<(String, InstallId)>, StartProviderInstallError>
+where
+    H: ctx_provider_runtime::provider_launch::install::ProviderInstallHost,
+{
     ctx_provider_runtime::provider_launch::install::start_all_provider_installs(state, target).await
 }
 
-pub async fn get_provider_install_info(
-    state: &Arc<DaemonState>,
-    install_id: InstallId,
-) -> Option<InstallInfo> {
-    state.get_install_polling_info(install_id).await
-}
-
-pub async fn cancel_provider_install(
-    state: &Arc<DaemonState>,
-    install_id: InstallId,
-) -> Option<InstallInfo> {
-    state.cancel_install(install_id).await
-}
-
-pub async fn list_provider_install_events(
-    state: &Arc<DaemonState>,
-    install_id: InstallId,
-) -> Option<Vec<InstallProgressEvent>> {
-    state.get_install_events(install_id).await
-}
-
-pub async fn provider_install_event_sender(
-    state: &Arc<DaemonState>,
-    install_id: InstallId,
-) -> Option<broadcast::Sender<InstallProgressEvent>> {
-    state.get_install_sender(install_id).await
-}
-
-impl ProvidersHandle {
+impl ProviderInstallHandle {
     pub async fn start_provider_install_for_route(
         &self,
         provider_id: &str,
@@ -82,7 +60,8 @@ impl ProvidersHandle {
     ) -> Result<ProviderInstallStartRouteResponse, ProviderInstallJsonRouteError> {
         let target = parse_provider_install_target(raw_target)
             .map_err(ProviderInstallJsonRouteError::bad_request)?;
-        let install_id = start_provider_install(&self.state, provider_id, target)
+        let install_host = Arc::new(self.clone());
+        let install_id = start_provider_install(&install_host, provider_id, target)
             .await
             .map_err(provider_install_start_route_error)?;
         Ok(ProviderInstallStartRouteResponse::new(
@@ -98,7 +77,8 @@ impl ProvidersHandle {
     ) -> Result<Vec<ProviderInstallStartRouteResponse>, ProviderInstallJsonRouteError> {
         let target = parse_provider_install_target(raw_target)
             .map_err(ProviderInstallJsonRouteError::bad_request)?;
-        let installs = start_all_provider_installs(&self.state, target)
+        let install_host = Arc::new(self.clone());
+        let installs = start_all_provider_installs(&install_host, target)
             .await
             .map_err(provider_install_start_route_error)?;
         Ok(installs
@@ -114,7 +94,7 @@ impl ProvidersHandle {
         raw_install_id: &str,
     ) -> Result<InstallInfo, ProviderInstallStatusOnlyRouteError> {
         let install_id = parse_install_id_for_status_route(raw_install_id)?;
-        get_provider_install_info(&self.state, install_id)
+        self.get_install_polling_info(install_id)
             .await
             .ok_or(ProviderInstallStatusOnlyRouteError::NotFound)
     }
@@ -136,7 +116,7 @@ impl ProvidersHandle {
 
         let mut installs = Vec::with_capacity(install_ids.len());
         for install_id in install_ids {
-            let info = get_provider_install_info(&self.state, install_id).await;
+            let info = self.get_install_polling_info(install_id).await;
             installs.push(ProviderInstallStatusBatchItem::new(
                 install_id.to_string(),
                 info,
@@ -151,7 +131,7 @@ impl ProvidersHandle {
         raw_install_id: &str,
     ) -> Result<InstallInfo, ProviderInstallStatusOnlyRouteError> {
         let install_id = parse_install_id_for_status_route(raw_install_id)?;
-        cancel_provider_install(&self.state, install_id)
+        self.cancel_install(install_id)
             .await
             .ok_or(ProviderInstallStatusOnlyRouteError::NotFound)
     }
@@ -161,7 +141,7 @@ impl ProvidersHandle {
         raw_install_id: &str,
     ) -> Result<Vec<InstallProgressEvent>, ProviderInstallStatusOnlyRouteError> {
         let install_id = parse_install_id_for_status_route(raw_install_id)?;
-        list_provider_install_events(&self.state, install_id)
+        self.list_install_events(install_id)
             .await
             .ok_or(ProviderInstallStatusOnlyRouteError::NotFound)
     }
@@ -171,10 +151,11 @@ impl ProvidersHandle {
         raw_install_id: &str,
     ) -> Result<ProviderInstallEventStreamRoute, ProviderInstallStatusOnlyRouteError> {
         let install_id = parse_install_id_for_status_route(raw_install_id)?;
-        let Some(sender) = provider_install_event_sender(&self.state, install_id).await else {
+        let Some(sender) = self.install_event_sender(install_id).await else {
             return Err(ProviderInstallStatusOnlyRouteError::NotFound);
         };
-        let history = list_provider_install_events(&self.state, install_id)
+        let history = self
+            .list_install_events(install_id)
             .await
             .unwrap_or_default();
         Ok(ProviderInstallEventStreamRoute {

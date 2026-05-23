@@ -13,7 +13,9 @@ use axum::Json;
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 
-use ctx_daemon::daemon::{ProviderOptionsHandle, ProviderWorkspaceAuthHandle, ProvidersHandle};
+use ctx_daemon::daemon::{
+    ProviderInstallHandle, ProviderOptionsHandle, ProviderWorkspaceAuthHandle,
+};
 use ctx_provider_install::{
     ProviderInstallInfo, ProviderInstallProgressEvent, ProviderInstallStartRouteResponse,
     ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,

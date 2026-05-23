@@ -30,7 +30,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     let missing_install_id = InstallId::new_v4();
 
     let Json(resp) = get_install_statuses(
-        State(fixture.providers()),
+        State(fixture.provider_install()),
         Json(ProviderInstallStatusesRouteRequest::new(vec![
             install_id.to_string(),
             missing_install_id.to_string(),
@@ -66,7 +66,7 @@ async fn get_install_statuses_rejects_invalid_install_ids() {
     let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
 
     let err = get_install_statuses(
-        State(fixture.providers()),
+        State(fixture.provider_install()),
         Json(ProviderInstallStatusesRouteRequest::new(vec![
             "not-a-uuid".to_string()
         ])),

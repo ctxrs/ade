@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn get_install(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<ProviderInstallInfo>, StatusCode> {
     providers
@@ -12,7 +12,7 @@ pub(in crate::api) async fn get_install(
 }
 
 pub(in crate::api) async fn get_install_statuses(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Json(req): Json<ProviderInstallStatusesRouteRequest>,
 ) -> Result<Json<ProviderInstallStatusesRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
     providers
@@ -23,7 +23,7 @@ pub(in crate::api) async fn get_install_statuses(
 }
 
 pub(in crate::api) async fn cancel_install(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<ProviderInstallInfo>, StatusCode> {
     providers
@@ -34,7 +34,7 @@ pub(in crate::api) async fn cancel_install(
 }
 
 pub(in crate::api) async fn list_install_events(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderInstallHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<Vec<ProviderInstallProgressEvent>>, StatusCode> {
     providers

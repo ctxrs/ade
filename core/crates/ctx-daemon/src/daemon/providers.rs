@@ -1,11 +1,8 @@
 use std::path::Path as StdPath;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_provider_install::install_state::{
-    InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
-};
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderStatus;
-use tokio::sync::broadcast;
 
 use super::handle::ProvidersHandle;
 mod accounts;
@@ -45,11 +42,7 @@ pub(in crate::daemon) use diagnostics::provider_diagnostics_snapshot_for_runtime
 pub use harness_config::{
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
 };
-pub use installs::{
-    cancel_provider_install, get_provider_install_info, list_provider_install_events,
-    parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
-    start_provider_install, ProviderInstallEventStreamRoute, StartProviderInstallError,
-};
+pub use installs::parse_provider_install_target;
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
@@ -119,43 +112,6 @@ impl ProvidersHandle {
         target: InstallTarget,
     ) -> Result<ProviderStatus, ProviderStatusResponseError> {
         provider_status_response(&self.state, provider_id, target).await
-    }
-
-    pub async fn start_provider_install(
-        &self,
-        provider_id: &str,
-        target: InstallTarget,
-    ) -> Result<InstallId, StartProviderInstallError> {
-        start_provider_install(&self.state, provider_id, target).await
-    }
-
-    pub async fn start_all_provider_installs(
-        &self,
-        target: InstallTarget,
-    ) -> Result<Vec<(String, InstallId)>, StartProviderInstallError> {
-        start_all_provider_installs(&self.state, target).await
-    }
-
-    pub async fn get_provider_install_info(&self, install_id: InstallId) -> Option<InstallInfo> {
-        get_provider_install_info(&self.state, install_id).await
-    }
-
-    pub async fn cancel_provider_install(&self, install_id: InstallId) -> Option<InstallInfo> {
-        cancel_provider_install(&self.state, install_id).await
-    }
-
-    pub async fn list_provider_install_events(
-        &self,
-        install_id: InstallId,
-    ) -> Option<Vec<InstallProgressEvent>> {
-        list_provider_install_events(&self.state, install_id).await
-    }
-
-    pub async fn provider_install_event_sender(
-        &self,
-        install_id: InstallId,
-    ) -> Option<broadcast::Sender<InstallProgressEvent>> {
-        provider_install_event_sender(&self.state, install_id).await
     }
 
     pub async fn list_provider_auth_import_profiles(

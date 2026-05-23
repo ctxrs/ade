@@ -77,10 +77,11 @@ pub use handle::{
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
     ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
-    ProviderHarnessConfigHandle, ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle,
-    ProviderWorkspaceAuthHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
-    SettingsHandle, TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle,
-    UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
+    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
+    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;
