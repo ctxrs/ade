@@ -49,6 +49,14 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
                 "path": existing_repo.path().to_string_lossy()
             })),
         ),
+        (
+            "GET",
+            &format!(
+                "/api/repo/validate_destination?path={}",
+                existing_repo.path().to_string_lossy()
+            ),
+            None,
+        ),
         ("GET", "/api/repo/staging_path", None),
     ];
 

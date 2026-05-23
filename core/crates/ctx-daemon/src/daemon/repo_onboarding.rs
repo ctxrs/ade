@@ -7,7 +7,7 @@ use ctx_route_contracts::repo_onboarding::{
     RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,
 };
 
-use crate::daemon::WorkspacesHandle;
+use crate::daemon::RepoOnboardingHandle;
 
 fn repo_onboarding_route_error(
     error: service::RepoOnboardingServiceError,
@@ -33,7 +33,7 @@ fn repo_status_route_response(status: service::RepoStatusCheck) -> RepoStatusRou
     )
 }
 
-impl WorkspacesHandle {
+impl RepoOnboardingHandle {
     pub async fn initialize_repo_for_route(
         &self,
         req: RepoInitRouteRequest,
@@ -82,7 +82,7 @@ impl WorkspacesHandle {
     pub async fn create_repo_staging_path_for_route(
         &self,
     ) -> Result<RepoPathRouteResponse, RepoOnboardingRouteError> {
-        service::create_repo_staging_path_with_service_errors(&self.state.core.data_root)
+        service::create_repo_staging_path_with_service_errors(self.data_root())
             .await
             .map(repo_path_route_response)
             .map_err(repo_onboarding_route_error)
@@ -106,7 +106,7 @@ mod tests {
 
     use crate::test_support::TestDaemon;
 
-    async fn test_workspaces_handle() -> (tempfile::TempDir, WorkspacesHandle) {
+    async fn test_repo_onboarding_handle() -> (tempfile::TempDir, RepoOnboardingHandle) {
         let data_root = tempdir().expect("data root");
         let daemon = TestDaemon::new_for_test(
             data_root.path().to_path_buf(),
@@ -114,14 +114,14 @@ mod tests {
         )
         .await
         .expect("test daemon");
-        (data_root, daemon.handle().workspaces())
+        (data_root, daemon.handle().repo_onboarding())
     }
 
     #[tokio::test]
     async fn create_repo_staging_path_uses_daemon_data_root() {
-        let (data_root, workspaces) = test_workspaces_handle().await;
+        let (data_root, repo_onboarding) = test_repo_onboarding_handle().await;
 
-        let response = workspaces
+        let response = repo_onboarding
             .create_repo_staging_path_for_route()
             .await
             .expect("route staging path");
@@ -138,9 +138,9 @@ mod tests {
 
     #[tokio::test]
     async fn validate_repo_destination_preserves_path_error_behavior() {
-        let (_data_root, workspaces) = test_workspaces_handle().await;
+        let (_data_root, repo_onboarding) = test_repo_onboarding_handle().await;
 
-        let route_error = workspaces
+        let route_error = repo_onboarding
             .validate_repo_destination_for_route(RepoValidateDestinationRouteRequest::new(
                 "   ", false, false,
             ))
@@ -153,11 +153,11 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_repo_can_be_inspected_as_repo() {
-        let (_data_root, workspaces) = test_workspaces_handle().await;
+        let (_data_root, repo_onboarding) = test_repo_onboarding_handle().await;
         let temp = tempdir().expect("repo parent");
         let repo_path = temp.path().join("repo");
 
-        let response = workspaces
+        let response = repo_onboarding
             .initialize_repo_for_route(RepoInitRouteRequest::new(
                 repo_path.to_string_lossy().to_string(),
                 false,
@@ -170,7 +170,7 @@ mod tests {
             .get("path")
             .and_then(|path| path.as_str())
             .expect("path field");
-        let status = workspaces
+        let status = repo_onboarding
             .inspect_repo_status_for_route(RepoStatusRouteRequest::new(initialized))
             .await
             .expect("repo status");
@@ -185,11 +185,11 @@ mod tests {
 
     #[tokio::test]
     async fn inspect_repo_status_missing_path_returns_bad_request() {
-        let (_data_root, workspaces) = test_workspaces_handle().await;
+        let (_data_root, repo_onboarding) = test_repo_onboarding_handle().await;
         let temp = tempdir().expect("repo parent");
         let missing = temp.path().join("missing");
 
-        let error = workspaces
+        let error = repo_onboarding
             .inspect_repo_status_for_route(RepoStatusRouteRequest::new(
                 missing.to_string_lossy().to_string(),
             ))

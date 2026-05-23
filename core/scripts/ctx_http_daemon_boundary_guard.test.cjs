@@ -205,6 +205,9 @@ const {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanRepoOnboardingDaemonImplementationRatchet,
+  scanRepoOnboardingHandleFieldRatchet,
+  scanRepoOnboardingRouteExtractorRatchet,
   scanResourceUtilizationDaemonImplementationRatchet,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
@@ -1960,6 +1963,119 @@ test("appstate guard rejects resource utilization broad handle fields", () => {
         workspace_stores: ProtectedWorkspaceStoreLookup,
         providers: Arc<ProviderRuntime>,
         resource_sampler: Arc<Mutex<ResourceSampler>>,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects repo onboarding route extraction outside repo routes", () => {
+  const violations = scanRepoOnboardingRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::RepoOnboardingHandle;
+      async fn handler(
+        State(state): State<RepoOnboardingHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "repo onboarding route extracts RepoOnboardingHandle outside repo routes",
+  ]);
+
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/repo/clone.rs",
+    "core/crates/ctx-http/src/api/repo/destination.rs",
+    "core/crates/ctx-http/src/api/repo/init.rs",
+    "core/crates/ctx-http/src/api/repo/status.rs",
+  ]) {
+    assert.deepEqual(
+      scanRepoOnboardingRouteExtractorRatchet({
+        filePath,
+        contents: `
+          async fn handler(
+            State(state): State<RepoOnboardingHandle>,
+          ) {}
+        `,
+      }),
+      [],
+    );
+  }
+});
+
+test("appstate guard rejects repo onboarding broad route and router composition", () => {
+  const routeViolations = scanRepoOnboardingRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/repo/clone.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(routeViolations.includes("repo onboarding route uses broad workspace handle"));
+
+  const routerViolations = scanRepoOnboardingRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            repo_onboarding: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, ["repo onboarding router composed from broad workspace handle"]);
+});
+
+test("appstate guard rejects repo onboarding daemon facade broad seams", () => {
+  const violations = scanRepoOnboardingDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/repo_onboarding.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("repo onboarding daemon facade uses broad daemon state"));
+  assert(violations.includes("repo onboarding daemon facade uses broad daemon handle"));
+  assert(violations.includes("repo onboarding daemon facade uses broad workspace handle"));
+});
+
+test("appstate guard rejects repo onboarding broad handle fields", () => {
+  const fieldViolations = scanRepoOnboardingHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct RepoOnboardingHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes("repo onboarding capability stores broad handle or daemon state"),
+  );
+  assert(
+    fieldViolations.includes(
+      "repo onboarding capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanRepoOnboardingHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct RepoOnboardingHandle {
+        data_root: PathBuf,
       }
     `,
   });

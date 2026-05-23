@@ -100,6 +100,10 @@ impl DaemonHandle {
         )
     }
 
+    pub fn repo_onboarding(&self) -> RepoOnboardingHandle {
+        RepoOnboardingHandle::new(self.state.core.data_root.clone())
+    }
+
     pub fn logs(&self) -> LogsHandle {
         LogsHandle::new(self.state.core.data_root.clone())
     }
@@ -1493,6 +1497,21 @@ impl MobileSecureProxyHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct RepoOnboardingHandle {
+    data_root: PathBuf,
+}
+
+impl RepoOnboardingHandle {
+    pub(in crate::daemon) fn new(data_root: PathBuf) -> Self {
+        Self { data_root }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
     }
 }
 

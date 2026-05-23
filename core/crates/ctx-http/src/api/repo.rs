@@ -4,7 +4,7 @@ use axum::Json;
 
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::RepoOnboardingHandle;
 use ctx_route_contracts::repo_onboarding::{
     RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
     RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,

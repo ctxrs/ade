@@ -11,9 +11,9 @@ use ctx_daemon::daemon::{
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
-    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
-    ResourceUtilizationHandle, SessionArtifactsHandle, SessionVcsHandle, SessionsHandle,
-    SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RepoOnboardingHandle,
+    RequestBaseHandle, ResourceUtilizationHandle, SessionArtifactsHandle, SessionVcsHandle,
+    SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
     TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
     TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
     WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
@@ -84,6 +84,7 @@ pub struct RouteHandles {
     pub(in crate::api) diagnostics: DiagnosticsHandle,
     pub(in crate::api) blob: BlobHandle,
     pub(in crate::api) request_base: RequestBaseHandle,
+    pub(in crate::api) repo_onboarding: RepoOnboardingHandle,
     pub(in crate::api) logs: LogsHandle,
     pub(in crate::api) org_policy: OrgPolicyHandle,
     pub(in crate::api) dictation: DictationHandle,
@@ -133,6 +134,7 @@ impl RouteHandles {
             diagnostics: handle.diagnostics(),
             blob: handle.blob(),
             request_base: handle.request_base(),
+            repo_onboarding: handle.repo_onboarding(),
             logs: handle.logs(),
             org_policy: handle.org_policy(),
             dictation: handle.dictation(),
@@ -187,6 +189,7 @@ impl_route_state_extractors! {
     DiagnosticsHandle, diagnostics;
     BlobHandle, blob;
     RequestBaseHandle, request_base;
+    RepoOnboardingHandle, repo_onboarding;
     LogsHandle, logs;
     OrgPolicyHandle, org_policy;
     DictationHandle, dictation;
