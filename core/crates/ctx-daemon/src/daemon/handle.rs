@@ -7,7 +7,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, SandboxBinding, Session, Task, TaskDeltaKind, Workspace, Worktree,
+    ExecutionEnvironment, SandboxBinding, Session, SessionEvent, Task, TaskDeltaKind, Workspace,
+    Worktree,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
@@ -153,6 +154,30 @@ impl DaemonHandle {
 
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
+    }
+
+    fn session_store_lookup(&self) -> SessionStoreLookup {
+        SessionStoreLookup::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+        )
+    }
+
+    fn session_artifact_effects(&self) -> Arc<SessionArtifactEffects> {
+        let state = Arc::clone(&self.state);
+        let publish_event = Arc::new(move |event: SessionEvent| {
+            let state = Arc::clone(&state);
+            Box::pin(async move { state.publish_event(event).await }) as SessionArtifactsFuture<_>
+        });
+        SessionArtifactEffects::new(publish_event)
+    }
+
+    pub fn session_artifacts(&self) -> SessionArtifactsHandle {
+        SessionArtifactsHandle::new(
+            self.session_store_lookup(),
+            self.state.core.tool_output_spool_dir.clone(),
+            self.session_artifact_effects(),
+        )
     }
 
     fn task_lifecycle_workspace_runtime(&self) -> Arc<TaskLifecycleWorkspaceRuntime> {
@@ -1368,6 +1393,7 @@ impl ProtectedWorkspaceStoreLookup {
 
 type TaskAdmissionFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type TaskLifecycleFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type SessionArtifactsFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskMetadataFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskArchivedRevLoader =
@@ -1386,6 +1412,268 @@ type TaskAdmissionModelCatalogLoader = Arc<
         + Send
         + Sync,
 >;
+
+#[derive(Clone)]
+pub(in crate::daemon) struct SessionStoreLookup {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+impl SessionStoreLookup {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+        }
+    }
+
+    async fn workspace_id_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<WorkspaceId>, crate::daemon::SessionStoreAccessError> {
+        self.global_store
+            .get_workspace_id_for_session(session_id)
+            .await
+            .map_err(crate::daemon::SessionStoreAccessError::LookupUnavailable)
+    }
+
+    pub(in crate::daemon) async fn existing_session_store_allow_archived(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        let Some(workspace_id) = self.workspace_id_for_session(session_id).await? else {
+            return Err(crate::daemon::SessionStoreAccessError::NotFound);
+        };
+        match self
+            .workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+        {
+            Ok(store) => Ok(store),
+            Err(crate::daemon::WorkspaceStoreAccessError::NotFound) => {
+                Err(crate::daemon::SessionStoreAccessError::NotFound)
+            }
+            Err(crate::daemon::WorkspaceStoreAccessError::Unavailable(error)) => Err(
+                crate::daemon::SessionStoreAccessError::LookupUnavailable(error),
+            ),
+        }
+    }
+
+    pub(in crate::daemon) async fn existing_session_store(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        let store = self
+            .existing_session_store_allow_archived(session_id)
+            .await?;
+        reject_archived_subagent_session(&store, session_id).await?;
+        Ok(store)
+    }
+
+    pub(in crate::daemon) async fn existing_session_store_for_write(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        const STORE_OPEN_RETRY_LIMIT: usize = 3;
+        const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
+
+        let mut attempt = 0usize;
+        loop {
+            let workspace_id = match self.workspace_id_for_session(session_id).await {
+                Ok(Some(workspace_id)) => workspace_id,
+                Ok(None) => return Err(crate::daemon::SessionStoreAccessError::NotFound),
+                Err(crate::daemon::SessionStoreAccessError::LookupUnavailable(error)) => {
+                    if is_transient_store_open_error(&error) && attempt < STORE_OPEN_RETRY_LIMIT {
+                        attempt += 1;
+                        let backoff_ms = STORE_OPEN_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        "session store lookup failed: {error:#}"
+                    );
+                    return Err(crate::daemon::SessionStoreAccessError::StoreUnavailable);
+                }
+                Err(error) => return Err(error),
+            };
+            match self
+                .workspace_stores
+                .existing_workspace_store(workspace_id)
+                .await
+            {
+                Ok(store) => {
+                    reject_archived_subagent_session(&store, session_id).await?;
+                    return Ok(store);
+                }
+                Err(crate::daemon::WorkspaceStoreAccessError::NotFound) => {
+                    return Err(crate::daemon::SessionStoreAccessError::NotFound);
+                }
+                Err(crate::daemon::WorkspaceStoreAccessError::Unavailable(error)) => {
+                    if is_transient_store_open_error(&error) && attempt < STORE_OPEN_RETRY_LIMIT {
+                        attempt += 1;
+                        let backoff_ms = STORE_OPEN_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        "session store lookup failed: {error:#}"
+                    );
+                    return Err(crate::daemon::SessionStoreAccessError::StoreUnavailable);
+                }
+            }
+        }
+    }
+
+    pub(in crate::daemon) async fn require_scoped_mcp_session_context(
+        &self,
+        mcp_auth: ctx_mcp_auth::McpAuthContext,
+        session_id: SessionId,
+    ) -> Result<(), crate::daemon::ScopedMcpSessionAccessError> {
+        if mcp_auth.session_id != session_id {
+            return Err(crate::daemon::ScopedMcpSessionAccessError::Unauthorized(
+                "scoped ctx-mcp token is limited to the current session",
+            ));
+        }
+
+        let store = self
+            .existing_session_store(session_id)
+            .await
+            .map_err(scoped_mcp_session_store_error)?;
+        let session = store
+            .get_session(session_id)
+            .await
+            .map_err(crate::daemon::ScopedMcpSessionAccessError::StoreUnavailable)?
+            .ok_or(crate::daemon::ScopedMcpSessionAccessError::SessionNotFound)?;
+
+        if session.workspace_id != mcp_auth.workspace_id
+            || session.worktree_id != mcp_auth.worktree_id
+        {
+            return Err(crate::daemon::ScopedMcpSessionAccessError::Unauthorized(
+                "scoped ctx-mcp token does not match the loaded session scope",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+async fn reject_archived_subagent_session(
+    store: &Store,
+    session_id: SessionId,
+) -> Result<(), crate::daemon::SessionStoreAccessError> {
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| crate::daemon::SessionStoreAccessError::StoreUnavailable)?
+    {
+        return Err(crate::daemon::SessionStoreAccessError::NotFound);
+    }
+    Ok(())
+}
+
+fn scoped_mcp_session_store_error(
+    error: crate::daemon::SessionStoreAccessError,
+) -> crate::daemon::ScopedMcpSessionAccessError {
+    match error {
+        crate::daemon::SessionStoreAccessError::NotFound => {
+            crate::daemon::ScopedMcpSessionAccessError::SessionNotFound
+        }
+        crate::daemon::SessionStoreAccessError::LookupUnavailable(error) => {
+            crate::daemon::ScopedMcpSessionAccessError::StoreUnavailable(error)
+        }
+        crate::daemon::SessionStoreAccessError::StoreUnavailable => {
+            crate::daemon::ScopedMcpSessionAccessError::StoreUnavailable(anyhow::anyhow!(
+                "workspace store unavailable"
+            ))
+        }
+    }
+}
+
+fn is_transient_store_open_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("sqlite_busy")
+        || msg.contains("database is busy")
+}
+
+#[derive(Clone)]
+pub struct SessionArtifactsHandle {
+    lookup: SessionStoreLookup,
+    tool_output_spool_dir: PathBuf,
+    effects: Arc<SessionArtifactEffects>,
+}
+
+impl SessionArtifactsHandle {
+    pub(in crate::daemon) fn new(
+        lookup: SessionStoreLookup,
+        tool_output_spool_dir: PathBuf,
+        effects: Arc<SessionArtifactEffects>,
+    ) -> Self {
+        Self {
+            lookup,
+            tool_output_spool_dir,
+            effects,
+        }
+    }
+
+    pub(in crate::daemon) async fn existing_session_store(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        self.lookup.existing_session_store(session_id).await
+    }
+
+    pub(in crate::daemon) async fn existing_session_store_for_write(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        self.lookup
+            .existing_session_store_for_write(session_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn require_scoped_mcp_session_context(
+        &self,
+        mcp_auth: ctx_mcp_auth::McpAuthContext,
+        session_id: SessionId,
+    ) -> Result<(), crate::daemon::ScopedMcpSessionAccessError> {
+        self.lookup
+            .require_scoped_mcp_session_context(mcp_auth, session_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn session_tool_output_spool_dir(
+        &self,
+        session_id: SessionId,
+    ) -> PathBuf {
+        self.tool_output_spool_dir.join(session_id.0.to_string())
+    }
+
+    pub(in crate::daemon) async fn publish_event(&self, event: SessionEvent) {
+        self.effects.publish_event(event).await;
+    }
+}
+
+pub(in crate::daemon) struct SessionArtifactEffects {
+    publish_event: Arc<dyn Fn(SessionEvent) -> SessionArtifactsFuture<()> + Send + Sync>,
+}
+
+impl SessionArtifactEffects {
+    pub(in crate::daemon) fn new(
+        publish_event: Arc<dyn Fn(SessionEvent) -> SessionArtifactsFuture<()> + Send + Sync>,
+    ) -> Arc<Self> {
+        Arc::new(Self { publish_event })
+    }
+
+    pub(in crate::daemon) async fn publish_event(&self, event: SessionEvent) {
+        (self.publish_event)(event).await;
+    }
+}
 
 #[derive(Clone)]
 pub struct TaskListingHandle {

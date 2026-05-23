@@ -6,7 +6,7 @@ use ctx_session_artifacts::route_contract::{
     SessionArtifactsRouteResponse, SetSessionArtifactsRouteRequest,
 };
 
-use crate::daemon::handle::SessionsHandle;
+use crate::daemon::handle::SessionArtifactsHandle;
 use crate::daemon::route_files::{open_canonical_route_file, RouteFileDownloadError};
 use crate::daemon::{ScopedMcpSessionAccessError, SessionStoreAccessError};
 use ctx_core::ids::{ArtifactId, SessionId};
@@ -21,7 +21,7 @@ pub struct SessionArtifactDownload {
     pub name: Option<String>,
 }
 
-impl SessionsHandle {
+impl SessionArtifactsHandle {
     pub async fn list_session_artifacts_with_missing_for_route_params(
         &self,
         params: SessionRouteParams,
@@ -235,6 +235,89 @@ fn session_artifact_file_error(error: RouteFileDownloadError) -> SessionArtifact
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::test_support::{TaskLifecycleSessionSeed, TaskLifecycleWorktreeSeed, TestDaemon};
+    use ctx_core::ids::WorktreeId;
+    use ctx_core::models::{ExecutionEnvironment, Session, SessionEventType, VcsKind};
+    use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
+
+    struct ArtifactFixture {
+        _temp: tempfile::TempDir,
+        daemon: TestDaemon,
+        session: Session,
+        artifact_path: std::path::PathBuf,
+    }
+
+    async fn seeded_artifact_fixture() -> ArtifactFixture {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_for_test(
+            temp.path().join("data"),
+            "http://127.0.0.1:4310".to_string(),
+        )
+        .await
+        .expect("daemon");
+        let workspace_root = temp.path().join("repo");
+        let worktree_root = temp.path().join("worktree");
+        std::fs::create_dir_all(&workspace_root).expect("workspace root");
+        std::fs::create_dir_all(&worktree_root).expect("worktree root");
+        let workspace = daemon
+            .seed_task_lifecycle_workspace_for_test("ws", &workspace_root, VcsKind::Git)
+            .await
+            .expect("workspace");
+        let task = daemon
+            .seed_task_lifecycle_task_for_test(workspace.id, "task")
+            .await
+            .expect("task");
+        let worktree_id = WorktreeId::new();
+        let worktree = daemon
+            .seed_task_lifecycle_worktree_for_test(TaskLifecycleWorktreeSeed {
+                workspace_id: workspace.id,
+                owner_task_id: task.id,
+                worktree_id,
+                root_path: worktree_root.clone(),
+                base_commit: "base".to_string(),
+                git_branch: "task-branch".to_string(),
+                make_primary: true,
+            })
+            .await
+            .expect("worktree");
+        let session = daemon
+            .seed_task_lifecycle_session_for_test(TaskLifecycleSessionSeed {
+                task_id: task.id,
+                workspace_id: workspace.id,
+                worktree_id: worktree.id,
+                execution_environment: ExecutionEnvironment::Host,
+                title: "session".to_string(),
+                parent_session_id: None,
+                role: None,
+            })
+            .await
+            .expect("session");
+        let artifact_path = worktree_root.join("artifact.txt");
+        std::fs::write(&artifact_path, b"artifact").expect("artifact file");
+        ArtifactFixture {
+            _temp: temp,
+            daemon,
+            session,
+            artifact_path,
+        }
+    }
+
+    fn scoped_context_for(session: &Session) -> McpAuthContext {
+        McpAuthContext {
+            session_id: session.id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            capabilities: McpAuthCapabilities::provider_session(),
+        }
+    }
+
+    fn set_request(path: &std::path::Path) -> SetSessionArtifactsRouteRequest {
+        SetSessionArtifactsRouteRequest::new(vec![SessionArtifactInput::new(
+            path.to_string_lossy().to_string(),
+            None,
+            None,
+        )])
+    }
 
     #[tokio::test]
     async fn open_canonical_route_file_rejects_symlink_swap() {
@@ -283,5 +366,161 @@ mod tests {
         let missing =
             scoped_mcp_session_artifact_route_error(ScopedMcpSessionAccessError::SessionNotFound);
         assert_eq!(missing, SessionArtifactRouteError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn set_session_artifacts_persists_state_and_artifacts_set_event() {
+        let fixture = seeded_artifact_fixture().await;
+        let handle = fixture.daemon.handle().session_artifacts();
+
+        let artifacts = handle
+            .set_session_artifacts_for_route_params(
+                SessionRouteParams::new(fixture.session.id.0.to_string()),
+                None,
+                set_request(&fixture.artifact_path),
+            )
+            .await
+            .expect("set artifacts")
+            .into_artifacts();
+
+        assert_eq!(artifacts.len(), 1);
+        let store = handle
+            .existing_session_store(fixture.session.id)
+            .await
+            .expect("session store");
+        let state = store
+            .get_session_state(fixture.session.id)
+            .await
+            .expect("session state");
+        assert_eq!(state.artifacts.len(), 1);
+        let events = store
+            .list_session_events(fixture.session.id)
+            .await
+            .expect("session events");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event.event_type, SessionEventType::ArtifactsSet)),
+            "expected artifacts_set event, got {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifact_routes_hide_archived_subagents() {
+        let fixture = seeded_artifact_fixture().await;
+        let child = fixture
+            .daemon
+            .seed_task_lifecycle_session_for_test(TaskLifecycleSessionSeed {
+                task_id: fixture.session.task_id,
+                workspace_id: fixture.session.workspace_id,
+                worktree_id: fixture.session.worktree_id,
+                execution_environment: fixture.session.execution_environment,
+                title: "subagent".to_string(),
+                parent_session_id: Some(fixture.session.id),
+                role: Some("sub_agent".to_string()),
+            })
+            .await
+            .expect("child session");
+        assert!(fixture
+            .daemon
+            .archive_task_lifecycle_subagent_session_for_test(
+                fixture.session.workspace_id,
+                fixture.session.id,
+                child.id,
+            )
+            .await
+            .expect("archive child"));
+
+        let error = fixture
+            .daemon
+            .handle()
+            .session_artifacts()
+            .list_session_artifacts_with_missing_for_route_params(SessionRouteParams::new(
+                child.id.0.to_string(),
+            ))
+            .await
+            .expect_err("archived subagent should be hidden");
+
+        assert_eq!(error, SessionArtifactRouteError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn artifact_routes_hide_deleting_workspace() {
+        let fixture = seeded_artifact_fixture().await;
+        fixture
+            .daemon
+            .cache_rehydration_begin_workspace_delete_for_test(fixture.session.workspace_id)
+            .await;
+
+        let error = fixture
+            .daemon
+            .handle()
+            .session_artifacts()
+            .list_session_artifacts_with_missing_for_route_params(SessionRouteParams::new(
+                fixture.session.id.0.to_string(),
+            ))
+            .await
+            .expect_err("deleting workspace should hide session");
+
+        fixture
+            .daemon
+            .cache_rehydration_finish_workspace_delete_for_test(fixture.session.workspace_id)
+            .await;
+        assert_eq!(error, SessionArtifactRouteError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn artifact_routes_report_permanent_store_open_failure_as_internal() {
+        let fixture = seeded_artifact_fixture().await;
+        fixture
+            .daemon
+            .cache_rehydration_make_workspace_store_unopenable_for_test(
+                fixture.session.workspace_id,
+            )
+            .await
+            .expect("make store unavailable");
+
+        let error = fixture
+            .daemon
+            .handle()
+            .session_artifacts()
+            .set_session_artifacts_for_route_params(
+                SessionRouteParams::new(fixture.session.id.0.to_string()),
+                None,
+                set_request(&fixture.artifact_path),
+            )
+            .await
+            .expect_err("permanent store-open failure should be internal");
+
+        assert!(
+            matches!(error, SessionArtifactRouteError::Internal(_)),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_mcp_artifact_validation_checks_loaded_session_scope() {
+        let fixture = seeded_artifact_fixture().await;
+        let mut context = scoped_context_for(&fixture.session);
+        context.workspace_id = ctx_core::ids::WorkspaceId::new();
+
+        let error = fixture
+            .daemon
+            .handle()
+            .session_artifacts()
+            .set_session_artifacts_for_route_params(
+                SessionRouteParams::new(fixture.session.id.0.to_string()),
+                Some(context),
+                set_request(&fixture.artifact_path),
+            )
+            .await
+            .expect_err("loaded scope mismatch should be unauthorized");
+
+        assert_eq!(
+            error,
+            SessionArtifactRouteError::Unauthorized(
+                "scoped ctx-mcp token does not match the loaded session scope".to_string()
+            )
+        );
     }
 }

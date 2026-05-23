@@ -1,12 +1,12 @@
 use super::*;
-use ctx_daemon::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionArtifactsHandle;
 use ctx_route_contracts::sessions::SessionRouteParams;
 use ctx_session_artifacts::route_contract::{
     SessionArtifactsRouteResponse, SetSessionArtifactsRouteRequest,
 };
 
 pub(in crate::api) async fn set_session_artifacts(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionArtifactsHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionArtifactsRouteRequest>,

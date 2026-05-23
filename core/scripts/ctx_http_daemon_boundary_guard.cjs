@@ -188,6 +188,17 @@ const sessionArtifactApiRoots = [
   "core/crates/ctx-http/src/api/artifacts/download.rs",
 ];
 
+const sessionArtifactsHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/artifacts/session/list.rs",
+  "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+  "core/crates/ctx-http/src/api/artifacts/download.rs",
+]);
+
+const sessionArtifactsDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/artifacts.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
+]);
+
 const mergeQueueSubmitApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
 ];
@@ -7677,6 +7688,168 @@ function scanTaskReadMetadataHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionArtifactsHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionArtifactsHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session artifacts route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_artifacts\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionArtifactsHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session artifacts route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function rustImplBlocksForType({ contents, typeName }) {
+  const blocks = [];
+  const regex = new RegExp(`\\bimpl\\s+${typeName}\\s*\\{`, "gu");
+  for (let match = regex.exec(contents); match; match = regex.exec(contents)) {
+    const openBrace = contents.indexOf("{", match.index);
+    if (openBrace < 0) {
+      continue;
+    }
+    let depth = 0;
+    for (let index = openBrace; index < contents.length; index += 1) {
+      const char = contents[index];
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+      }
+      if (depth === 0) {
+        blocks.push({
+          index: match.index,
+          text: contents.slice(match.index, index + 1),
+        });
+        break;
+      }
+    }
+  }
+  return blocks;
+}
+
+function scanSessionArtifactsDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionArtifactsDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/artifacts.rs") {
+    const checks = [
+      {
+        name: "session artifacts daemon implementation uses broad daemon handle",
+        regex: /\bDaemonHandle\b/gu,
+      },
+      {
+        name: "session artifacts daemon implementation uses broad session handle",
+        regex: /\bSessionsHandle\b/gu,
+      },
+      {
+        name: "session artifacts daemon implementation accepts daemon state",
+        regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+      },
+    ];
+    for (const check of checks) {
+      for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "SessionArtifactsHandle" })) {
+    const checks = [
+      {
+        name: "session artifacts daemon capability impl uses broad daemon handle",
+        regex: /\bDaemonHandle\b/gu,
+      },
+      {
+        name: "session artifacts daemon capability impl uses broad session handle",
+        regex: /\bSessionsHandle\b/gu,
+      },
+      {
+        name: "session artifacts daemon capability impl accepts daemon state",
+        regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+      },
+    ];
+    for (const check of checks) {
+      for (let match = check.regex.exec(impl.text); match; match = check.regex.exec(impl.text)) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const structRegex = /pub\s+struct\s+SessionArtifactsHandle\s*\{[\s\S]*?\n\s*\}/u;
+  const match = structRegex.exec(contents);
+  if (match) {
+    const broadFieldRegex =
+      /\b(?:SessionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(match[0]);
+      broad;
+      broad = broadFieldRegex.exec(match[0])
+    ) {
+      const offset = match.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session artifacts capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7756,6 +7929,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionArtifactsHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -7802,6 +7979,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskReadMetadataHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionArtifactsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7872,6 +8053,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskReadMetadataDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionArtifactsDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8491,6 +8676,9 @@ module.exports = {
   scanTaskReadMetadataDaemonImplementationRatchet,
   scanTaskReadMetadataHandleFieldRatchet,
   scanTaskReadMetadataHandleRatchet,
+  scanSessionArtifactsDaemonImplementationRatchet,
+  scanSessionArtifactsHandleFieldRatchet,
+  scanSessionArtifactsHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

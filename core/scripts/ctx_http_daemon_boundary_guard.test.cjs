@@ -214,6 +214,9 @@ const {
   scanTaskReadMetadataDaemonImplementationRatchet,
   scanTaskReadMetadataHandleFieldRatchet,
   scanTaskReadMetadataHandleRatchet,
+  scanSessionArtifactsDaemonImplementationRatchet,
+  scanSessionArtifactsHandleFieldRatchet,
+  scanSessionArtifactsHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -1244,6 +1247,91 @@ test("appstate guard rejects task read metadata broad daemon seams", () => {
     "task read metadata capability stores broad handle or daemon state",
     "task read metadata capability stores broad handle or daemon state",
     "task read metadata reconstructs broad tasks handle",
+  ]);
+});
+
+test("appstate guard rejects session artifacts broad route handles", () => {
+  const handlerViolations = scanSessionArtifactsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+    contents: `
+      async fn set_session_artifacts(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session artifacts route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionArtifactsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_artifacts: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionArtifactsHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session artifacts route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session artifacts broad daemon seams", () => {
+  const daemonViolations = scanSessionArtifactsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/artifacts.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionArtifactsHandle {
+        fn list(handle: DaemonHandle, sessions: SessionsHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "session artifacts daemon implementation uses broad daemon handle",
+    "session artifacts daemon implementation uses broad session handle",
+    "session artifacts daemon implementation accepts daemon state",
+    "session artifacts daemon capability impl uses broad daemon handle",
+    "session artifacts daemon capability impl uses broad session handle",
+    "session artifacts daemon capability impl accepts daemon state",
+  ]));
+
+  const laterMethodViolations = scanSessionArtifactsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
+    contents: `
+      impl SessionArtifactsHandle {
+        fn first(&self) {}
+
+        fn second(&self, sessions: SessionsHandle, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(laterMethodViolations), new Set([
+    "session artifacts daemon capability impl uses broad daemon handle",
+    "session artifacts daemon capability impl uses broad session handle",
+    "session artifacts daemon capability impl accepts daemon state",
+  ]));
+
+  const fieldViolations = scanSessionArtifactsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionArtifactsHandle {
+        sessions: SessionsHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "session artifacts capability stores broad handle or daemon state",
+    "session artifacts capability stores broad handle or daemon state",
   ]);
 });
 

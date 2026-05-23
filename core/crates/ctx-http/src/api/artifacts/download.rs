@@ -2,14 +2,14 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 
-use ctx_daemon::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionArtifactsHandle;
 use ctx_session_artifacts::route_contract::SessionArtifactDownloadRouteParams;
 
 #[path = "download/response.rs"]
 mod response;
 
 pub(in crate::api) async fn get_session_artifact(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionArtifactsHandle>,
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
