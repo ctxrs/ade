@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 
 pub(super) struct CursorLoginCompletion {
     pub(super) status: String,
@@ -7,7 +8,7 @@ pub(super) struct CursorLoginCompletion {
 }
 
 pub(super) async fn complete_cursor_login(
-    state: &Arc<DaemonState>,
+    deps: &ProviderLoginDeps,
     label: Option<String>,
     capture_path: &StdPath,
     observed_email: Option<String>,
@@ -26,7 +27,8 @@ pub(super) async fn complete_cursor_login(
                         let auth_token = access_token.or(api_key);
                         if let Some(auth_token) = auth_token {
                             match accounts::add_cursor_oauth_account_for_login(
-                                state,
+                                deps.data_root(),
+                                deps.providers(),
                                 label,
                                 auth_token,
                                 refresh_token,

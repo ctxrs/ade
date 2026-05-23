@@ -1,7 +1,6 @@
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
-
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntime;
 
 use super::{new_started_login_session, StartedLoginSession};
 
@@ -22,11 +21,10 @@ macro_rules! auth_account_login_session_helpers {
         $with:ident,
         $status_ty:ty
     ) => {
-        pub async fn $start(state: &DaemonState) -> StartedLoginSession {
+        pub async fn $start(providers: &ProviderRuntime) -> StartedLoginSession {
             type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
-            state
-                .providers
+            providers
                 .$with(|map| {
                     map.insert(
                         session.login_id.clone(),
@@ -43,16 +41,12 @@ macro_rules! auth_account_login_session_helpers {
             session
         }
 
-        pub async fn $status(state: &DaemonState, login_id: &str) -> Option<$status_ty> {
-            state
-                .providers
-                .$with(|map| map.get(login_id).cloned())
-                .await
+        pub async fn $status(providers: &ProviderRuntime, login_id: &str) -> Option<$status_ty> {
+            providers.$with(|map| map.get(login_id).cloned()).await
         }
 
-        pub async fn $set_failed(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_failed(providers: &ProviderRuntime, login_id: &str, error: String) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "failed".to_string();
@@ -62,9 +56,12 @@ macro_rules! auth_account_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_failed_if_no_error(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_failed_if_no_error(
+            providers: &ProviderRuntime,
+            login_id: &str,
+            error: String,
+        ) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "failed".to_string();
@@ -76,9 +73,12 @@ macro_rules! auth_account_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_timeout_if_no_error(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_timeout_if_no_error(
+            providers: &ProviderRuntime,
+            login_id: &str,
+            error: String,
+        ) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "timeout".to_string();
@@ -90,9 +90,8 @@ macro_rules! auth_account_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
-            state
-                .providers
+        pub async fn $set_auth_url(providers: &ProviderRuntime, login_id: &str, auth_url: String) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.auth_url = Some(auth_url);
@@ -114,11 +113,10 @@ macro_rules! auth_only_login_session_helpers {
         $with:ident,
         $status_ty:ty
     ) => {
-        pub async fn $start(state: &DaemonState) -> StartedLoginSession {
+        pub async fn $start(providers: &ProviderRuntime) -> StartedLoginSession {
             type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
-            state
-                .providers
+            providers
                 .$with(|map| {
                     map.insert(
                         session.login_id.clone(),
@@ -134,16 +132,12 @@ macro_rules! auth_only_login_session_helpers {
             session
         }
 
-        pub async fn $status(state: &DaemonState, login_id: &str) -> Option<$status_ty> {
-            state
-                .providers
-                .$with(|map| map.get(login_id).cloned())
-                .await
+        pub async fn $status(providers: &ProviderRuntime, login_id: &str) -> Option<$status_ty> {
+            providers.$with(|map| map.get(login_id).cloned()).await
         }
 
-        pub async fn $set_failed(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_failed(providers: &ProviderRuntime, login_id: &str, error: String) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "failed".to_string();
@@ -153,9 +147,12 @@ macro_rules! auth_only_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_failed_if_no_error(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_failed_if_no_error(
+            providers: &ProviderRuntime,
+            login_id: &str,
+            error: String,
+        ) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "failed".to_string();
@@ -167,9 +164,12 @@ macro_rules! auth_only_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_timeout_if_no_error(state: &DaemonState, login_id: &str, error: String) {
-            state
-                .providers
+        pub async fn $set_timeout_if_no_error(
+            providers: &ProviderRuntime,
+            login_id: &str,
+            error: String,
+        ) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.status = "timeout".to_string();
@@ -181,9 +181,8 @@ macro_rules! auth_only_login_session_helpers {
                 .await;
         }
 
-        pub async fn $set_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
-            state
-                .providers
+        pub async fn $set_auth_url(providers: &ProviderRuntime, login_id: &str, auth_url: String) {
+            providers
                 .$with(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
                         entry.auth_url = Some(auth_url);
@@ -239,13 +238,12 @@ auth_only_login_session_helpers!(
 );
 
 pub async fn finish_gemini_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     account_id: Option<String>,
     restart_error: Option<String>,
 ) {
-    state
-        .providers
+    providers
         .with_gemini_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.account_id = account_id;
@@ -262,13 +260,12 @@ pub async fn finish_gemini_login_session(
 }
 
 pub async fn finish_qwen_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     account_id: Option<String>,
     restart_result: anyhow::Result<()>,
 ) {
-    state
-        .providers
+    providers
         .with_qwen_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.account_id = account_id;
@@ -288,12 +285,11 @@ pub async fn finish_qwen_login_session(
 }
 
 pub async fn finish_amp_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     restart_result: anyhow::Result<()>,
 ) {
-    state
-        .providers
+    providers
         .with_amp_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.auth_url = None;
@@ -313,12 +309,11 @@ pub async fn finish_amp_login_session(
 }
 
 pub async fn finish_mistral_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     restart_result: anyhow::Result<()>,
 ) {
-    state
-        .providers
+    providers
         .with_mistral_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.auth_url = None;

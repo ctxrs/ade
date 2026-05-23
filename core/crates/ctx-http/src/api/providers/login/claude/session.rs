@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn start_claude_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<ClaudeLoginStartRouteRequest>,
 ) -> Result<Json<ClaudeLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -14,7 +14,7 @@ pub(crate) async fn start_claude_login(
 }
 
 pub(crate) async fn get_claude_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ClaudeLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

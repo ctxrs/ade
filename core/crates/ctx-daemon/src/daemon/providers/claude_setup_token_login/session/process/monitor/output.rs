@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::super::line_observation::append_claude_login_line;
 use super::*;
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntime;
 
 pub(super) struct ClaudeLoginLineOutcome {
     pub(super) auth_url_became_observed: bool,
@@ -15,7 +15,7 @@ pub(super) enum ClaudeLoginOutputDrainMode {
 }
 
 pub(super) async fn observe_claude_login_line(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     observed_auth_url: &mut Option<String>,
     transcript: &mut String,
@@ -24,7 +24,7 @@ pub(super) async fn observe_claude_login_line(
 ) -> ClaudeLoginLineOutcome {
     let had_auth_url = observed_auth_url.is_some();
     append_and_refresh_claude_login_line(
-        state,
+        providers,
         login_id,
         observed_auth_url,
         transcript,
@@ -40,7 +40,7 @@ pub(super) async fn observe_claude_login_line(
 }
 
 pub(super) async fn drain_claude_login_output(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     observed_auth_url: &mut Option<String>,
     transcript: &mut String,
@@ -54,7 +54,7 @@ pub(super) async fn drain_claude_login_output(
                 read_trailing_claude_login_lines(line_rx, CLAUDE_LOGIN_EXIT_GRACE_WAIT).await
             {
                 append_and_refresh_claude_login_line(
-                    state,
+                    providers,
                     login_id,
                     observed_auth_url,
                     transcript,
@@ -67,7 +67,7 @@ pub(super) async fn drain_claude_login_output(
         ClaudeLoginOutputDrainMode::PendingOnly => {
             while let Ok(line) = line_rx.try_recv() {
                 append_and_refresh_claude_login_line(
-                    state,
+                    providers,
                     login_id,
                     observed_auth_url,
                     transcript,
@@ -81,13 +81,13 @@ pub(super) async fn drain_claude_login_output(
 }
 
 async fn append_and_refresh_claude_login_line(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     observed_auth_url: &mut Option<String>,
     transcript: &mut String,
     browser_open_capture_path: &Path,
     line: String,
 ) {
-    append_claude_login_line(state, login_id, observed_auth_url, transcript, line).await;
+    append_claude_login_line(providers, login_id, observed_auth_url, transcript, line).await;
     let _ = refresh_claude_auth_url_from_capture_path(observed_auth_url, browser_open_capture_path);
 }

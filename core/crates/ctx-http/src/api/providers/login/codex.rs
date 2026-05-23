@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn start_codex_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CodexLoginStartRouteRequest>,
 ) -> Result<Json<CodexLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -14,7 +14,7 @@ pub(crate) async fn start_codex_login(
 }
 
 pub(crate) async fn get_codex_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<CodexLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -27,7 +27,7 @@ pub(crate) async fn get_codex_login(
 }
 
 pub(crate) async fn complete_codex_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     Path(id): Path<String>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CodexLoginCompleteRouteRequest>,

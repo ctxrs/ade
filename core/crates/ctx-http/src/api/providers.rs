@@ -14,7 +14,7 @@ use url::Url;
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
-    ProviderHarnessConfigHandle, ProviderStatusHandle, ProviderUsageHandle, ProvidersHandle,
+    ProviderHarnessConfigHandle, ProviderStatusHandle, ProviderUsageHandle,
 };
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;

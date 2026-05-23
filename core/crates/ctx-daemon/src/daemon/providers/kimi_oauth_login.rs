@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -6,8 +5,8 @@ use chrono::Utc;
 use ctx_observability::logs;
 use serde::Deserialize;
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{accounts, login_sessions, StartedLoginSession};
-use crate::daemon::DaemonState;
 
 const KIMI_CODE_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
@@ -70,7 +69,7 @@ struct KimiTokenErrorResp {
 }
 
 pub async fn start_kimi_oauth_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> Result<StartedLoginSession, KimiOAuthLoginStartError> {
     let auth = request_kimi_device_authorization()
@@ -82,15 +81,14 @@ pub async fn start_kimi_oauth_login(
         .or(auth.verification_uri.clone());
     let device_code = Some(auth.user_code.clone());
     let login_session =
-        login_sessions::start_kimi_login_session(state, auth_url, device_code).await;
+        login_sessions::start_kimi_login_session(deps.providers(), auth_url, device_code).await;
 
-    let state = Arc::clone(state);
     let login_id = login_session.login_id.clone();
     let poll_interval = poll_interval_for_authorization(&auth);
     let timeout = timeout_for_authorization(&auth);
     tokio::spawn(async move {
         monitor_kimi_login(
-            state,
+            deps,
             login_id,
             label,
             auth.device_code,
@@ -104,7 +102,7 @@ pub async fn start_kimi_oauth_login(
 }
 
 async fn monitor_kimi_login(
-    state: Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     login_id: String,
     label: Option<String>,
     device_code: String,
@@ -116,7 +114,7 @@ async fn monitor_kimi_login(
     loop {
         if started_at.elapsed() >= timeout {
             login_sessions::set_kimi_login_timeout_if_no_error(
-                &state,
+                deps.providers(),
                 &login_id,
                 "timed out waiting for Kimi sign-in completion".to_string(),
             )
@@ -127,7 +125,8 @@ async fn monitor_kimi_login(
         match poll_kimi_token(&device_code).await {
             Ok(Ok(token)) => {
                 let added = accounts::add_kimi_oauth_account_for_login(
-                    &state,
+                    deps.data_root(),
+                    deps.providers(),
                     label.clone(),
                     kimi_token_json(&token),
                     None,
@@ -137,7 +136,7 @@ async fn monitor_kimi_login(
                     Ok(outcome) => {
                         let restart_error = outcome.restart_error_message();
                         login_sessions::finish_kimi_login_session(
-                            &state,
+                            deps.providers(),
                             &login_id,
                             outcome.active_account_id,
                             restart_error,
@@ -146,7 +145,7 @@ async fn monitor_kimi_login(
                     }
                     Err(err) => {
                         login_sessions::set_kimi_login_failed(
-                            &state,
+                            deps.providers(),
                             &login_id,
                             logs::redact_sensitive(&err.auth_login_error_message()),
                         )
@@ -163,7 +162,7 @@ async fn monitor_kimi_login(
                 ) {
                     if error_code == "access_denied" {
                         login_sessions::set_kimi_login_failed(
-                            &state,
+                            deps.providers(),
                             &login_id,
                             error
                                 .error_description
@@ -181,7 +180,7 @@ async fn monitor_kimi_login(
                     "failed"
                 };
                 login_sessions::set_kimi_login_terminal_status(
-                    &state,
+                    deps.providers(),
                     &login_id,
                     status,
                     error
@@ -193,7 +192,7 @@ async fn monitor_kimi_login(
             }
             Err(err) => {
                 login_sessions::set_kimi_login_failed(
-                    &state,
+                    deps.providers(),
                     &login_id,
                     logs::redact_sensitive(&err.to_string()),
                 )

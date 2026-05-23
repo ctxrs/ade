@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::ProviderRestartMode;
 
@@ -33,14 +32,6 @@ pub(in crate::daemon::providers) async fn restart_provider_for_auth_change_with_
         .await
 }
 
-pub async fn stop_provider_for_auth_removal(
-    state: &Arc<DaemonState>,
-    provider_id: &str,
-    reason: &str,
-) -> anyhow::Result<()> {
-    stop_provider_for_auth_removal_with_runtime(&state.providers, provider_id, reason).await
-}
-
 pub(in crate::daemon::providers) async fn stop_provider_for_auth_removal_with_runtime(
     providers: &ProviderRuntime,
     provider_id: &str,
@@ -71,67 +62,4 @@ pub(in crate::daemon::providers) async fn stop_provider_for_auth_removal_with_ru
             failures.join("; ")
         )
     }
-}
-
-pub async fn restart_codex_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, CODEX_PROVIDER_ID, reason).await
-}
-
-pub async fn stop_codex_providers_for_auth_removal(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    stop_provider_for_auth_removal(state, CODEX_PROVIDER_ID, reason).await
-}
-
-pub async fn restart_claude_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "claude-crp", reason).await
-}
-
-pub async fn restart_gemini_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "gemini", reason).await
-}
-
-pub async fn restart_qwen_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "qwen", reason).await
-}
-
-pub async fn restart_amp_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "amp", reason).await
-}
-
-pub async fn restart_mistral_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "mistral", reason).await
-}
-
-pub async fn restart_kimi_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "kimi", reason).await
-}
-
-pub async fn restart_cursor_providers_for_auth_change(
-    state: &Arc<DaemonState>,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "cursor", reason).await
 }

@@ -1,38 +1,38 @@
-use std::sync::Arc;
 use std::time::Instant;
 
 use ctx_observability::logs;
+use ctx_provider_runtime::ProviderRuntime;
 use tokio::sync::mpsc;
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{accounts, login_sessions, StartedLoginSession};
-use crate::daemon::DaemonState;
 
 use super::common;
 
 pub async fn start_gemini_browser_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> StartedLoginSession {
-    let session = login_sessions::start_gemini_login_session(state).await;
+    let session = login_sessions::start_gemini_login_session(deps.providers()).await;
     let login_id = session.login_id.clone();
-    let state = Arc::clone(state);
     tokio::spawn(async move {
-        monitor_gemini_login(state, login_id, label).await;
+        monitor_gemini_login(deps, login_id, label).await;
     });
     session
 }
 
-async fn monitor_gemini_login(state: Arc<DaemonState>, login_id: String, label: Option<String>) {
-    let paths = match accounts::prepare_gemini_login_paths(&state, &login_id).await {
+async fn monitor_gemini_login(deps: ProviderLoginDeps, login_id: String, label: Option<String>) {
+    let paths = match accounts::prepare_gemini_login_paths(deps.data_root(), &login_id).await {
         Ok(paths) => paths,
         Err(err) => {
-            login_sessions::set_gemini_login_failed(&state, &login_id, err).await;
+            login_sessions::set_gemini_login_failed(deps.providers(), &login_id, err).await;
             return;
         }
     };
-    let provider_env = accounts::gemini_login_provider_env(&state, &paths.login_home);
+    let provider_env =
+        accounts::gemini_login_provider_env(deps.data_root(), deps.daemon_url(), &paths.login_home);
     let mut event_rx = match common::authenticate_browser_login_session(
-        &state,
+        deps.providers(),
         "gemini",
         format!("gemini-login-{login_id}"),
         paths.workdir.clone(),
@@ -43,7 +43,7 @@ async fn monitor_gemini_login(state: Arc<DaemonState>, login_id: String, label: 
     {
         Ok(event_rx) => event_rx,
         Err(err) => {
-            login_sessions::set_gemini_login_failed(&state, &login_id, err).await;
+            login_sessions::set_gemini_login_failed(deps.providers(), &login_id, err).await;
             common::cleanup_login_home(&paths.login_home).await;
             return;
         }
@@ -54,21 +54,26 @@ async fn monitor_gemini_login(state: Arc<DaemonState>, login_id: String, label: 
     let mut observed_auth_url = false;
 
     loop {
-        let event_outcome =
-            drain_gemini_login_events(&state, &login_id, &mut event_rx, observed_auth_url).await;
+        let event_outcome = drain_gemini_login_events(
+            deps.providers(),
+            &login_id,
+            &mut event_rx,
+            observed_auth_url,
+        )
+        .await;
         if event_outcome.failed {
             common::cleanup_login_home(&paths.login_home).await;
             return;
         }
         observed_auth_url = event_outcome.observed_auth_url;
 
-        if complete_gemini_login_if_credentials_exist(&state, &login_id, &label, &paths).await {
+        if complete_gemini_login_if_credentials_exist(&deps, &login_id, &label, &paths).await {
             return;
         }
 
         if event_outcome.channel_disconnected && !observed_auth_url {
             login_sessions::set_gemini_login_failed_if_no_error(
-                &state,
+                deps.providers(),
                 &login_id,
                 "Gemini sign-in did not emit an OAuth URL; the runtime may require API-key auth in this environment."
                     .to_string(),
@@ -80,7 +85,7 @@ async fn monitor_gemini_login(state: Arc<DaemonState>, login_id: String, label: 
 
         if started_at.elapsed() >= timeout {
             login_sessions::set_gemini_login_timeout_if_no_error(
-                &state,
+                deps.providers(),
                 &login_id,
                 "timed out waiting for Gemini OAuth completion".to_string(),
             )
@@ -100,7 +105,7 @@ struct GeminiLoginEventOutcome {
 }
 
 async fn drain_gemini_login_events(
-    state: &Arc<DaemonState>,
+    providers: &ProviderRuntime,
     login_id: &str,
     event_rx: &mut mpsc::Receiver<ctx_providers::events::NormalizedEvent>,
     mut observed_auth_url: bool,
@@ -111,7 +116,7 @@ async fn drain_gemini_login_events(
             Ok(event) => {
                 if let Some(auth_url) = common::extract_auth_url_from_value(&event.payload_json) {
                     observed_auth_url = true;
-                    login_sessions::set_gemini_login_auth_url(state, login_id, auth_url).await;
+                    login_sessions::set_gemini_login_auth_url(providers, login_id, auth_url).await;
                 }
                 if common::is_auth_failure_notice_code(common::auth_notice_code(
                     &event.payload_json,
@@ -122,7 +127,7 @@ async fn drain_gemini_login_events(
                         .and_then(serde_json::Value::as_str)
                         .map(logs::redact_sensitive)
                         .unwrap_or_else(|| "gemini authenticate reported an error".to_string());
-                    login_sessions::set_gemini_login_failed(state, login_id, message).await;
+                    login_sessions::set_gemini_login_failed(providers, login_id, message).await;
                     return GeminiLoginEventOutcome {
                         observed_auth_url,
                         channel_disconnected,
@@ -145,7 +150,7 @@ async fn drain_gemini_login_events(
 }
 
 async fn complete_gemini_login_if_credentials_exist(
-    state: &Arc<DaemonState>,
+    deps: &ProviderLoginDeps,
     login_id: &str,
     label: &Option<String>,
     paths: &accounts::PreparedGeminiLoginPaths,
@@ -160,7 +165,7 @@ async fn complete_gemini_login_if_credentials_exist(
         .is_some_and(serde_json::Value::is_object);
     if !oauth_valid {
         login_sessions::set_gemini_login_failed(
-            state,
+            deps.providers(),
             login_id,
             "captured oauth_creds.json is not a valid JSON object".to_string(),
         )
@@ -177,7 +182,8 @@ async fn complete_gemini_login_if_credentials_exist(
         .as_ref()
         .and_then(common::first_email_from_google_accounts);
     let added = accounts::add_gemini_account_for_login(
-        state,
+        deps.data_root(),
+        deps.providers(),
         label.clone(),
         oauth_raw,
         google_accounts_raw,
@@ -188,7 +194,7 @@ async fn complete_gemini_login_if_credentials_exist(
         Ok(outcome) => {
             let restart_error = outcome.restart_error_message();
             login_sessions::finish_gemini_login_session(
-                state,
+                deps.providers(),
                 login_id,
                 outcome.active_account_id,
                 restart_error,
@@ -197,7 +203,7 @@ async fn complete_gemini_login_if_credentials_exist(
         }
         Err(err) => {
             login_sessions::set_gemini_login_failed(
-                state,
+                deps.providers(),
                 login_id,
                 logs::redact_sensitive(&err.auth_login_error_message()),
             )

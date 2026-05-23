@@ -199,6 +199,8 @@ const {
   scanProviderHarnessConfigHandleRatchet,
   scanProviderInstallDaemonFacadeRatchet,
   scanProviderInstallHandleRatchet,
+  scanProviderLoginDaemonImplementationRatchet,
+  scanProviderLoginHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
@@ -967,6 +969,72 @@ test("appstate provider auth import daemon facade ratchet rejects full-state rou
     [
       "provider auth import daemon facade accepts daemon state",
       "provider auth import daemon facade accepts daemon state",
+    ],
+  );
+});
+
+test("appstate provider login route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderLoginHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/login/kimi.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.start_kimi_login_for_route(req).await;
+      }
+    `,
+  });
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider login route extracts broad providers handle",
+      "provider login route extracts broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderLoginHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/providers/login/kimi.rs",
+      contents: `
+        use ctx_daemon::daemon::ProviderAccountsHandle;
+        async fn route(State(accounts): State<ProviderAccountsHandle>) {
+          accounts.start_kimi_login_for_route(req).await;
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate provider login daemon implementation ratchet rejects full-state seam", () => {
+  const broadHandleViolations = scanProviderLoginDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/login_routes.rs",
+    contents: `
+      use crate::daemon::ProvidersHandle;
+      impl ProvidersHandle {
+        pub async fn start_kimi_login_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    broadHandleViolations,
+    [
+      "provider login daemon implementation uses broad providers handle",
+      "provider login daemon implementation uses broad providers handle",
+    ],
+  );
+
+  const daemonStateViolations = scanProviderLoginDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/kimi_oauth_login.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      async fn start(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    daemonStateViolations,
+    [
+      "provider login daemon implementation accepts daemon state",
+      "provider login daemon implementation accepts daemon state",
     ],
   );
 });

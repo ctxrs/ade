@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use ctx_observability::logs;
@@ -8,10 +7,9 @@ use ctx_provider_accounts as provider_accounts;
 use ctx_provider_runtime::provider_session_auth::{
     ProviderSessionAuthenticationError, ProviderSessionAuthenticationRequest,
 };
+use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::events::NormalizedEvent;
 use tokio::sync::mpsc;
-
-use crate::daemon::DaemonState;
 
 pub(super) const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 pub(super) const QWEN_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
@@ -57,7 +55,7 @@ fn login_timeout_from_env(env_key: &str, default: Duration) -> Duration {
 }
 
 pub(super) async fn authenticate_browser_login_session(
-    state: &Arc<DaemonState>,
+    providers: &ProviderRuntime,
     provider_id: &'static str,
     session_key: String,
     workdir: PathBuf,
@@ -65,8 +63,7 @@ pub(super) async fn authenticate_browser_login_session(
     method_id: Option<String>,
 ) -> Result<mpsc::Receiver<NormalizedEvent>, String> {
     let (event_tx, event_rx) = mpsc::channel(64);
-    let auth_result = state
-        .providers
+    let auth_result = providers
         .authenticate_provider_session(
             provider_id,
             ProviderSessionAuthenticationRequest {

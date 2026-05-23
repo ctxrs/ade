@@ -3726,7 +3726,7 @@ impl TestDaemon {
         expected_callback_url: Option<&str>,
     ) -> String {
         daemon::providers::start_codex_login_session(
-            &self.state,
+            &self.state.providers,
             account_id.to_string(),
             "https://chat.openai.com/oauth/authorize".to_string(),
             expected_callback_url.map(str::to_string),
@@ -3739,7 +3739,7 @@ impl TestDaemon {
         &self,
         account_id: &str,
     ) -> Option<Option<String>> {
-        daemon::providers::codex_login_status(&self.state, account_id)
+        daemon::providers::codex_login_status(&self.state.providers, account_id)
             .await
             .map(|status| status.completion_token)
     }
@@ -3752,7 +3752,8 @@ impl TestDaemon {
         plan_type: Option<String>,
     ) -> anyhow::Result<()> {
         daemon::providers::persist_successful_codex_login(
-            &self.state,
+            &self.state.core.data_root,
+            &self.state.providers,
             account_id,
             label,
             email,

@@ -322,6 +322,32 @@ const providerAuthImportDaemonFacadePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/auth_import.rs",
 ]);
 
+const providerLoginHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/providers/login/browser/amp.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/qwen.rs",
+  "core/crates/ctx-http/src/api/providers/login/claude/session.rs",
+  "core/crates/ctx-http/src/api/providers/login/codex.rs",
+  "core/crates/ctx-http/src/api/providers/login/kimi.rs",
+  "core/crates/ctx-http/src/api/providers/login/mistral.rs",
+  "core/crates/ctx-http/src/api/providers/cursor_login.rs",
+]);
+
+const providerLoginDaemonImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/providers/login_routes.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/kimi_oauth_login.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/browser_logins/",
+  "core/crates/ctx-daemon/src/daemon/providers/claude_setup_token_login.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/claude_setup_token_login/",
+  "core/crates/ctx-daemon/src/daemon/providers/codex_app_login.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/codex_app_login/",
+  "core/crates/ctx-daemon/src/daemon/providers/cursor_process_login.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/cursor_process_login/",
+  "core/crates/ctx-daemon/src/daemon/providers/accounts/login_paths.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/accounts/mutations/",
+  "core/crates/ctx-daemon/src/daemon/providers/accounts/codex.rs",
+];
+
 const providerTestHelperDaemonImportRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/",
@@ -7219,6 +7245,59 @@ function scanProviderAuthImportDaemonFacadeRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderLoginHandleRatchet({ filePath, contents }) {
+  if (!providerLoginHandleApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider login route extracts broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function scanProviderLoginDaemonImplementationRatchet({ filePath, contents }) {
+  if (!providerLoginDaemonImplementationRoots.some((root) => filePath.startsWith(root))) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider login daemon implementation uses broad providers handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
+      name: "provider login daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7279,6 +7358,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderAuthImportHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderLoginHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7370,6 +7453,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderAuthImportDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderLoginDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7974,6 +8061,8 @@ module.exports = {
   scanProviderHarnessConfigHandleRatchet,
   scanProviderInstallDaemonFacadeRatchet,
   scanProviderInstallHandleRatchet,
+  scanProviderLoginDaemonImplementationRatchet,
+  scanProviderLoginHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,

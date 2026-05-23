@@ -1,14 +1,12 @@
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
-
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntime;
 
 use super::{new_started_login_session, StartedLoginSession};
 
-pub async fn start_cursor_login_session(state: &DaemonState) -> StartedLoginSession {
+pub async fn start_cursor_login_session(providers: &ProviderRuntime) -> StartedLoginSession {
     let session = new_started_login_session(None, None);
-    state
-        .providers
+    providers
         .with_cursor_login_sessions(|map| {
             map.insert(
                 session.login_id.clone(),
@@ -26,18 +24,16 @@ pub async fn start_cursor_login_session(state: &DaemonState) -> StartedLoginSess
 }
 
 pub async fn cursor_login_status(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
 ) -> Option<provider_accounts::CursorLoginStatus> {
-    state
-        .providers
+    providers
         .with_cursor_login_sessions(|map| map.get(login_id).cloned())
         .await
 }
 
-pub async fn set_cursor_login_error(state: &DaemonState, login_id: &str, error: String) {
-    state
-        .providers
+pub async fn set_cursor_login_error(providers: &ProviderRuntime, login_id: &str, error: String) {
+    providers
         .with_cursor_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = "failed".to_string();
@@ -47,9 +43,12 @@ pub async fn set_cursor_login_error(state: &DaemonState, login_id: &str, error: 
         .await;
 }
 
-pub async fn update_cursor_login_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
-    state
-        .providers
+pub async fn update_cursor_login_auth_url(
+    providers: &ProviderRuntime,
+    login_id: &str,
+    auth_url: String,
+) {
+    providers
         .with_cursor_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.auth_url = Some(auth_url);
@@ -59,12 +58,11 @@ pub async fn update_cursor_login_auth_url(state: &DaemonState, login_id: &str, a
 }
 
 pub async fn start_claude_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     auth_url: Option<String>,
 ) -> StartedLoginSession {
     let session = new_started_login_session(auth_url, None);
-    state
-        .providers
+    providers
         .with_claude_login_sessions(|map| {
             map.insert(
                 session.login_id.clone(),
@@ -82,18 +80,20 @@ pub async fn start_claude_login_session(
 }
 
 pub async fn claude_login_status(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
 ) -> Option<provider_accounts::ClaudeLoginStatus> {
-    state
-        .providers
+    providers
         .with_claude_login_sessions(|map| map.get(login_id).cloned())
         .await
 }
 
-pub async fn set_claude_login_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
-    state
-        .providers
+pub async fn set_claude_login_auth_url(
+    providers: &ProviderRuntime,
+    login_id: &str,
+    auth_url: String,
+) {
+    providers
         .with_claude_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.auth_url = Some(auth_url);
@@ -103,13 +103,12 @@ pub async fn set_claude_login_auth_url(state: &DaemonState, login_id: &str, auth
 }
 
 pub async fn start_kimi_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     auth_url: Option<String>,
     device_code: Option<String>,
 ) -> StartedLoginSession {
     let session = new_started_login_session(auth_url, device_code);
-    state
-        .providers
+    providers
         .with_kimi_login_sessions(|map| {
             map.insert(
                 session.login_id.clone(),
@@ -128,18 +127,16 @@ pub async fn start_kimi_login_session(
 }
 
 pub async fn kimi_login_status(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
 ) -> Option<provider_accounts::KimiLoginStatus> {
-    state
-        .providers
+    providers
         .with_kimi_login_sessions(|map| map.get(login_id).cloned())
         .await
 }
 
-pub async fn set_kimi_login_failed(state: &DaemonState, login_id: &str, error: String) {
-    state
-        .providers
+pub async fn set_kimi_login_failed(providers: &ProviderRuntime, login_id: &str, error: String) {
+    providers
         .with_kimi_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = "failed".to_string();
@@ -150,12 +147,11 @@ pub async fn set_kimi_login_failed(state: &DaemonState, login_id: &str, error: S
 }
 
 pub async fn set_kimi_login_timeout_if_no_error(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     error: String,
 ) {
-    state
-        .providers
+    providers
         .with_kimi_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = "timeout".to_string();
@@ -168,13 +164,12 @@ pub async fn set_kimi_login_timeout_if_no_error(
 }
 
 pub async fn set_kimi_login_terminal_status(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     status: &'static str,
     error: String,
 ) {
-    state
-        .providers
+    providers
         .with_kimi_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = status.to_string();
@@ -185,13 +180,12 @@ pub async fn set_kimi_login_terminal_status(
 }
 
 pub async fn finish_kimi_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     account_id: Option<String>,
     restart_error: Option<String>,
 ) {
-    state
-        .providers
+    providers
         .with_kimi_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.account_id = account_id;
@@ -208,15 +202,14 @@ pub async fn finish_kimi_login_session(
 }
 
 pub async fn finish_cursor_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     status: String,
     account_id: Option<String>,
     error: Option<String>,
     observed_auth_url: Option<String>,
 ) {
-    state
-        .providers
+    providers
         .with_cursor_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = status;
@@ -231,15 +224,14 @@ pub async fn finish_cursor_login_session(
 }
 
 pub async fn finish_claude_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     status: String,
     account_id: Option<String>,
     error: Option<String>,
     observed_auth_url: Option<String>,
 ) {
-    state
-        .providers
+    providers
         .with_claude_login_sessions(|map| {
             if let Some(entry) = map.get_mut(login_id) {
                 entry.status = status;

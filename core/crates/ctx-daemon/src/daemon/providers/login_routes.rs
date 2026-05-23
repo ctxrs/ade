@@ -4,18 +4,23 @@ use ctx_provider_accounts::{
     ProviderLoginStartRouteResponse, QwenLoginStatusRouteResponse,
 };
 
-use crate::daemon::ProvidersHandle;
+use crate::daemon::ProviderAccountsHandle;
 
+use super::login_deps::ProviderLoginDeps;
 use super::login_sessions::StartedLoginSession;
 use super::{browser_logins, kimi_oauth_login, login_sessions};
 
-impl ProvidersHandle {
+impl ProviderAccountsHandle {
     pub async fn start_amp_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
         provider_login_start_response(
-            browser_logins::start_amp_browser_login(&self.state, request.into_label()).await,
+            browser_logins::start_amp_browser_login(
+                ProviderLoginDeps::from_accounts_handle(self),
+                request.into_label(),
+            )
+            .await,
         )
     }
 
@@ -24,7 +29,11 @@ impl ProvidersHandle {
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
         provider_login_start_response(
-            browser_logins::start_gemini_browser_login(&self.state, request.into_label()).await,
+            browser_logins::start_gemini_browser_login(
+                ProviderLoginDeps::from_accounts_handle(self),
+                request.into_label(),
+            )
+            .await,
         )
     }
 
@@ -33,7 +42,11 @@ impl ProvidersHandle {
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
         provider_login_start_response(
-            browser_logins::start_qwen_browser_login(&self.state, request.into_label()).await,
+            browser_logins::start_qwen_browser_login(
+                ProviderLoginDeps::from_accounts_handle(self),
+                request.into_label(),
+            )
+            .await,
         )
     }
 
@@ -42,7 +55,11 @@ impl ProvidersHandle {
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
         provider_login_start_response(
-            browser_logins::start_mistral_browser_login(&self.state, request.into_label()).await,
+            browser_logins::start_mistral_browser_login(
+                ProviderLoginDeps::from_accounts_handle(self),
+                request.into_label(),
+            )
+            .await,
         )
     }
 
@@ -50,17 +67,20 @@ impl ProvidersHandle {
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> Result<ProviderLoginStartRouteResponse, ProviderLoginRouteError> {
-        kimi_oauth_login::start_kimi_oauth_login(&self.state, request.into_label())
-            .await
-            .map(provider_login_start_response)
-            .map_err(kimi_login_start_route_error)
+        kimi_oauth_login::start_kimi_oauth_login(
+            ProviderLoginDeps::from_accounts_handle(self),
+            request.into_label(),
+        )
+        .await
+        .map(provider_login_start_response)
+        .map_err(kimi_login_start_route_error)
     }
 
     pub async fn amp_login_status_for_route(
         &self,
         login_id: &str,
     ) -> Result<AmpLoginStatusRouteResponse, ProviderLoginRouteError> {
-        login_sessions::amp_login_status(&self.state, login_id)
+        login_sessions::amp_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(login_not_found_route_error)
@@ -70,7 +90,7 @@ impl ProvidersHandle {
         &self,
         login_id: &str,
     ) -> Result<GeminiLoginStatusRouteResponse, ProviderLoginRouteError> {
-        login_sessions::gemini_login_status(&self.state, login_id)
+        login_sessions::gemini_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(login_not_found_route_error)
@@ -80,7 +100,7 @@ impl ProvidersHandle {
         &self,
         login_id: &str,
     ) -> Result<QwenLoginStatusRouteResponse, ProviderLoginRouteError> {
-        login_sessions::qwen_login_status(&self.state, login_id)
+        login_sessions::qwen_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(login_not_found_route_error)
@@ -90,7 +110,7 @@ impl ProvidersHandle {
         &self,
         login_id: &str,
     ) -> Result<MistralLoginStatusRouteResponse, ProviderLoginRouteError> {
-        login_sessions::mistral_login_status(&self.state, login_id)
+        login_sessions::mistral_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(login_not_found_route_error)
@@ -100,7 +120,7 @@ impl ProvidersHandle {
         &self,
         login_id: &str,
     ) -> Result<KimiLoginStatusRouteResponse, ProviderLoginRouteError> {
-        login_sessions::kimi_login_status(&self.state, login_id)
+        login_sessions::kimi_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(login_not_found_route_error)
@@ -123,9 +143,39 @@ fn kimi_login_start_route_error(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use ctx_provider_accounts::{self as provider_accounts, ProviderLoginRouteErrorKind};
 
     use super::*;
+    use crate::test_support::TestDaemon;
+
+    fn kimi_oauth_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: String) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[test]
     fn provider_login_route_not_found_error_preserves_body_message() {
@@ -238,5 +288,29 @@ mod tests {
             serde_json::to_value(KimiLoginStatusRouteResponse::from(kimi.clone())).unwrap(),
             serde_json::to_value(kimi).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn kimi_login_start_rejects_device_authorization_failure_without_session() {
+        let _env_guard = kimi_oauth_env_lock().lock().expect("kimi oauth env lock");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let host = format!("http://{}", listener.local_addr().expect("listener addr"));
+        drop(listener);
+        let _oauth_host = ScopedEnvVar::set("KIMI_CODE_OAUTH_HOST", host);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+
+        let err = daemon
+            .handle()
+            .provider_accounts()
+            .start_kimi_login_for_route(ProviderLoginStartRouteRequest::default())
+            .await
+            .expect_err("device authorization failure should happen before session creation");
+
+        assert_eq!(err.kind(), ProviderLoginRouteErrorKind::BadGateway);
+        assert!(daemon.provider_login_session_caches_empty().await);
     }
 }

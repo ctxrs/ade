@@ -1,9 +1,9 @@
 use super::*;
 use crate::daemon::providers::login_sessions;
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntime;
 
 pub(super) async fn append_claude_login_line(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     observed_auth_url: &mut Option<String>,
     transcript: &mut String,
@@ -42,6 +42,6 @@ pub(super) async fn append_claude_login_line(
         }
     }
     if let Some(url) = observed_auth_url.clone() {
-        login_sessions::set_claude_login_auth_url(state, login_id, url).await;
+        login_sessions::set_claude_login_auth_url(providers, login_id, url).await;
     }
 }

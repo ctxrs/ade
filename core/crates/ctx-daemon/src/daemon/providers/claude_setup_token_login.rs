@@ -1,12 +1,11 @@
-use std::sync::Arc;
-
 use ctx_provider_accounts::{
     ClaudeLoginRouteError, ClaudeLoginRouteErrorKind, ClaudeLoginStartRouteRequest,
     ClaudeLoginStartRouteResponse, ClaudeLoginStatusRouteResponse,
 };
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{login_sessions, StartedLoginSession};
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::ProviderAccountsHandle;
 
 mod auth_url;
 mod runtime;
@@ -62,22 +61,25 @@ impl ClaudeSetupTokenLoginStartError {
     }
 }
 
-impl ProvidersHandle {
+impl ProviderAccountsHandle {
     pub async fn start_claude_login_for_route(
         &self,
         request: ClaudeLoginStartRouteRequest,
     ) -> Result<ClaudeLoginStartRouteResponse, ClaudeLoginRouteError> {
-        start_claude_setup_token_login(&self.state, request.into_label())
-            .await
-            .map(claude_login_start_route_response)
-            .map_err(claude_login_start_route_error)
+        start_claude_setup_token_login(
+            ProviderLoginDeps::from_accounts_handle(self),
+            request.into_label(),
+        )
+        .await
+        .map(claude_login_start_route_response)
+        .map_err(claude_login_start_route_error)
     }
 
     pub async fn claude_login_status_for_route(
         &self,
         login_id: &str,
     ) -> Result<ClaudeLoginStatusRouteResponse, ClaudeLoginRouteError> {
-        login_sessions::claude_login_status(&self.state, login_id)
+        login_sessions::claude_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(claude_login_not_found_route_error)
@@ -103,22 +105,22 @@ fn claude_login_start_route_error(error: ClaudeSetupTokenLoginStartError) -> Cla
 }
 
 async fn start_claude_setup_token_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> Result<StartedLoginSession, ClaudeSetupTokenLoginStartError> {
-    let runtime = super::login_runtime::resolve_claude_login_runtime(state)
+    let runtime = super::login_runtime::resolve_claude_login_runtime(deps.data_root())
         .await
         .map_err(ClaudeSetupTokenLoginStartError::from_runtime_error)?;
     let login = session::start_claude_login_process(&runtime)
         .await
         .map_err(ClaudeSetupTokenLoginStartError::from_internal_error)?;
     let auth_url = login.auth_url.clone();
-    let login_session = login_sessions::start_claude_login_session(state, auth_url).await;
+    let login_session =
+        login_sessions::start_claude_login_session(deps.providers(), auth_url).await;
 
-    let state = Arc::clone(state);
     let login_id = login_session.login_id.clone();
     tokio::spawn(async move {
-        session::monitor_claude_login(state, login_id, label, login).await;
+        session::monitor_claude_login(deps, login_id, label, login).await;
     });
 
     Ok(login_session)

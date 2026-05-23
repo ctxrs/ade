@@ -1,38 +1,38 @@
-use std::sync::Arc;
 use std::time::Instant;
 
 use ctx_observability::logs;
+use ctx_provider_runtime::ProviderRuntime;
 use tokio::sync::mpsc;
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{accounts, login_sessions, StartedLoginSession};
-use crate::daemon::DaemonState;
 
 use super::common;
 
 pub async fn start_qwen_browser_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> StartedLoginSession {
-    let session = login_sessions::start_qwen_login_session(state).await;
+    let session = login_sessions::start_qwen_login_session(deps.providers()).await;
     let login_id = session.login_id.clone();
-    let state = Arc::clone(state);
     tokio::spawn(async move {
-        monitor_qwen_login(state, login_id, label).await;
+        monitor_qwen_login(deps, login_id, label).await;
     });
     session
 }
 
-async fn monitor_qwen_login(state: Arc<DaemonState>, login_id: String, label: Option<String>) {
-    let paths = match accounts::prepare_qwen_login_paths(&state, &login_id).await {
+async fn monitor_qwen_login(deps: ProviderLoginDeps, login_id: String, label: Option<String>) {
+    let paths = match accounts::prepare_qwen_login_paths(deps.data_root(), &login_id).await {
         Ok(paths) => paths,
         Err(error) => {
-            login_sessions::set_qwen_login_failed(&state, &login_id, error).await;
+            login_sessions::set_qwen_login_failed(deps.providers(), &login_id, error).await;
             return;
         }
     };
-    let provider_env = accounts::qwen_login_provider_env(&state, &paths.login_home);
+    let provider_env =
+        accounts::qwen_login_provider_env(deps.data_root(), deps.daemon_url(), &paths.login_home);
     let mut event_rx = match common::authenticate_browser_login_session(
-        &state,
+        deps.providers(),
         "qwen",
         format!("qwen-login-{login_id}"),
         paths.workdir.clone(),
@@ -43,7 +43,7 @@ async fn monitor_qwen_login(state: Arc<DaemonState>, login_id: String, label: Op
     {
         Ok(event_rx) => event_rx,
         Err(err) => {
-            login_sessions::set_qwen_login_failed(&state, &login_id, err).await;
+            login_sessions::set_qwen_login_failed(deps.providers(), &login_id, err).await;
             common::cleanup_login_home(&paths.login_home).await;
             return;
         }
@@ -55,14 +55,15 @@ async fn monitor_qwen_login(state: Arc<DaemonState>, login_id: String, label: Op
 
     loop {
         let event_outcome =
-            drain_qwen_login_events(&state, &login_id, &mut event_rx, &mut progress).await;
+            drain_qwen_login_events(deps.providers(), &login_id, &mut event_rx, &mut progress)
+                .await;
         if event_outcome.failed {
             common::cleanup_login_home(&paths.login_home).await;
             return;
         }
 
         if complete_qwen_login_if_credentials_exist(
-            &state,
+            &deps,
             &login_id,
             &label,
             &paths,
@@ -75,7 +76,7 @@ async fn monitor_qwen_login(state: Arc<DaemonState>, login_id: String, label: Op
 
         if event_outcome.channel_disconnected && !progress.observed_auth_url {
             login_sessions::set_qwen_login_failed_if_no_error(
-                &state,
+                deps.providers(),
                 &login_id,
                 "Qwen sign-in did not emit an OAuth URL in this environment.".to_string(),
             )
@@ -86,7 +87,7 @@ async fn monitor_qwen_login(state: Arc<DaemonState>, login_id: String, label: Op
 
         if started_at.elapsed() >= timeout {
             login_sessions::set_qwen_login_timeout_if_no_error(
-                &state,
+                deps.providers(),
                 &login_id,
                 "timed out waiting for Qwen OAuth completion".to_string(),
             )
@@ -111,7 +112,7 @@ struct QwenLoginEventOutcome {
 }
 
 async fn drain_qwen_login_events(
-    state: &Arc<DaemonState>,
+    providers: &ProviderRuntime,
     login_id: &str,
     event_rx: &mut mpsc::Receiver<ctx_providers::events::NormalizedEvent>,
     progress: &mut QwenLoginProgress,
@@ -122,7 +123,7 @@ async fn drain_qwen_login_events(
             Ok(event) => {
                 if let Some(auth_url) = common::extract_auth_url_from_value(&event.payload_json) {
                     progress.observed_auth_url = true;
-                    login_sessions::set_qwen_login_auth_url(state, login_id, auth_url).await;
+                    login_sessions::set_qwen_login_auth_url(providers, login_id, auth_url).await;
                 }
                 if progress.observed_email.is_none() {
                     progress.observed_email = common::first_email_from_value(&event.payload_json);
@@ -136,7 +137,7 @@ async fn drain_qwen_login_events(
                         .and_then(serde_json::Value::as_str)
                         .map(logs::redact_sensitive)
                         .unwrap_or_else(|| "qwen authenticate reported an error".to_string());
-                    login_sessions::set_qwen_login_failed(state, login_id, message).await;
+                    login_sessions::set_qwen_login_failed(providers, login_id, message).await;
                     return QwenLoginEventOutcome {
                         channel_disconnected,
                         failed: true,
@@ -158,7 +159,7 @@ async fn drain_qwen_login_events(
 }
 
 async fn complete_qwen_login_if_credentials_exist(
-    state: &Arc<DaemonState>,
+    deps: &ProviderLoginDeps,
     login_id: &str,
     label: &Option<String>,
     paths: &accounts::PreparedQwenLoginPaths,
@@ -174,7 +175,7 @@ async fn complete_qwen_login_if_credentials_exist(
         .is_some_and(serde_json::Value::is_object);
     if !oauth_valid {
         login_sessions::set_qwen_login_failed(
-            state,
+            deps.providers(),
             login_id,
             "captured oauth_creds.json is not a valid JSON object".to_string(),
         )
@@ -183,13 +184,19 @@ async fn complete_qwen_login_if_credentials_exist(
         return true;
     }
 
-    let added =
-        accounts::add_qwen_account_for_login(state, label.clone(), oauth_raw, observed_email).await;
+    let added = accounts::add_qwen_account_for_login(
+        deps.data_root(),
+        deps.providers(),
+        label.clone(),
+        oauth_raw,
+        observed_email,
+    )
+    .await;
     match added {
         Ok(outcome) => {
             let (active_account_id, restart_result) = outcome.into_restart_result();
             login_sessions::finish_qwen_login_session(
-                state,
+                deps.providers(),
                 login_id,
                 active_account_id,
                 restart_result,
@@ -198,7 +205,7 @@ async fn complete_qwen_login_if_credentials_exist(
         }
         Err(err) => {
             login_sessions::set_qwen_login_failed(
-                state,
+                deps.providers(),
                 login_id,
                 logs::redact_sensitive(&err.auth_login_error_message()),
             )

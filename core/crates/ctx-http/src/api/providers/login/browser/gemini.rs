@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn start_gemini_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<ProviderLoginStartRouteRequest>,
 ) -> Result<Json<ProviderLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -10,7 +10,7 @@ pub(crate) async fn start_gemini_login(
 }
 
 pub(crate) async fn get_gemini_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<GeminiLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

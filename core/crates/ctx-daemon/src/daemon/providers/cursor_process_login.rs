@@ -1,5 +1,4 @@
 use std::path::{Path as StdPath, PathBuf};
-use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_observability::logs;
@@ -8,8 +7,9 @@ use ctx_provider_accounts::{
     CursorLoginStartRouteResponse, CursorLoginStatusRouteResponse,
 };
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{login_runtime, login_sessions, StartedLoginSession};
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::ProviderAccountsHandle;
 
 mod auth_url;
 mod capture;
@@ -51,22 +51,25 @@ impl CursorProcessLoginStartError {
     }
 }
 
-impl ProvidersHandle {
+impl ProviderAccountsHandle {
     pub async fn start_cursor_login_for_route(
         &self,
         request: CursorLoginStartRouteRequest,
     ) -> Result<CursorLoginStartRouteResponse, CursorLoginRouteError> {
-        start_cursor_process_login(&self.state, request.into_label())
-            .await
-            .map(cursor_login_start_route_response)
-            .map_err(cursor_login_start_route_error)
+        start_cursor_process_login(
+            ProviderLoginDeps::from_accounts_handle(self),
+            request.into_label(),
+        )
+        .await
+        .map(cursor_login_start_route_response)
+        .map_err(cursor_login_start_route_error)
     }
 
     pub async fn cursor_login_status_for_route(
         &self,
         login_id: &str,
     ) -> Result<CursorLoginStatusRouteResponse, CursorLoginRouteError> {
-        login_sessions::cursor_login_status(&self.state, login_id)
+        login_sessions::cursor_login_status(self.providers(), login_id)
             .await
             .map(Into::into)
             .ok_or_else(cursor_login_not_found_route_error)
@@ -94,18 +97,17 @@ fn cursor_login_start_route_error(error: CursorProcessLoginStartError) -> Cursor
 }
 
 async fn start_cursor_process_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> Result<StartedLoginSession, CursorProcessLoginStartError> {
-    let cursor_runtime = login_runtime::resolve_cursor_login_runtime(state)
+    let cursor_runtime = login_runtime::resolve_cursor_login_runtime(deps.data_root())
         .await
         .map_err(CursorProcessLoginStartError::from_runtime_error)?;
-    let login_session = login_sessions::start_cursor_login_session(state).await;
+    let login_session = login_sessions::start_cursor_login_session(deps.providers()).await;
 
-    let state = Arc::clone(state);
     let login_id = login_session.login_id.clone();
     tokio::spawn(async move {
-        session::monitor_cursor_login(state, cursor_runtime, login_id, label).await;
+        session::monitor_cursor_login(deps, cursor_runtime, login_id, label).await;
     });
 
     Ok(login_session)
@@ -206,7 +208,7 @@ mod route_tests {
 
         let err = daemon
             .handle()
-            .providers()
+            .provider_accounts()
             .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
             .await
             .expect_err("missing runtime should fail before session creation");
@@ -235,7 +237,7 @@ mod route_tests {
 
         let err = daemon
             .handle()
-            .providers()
+            .provider_accounts()
             .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
             .await
             .expect_err("config parse failure should fail before session creation");

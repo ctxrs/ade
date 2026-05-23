@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn start_kimi_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<ProviderLoginStartRouteRequest>,
 ) -> Result<Json<ProviderLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -14,7 +14,7 @@ pub(crate) async fn start_kimi_login(
 }
 
 pub(crate) async fn get_kimi_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<KimiLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

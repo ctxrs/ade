@@ -20,6 +20,7 @@ mod installs;
 mod inventory;
 mod kimi_oauth_login;
 mod launch_config;
+mod login_deps;
 mod login_routes;
 mod login_runtime;
 mod login_sessions;
@@ -53,10 +54,7 @@ pub use options::{
     ProviderOptionsResponseError,
 };
 pub use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
-pub use restarts::{
-    restart_codex_providers_for_auth_change, restart_provider_for_auth_change,
-    stop_codex_providers_for_auth_removal,
-};
+pub use restarts::restart_provider_for_auth_change;
 pub use runtime_probe::probe_provider_auth_verification_runtime;
 pub use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,

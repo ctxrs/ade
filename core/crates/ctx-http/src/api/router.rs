@@ -11,10 +11,10 @@ use ctx_daemon::daemon::{
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
-    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
-    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
-    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
+    SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle, TransportHandle,
+    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
+    WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -95,7 +95,6 @@ pub struct RouteHandles {
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
-    pub(in crate::api) providers: ProvidersHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
     pub(in crate::api) provider_auth_import: ProviderAuthImportHandle,
     pub(in crate::api) provider_status: ProviderStatusHandle,
@@ -135,7 +134,6 @@ impl RouteHandles {
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
             workspace_stream: handle.workspace_stream(),
-            providers: handle.providers(),
             provider_accounts: handle.provider_accounts(),
             provider_auth_import: handle.provider_auth_import(),
             provider_status: handle.provider_status(),
@@ -180,7 +178,6 @@ impl_route_state_extractors! {
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;
     WorkspaceStreamHandle, workspace_stream;
-    ProvidersHandle, providers;
     ProviderAccountsHandle, provider_accounts;
     ProviderAuthImportHandle, provider_auth_import;
     ProviderStatusHandle, provider_status;

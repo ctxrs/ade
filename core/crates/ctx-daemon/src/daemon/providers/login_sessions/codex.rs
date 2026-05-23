@@ -1,6 +1,5 @@
 use ctx_provider_accounts as provider_accounts;
-
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntime;
 
 #[derive(Debug)]
 pub struct StartedCodexLoginSession {
@@ -19,7 +18,7 @@ pub enum CodexLoginCallbackClaimError {
 }
 
 pub async fn start_codex_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: String,
     auth_url: String,
     expected_callback_url: Option<String>,
@@ -33,8 +32,7 @@ pub async fn start_codex_login_session(
         status: "pending".to_string(),
         error: None,
     };
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| {
             map.insert(account_id.clone(), status);
         })
@@ -49,28 +47,27 @@ pub async fn start_codex_login_session(
 }
 
 pub async fn codex_login_status(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: &str,
 ) -> Option<provider_accounts::CodexLoginStatus> {
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| map.get(account_id).cloned())
         .await
 }
 
-pub async fn codex_login_statuses(state: &DaemonState) -> Vec<provider_accounts::CodexLoginStatus> {
-    state
-        .providers
+pub async fn codex_login_statuses(
+    providers: &ProviderRuntime,
+) -> Vec<provider_accounts::CodexLoginStatus> {
+    providers
         .with_codex_login_sessions(|map| map.values().cloned().collect())
         .await
 }
 
 pub async fn remove_codex_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: &str,
 ) -> Vec<provider_accounts::CodexLoginStatus> {
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| {
             map.remove(account_id);
             map.values().cloned().collect()
@@ -79,12 +76,11 @@ pub async fn remove_codex_login_session(
 }
 
 pub async fn claim_codex_login_callback(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: &str,
     completion_token: &str,
 ) -> Result<String, CodexLoginCallbackClaimError> {
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| {
             let Some(status) = map.get_mut(account_id) else {
                 return Err(CodexLoginCallbackClaimError::NotFound);
@@ -105,12 +101,11 @@ pub async fn claim_codex_login_callback(
 }
 
 pub async fn restore_codex_login_completion_token(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: &str,
     completion_token: &str,
 ) {
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| {
             if let Some(status) = map.get_mut(account_id) {
                 if status.status == "pending" && status.completion_token.is_none() {
@@ -122,13 +117,12 @@ pub async fn restore_codex_login_completion_token(
 }
 
 pub async fn finish_codex_login_session(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     account_id: &str,
     success: bool,
     error: Option<String>,
 ) {
-    state
-        .providers
+    providers
         .with_codex_login_sessions(|map| {
             if let Some(entry) = map.get_mut(account_id) {
                 entry.status = if success {

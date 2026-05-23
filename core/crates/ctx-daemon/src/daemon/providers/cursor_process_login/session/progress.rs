@@ -1,13 +1,14 @@
 use super::super::auth_url::extract_auth_url;
 use super::super::output::{first_email_from_text, CursorLoginOutputLine};
 use super::*;
+use ctx_provider_runtime::ProviderRuntime;
 
-async fn update_cursor_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
-    login_sessions::update_cursor_login_auth_url(state, login_id, auth_url).await;
+async fn update_cursor_auth_url(providers: &ProviderRuntime, login_id: &str, auth_url: String) {
+    login_sessions::update_cursor_login_auth_url(providers, login_id, auth_url).await;
 }
 
 pub(super) async fn record_cursor_login_output(
-    state: &DaemonState,
+    providers: &ProviderRuntime,
     login_id: &str,
     output_line: CursorLoginOutputLine,
     transcript: &mut String,
@@ -27,7 +28,7 @@ pub(super) async fn record_cursor_login_output(
             .is_none_or(|current| candidate.len() > current.len());
         if needs_update {
             *observed_auth_url = Some(candidate.clone());
-            update_cursor_auth_url(state, login_id, candidate).await;
+            update_cursor_auth_url(providers, login_id, candidate).await;
         }
     }
 }

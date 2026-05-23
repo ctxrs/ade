@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -13,8 +12,9 @@ use ctx_provider_accounts::{
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::daemon::providers::login_deps::ProviderLoginDeps;
 use crate::daemon::providers::{accounts, login_sessions};
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::ProviderAccountsHandle;
 
 mod app_server;
 mod callback_url;
@@ -81,22 +81,25 @@ struct CodexLoginCompleteError {
     message: String,
 }
 
-impl ProvidersHandle {
+impl ProviderAccountsHandle {
     pub async fn start_codex_login_for_route(
         &self,
         request: CodexLoginStartRouteRequest,
     ) -> Result<CodexLoginStartRouteResponse, CodexLoginRouteError> {
-        start_codex_app_server_login(&self.state, request.into_label())
-            .await
-            .map(codex_login_start_route_response)
-            .map_err(codex_login_start_route_error)
+        start_codex_app_server_login(
+            ProviderLoginDeps::from_accounts_handle(self),
+            request.into_label(),
+        )
+        .await
+        .map(codex_login_start_route_response)
+        .map_err(codex_login_start_route_error)
     }
 
     pub async fn codex_login_status_for_route(
         &self,
         account_id: &str,
     ) -> Result<CodexLoginStatusRouteResponse, CodexLoginRouteError> {
-        login_sessions::codex_login_status(&self.state, account_id)
+        login_sessions::codex_login_status(self.providers(), account_id)
             .await
             .map(Into::into)
             .ok_or_else(codex_login_not_found_route_error)
@@ -108,10 +111,15 @@ impl ProvidersHandle {
         request: CodexLoginCompleteRouteRequest,
     ) -> Result<CodexLoginCompleteRouteResponse, CodexLoginRouteError> {
         let (callback_url, completion_token) = request.into_parts();
-        complete_codex_app_server_login(&self.state, account_id, callback_url, completion_token)
-            .await
-            .map(codex_login_complete_route_response)
-            .map_err(codex_login_complete_route_error)
+        complete_codex_app_server_login(
+            ProviderLoginDeps::from_accounts_handle(self),
+            account_id,
+            callback_url,
+            completion_token,
+        )
+        .await
+        .map(codex_login_complete_route_response)
+        .map_err(codex_login_complete_route_error)
     }
 }
 
@@ -170,10 +178,10 @@ impl CodexLoginCompleteError {
 }
 
 async fn start_codex_app_server_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     label: Option<String>,
 ) -> Result<StartedCodexLoginSession, CodexLoginStartError> {
-    let prepared = accounts::prepare_codex_login_start(state, label)
+    let prepared = accounts::prepare_codex_login_start(deps.data_root(), label)
         .await
         .map_err(CodexLoginStartError::from_error)?;
     let login = match process::start_codex_login_process(&prepared.account_dir, &prepared.codex_bin)
@@ -186,38 +194,41 @@ async fn start_codex_app_server_login(
         }
     };
     let started_login = login_sessions::start_codex_login_session(
-        state,
+        deps.providers(),
         prepared.account_id,
         login.auth_url.clone(),
         callback_url::expected_callback_from_auth_url(&login.auth_url),
     )
     .await;
 
-    let state = Arc::clone(state);
     let account_id = started_login.account_id.clone();
     tokio::spawn(async move {
-        process::monitor_codex_login(state, account_id, prepared.label, login).await;
+        process::monitor_codex_login(deps, account_id, prepared.label, login).await;
     });
 
     Ok(started_login.into())
 }
 
 async fn complete_codex_app_server_login(
-    state: &Arc<DaemonState>,
+    deps: ProviderLoginDeps,
     account_id: &str,
     callback_url: String,
     completion_token: String,
 ) -> Result<CodexLoginCompleteResponse, CodexLoginCompleteError> {
     let expected_callback =
-        login_sessions::claim_codex_login_callback(state, account_id, &completion_token)
+        login_sessions::claim_codex_login_callback(deps.providers(), account_id, &completion_token)
             .await
             .map_err(claim_error_response)?;
 
     if let Err(err) =
         callback_url::validate_callback_url(&callback_url, Some(expected_callback.as_str()))
     {
-        login_sessions::restore_codex_login_completion_token(state, account_id, &completion_token)
-            .await;
+        login_sessions::restore_codex_login_completion_token(
+            deps.providers(),
+            account_id,
+            &completion_token,
+        )
+        .await;
         return Err(CodexLoginCompleteError::new(
             CodexLoginCompleteErrorKind::BadRequest,
             err.to_string(),
@@ -229,7 +240,7 @@ async fn complete_codex_app_server_login(
         Err(err) => {
             if err.should_restore_completion_token() {
                 login_sessions::restore_codex_login_completion_token(
-                    state,
+                    deps.providers(),
                     account_id,
                     &completion_token,
                 )
@@ -273,9 +284,11 @@ fn claim_error_response(
 
 #[cfg(test)]
 mod route_tests {
+    use ctx_managed_installs as installer;
     use ctx_provider_accounts as provider_accounts;
 
     use super::*;
+    use crate::test_support::TestDaemon;
 
     #[test]
     fn codex_login_route_missing_status_preserves_not_found_message() {
@@ -398,5 +411,32 @@ mod route_tests {
             serde_json::to_value(CodexLoginStatusRouteResponse::from(status.clone())).unwrap(),
             serde_json::to_value(status).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn codex_login_start_rejects_config_parse_error_without_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cfg_path = installer::agent_server_config_path(temp.path());
+        tokio::fs::create_dir_all(cfg_path.parent().expect("config parent"))
+            .await
+            .expect("create config parent");
+        tokio::fs::write(&cfg_path, b"{not-json")
+            .await
+            .expect("write malformed config");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+
+        let err = daemon
+            .handle()
+            .provider_accounts()
+            .start_codex_login_for_route(CodexLoginStartRouteRequest::default())
+            .await
+            .expect_err("config parse failure should fail before session creation");
+
+        assert_eq!(err.kind(), CodexLoginRouteErrorKind::Internal);
+        assert!(err.message().contains("agent server config"));
+        assert!(daemon.provider_login_session_caches_empty().await);
     }
 }

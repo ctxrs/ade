@@ -1,12 +1,9 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use ctx_provider_accounts as provider_accounts;
-
-use crate::daemon::DaemonState;
 
 pub struct PreparedAmpLoginPaths {
     pub login_home: PathBuf,
@@ -41,27 +38,27 @@ fn provider_login_home(data_root: &Path, provider_id: &str, login_id: &str) -> P
         .join(login_id)
 }
 
-fn login_provider_base_env(state: &DaemonState) -> HashMap<String, String> {
+fn login_provider_base_env(data_root: &Path, daemon_url: &str) -> HashMap<String, String> {
     HashMap::from([
-        ("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone()),
+        ("CTX_DAEMON_URL".to_string(), daemon_url.to_string()),
         ("CTX_MCP_DISABLED".to_string(), "1".to_string()),
         (
             "CTX_DATA_ROOT".to_string(),
-            state.core.data_root.to_string_lossy().to_string(),
+            data_root.to_string_lossy().to_string(),
         ),
     ])
 }
 
 pub async fn prepare_amp_login_paths(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     login_id: &str,
 ) -> Result<PreparedAmpLoginPaths, String> {
-    let login_home = provider_login_home(&state.core.data_root, "amp", login_id);
+    let login_home = provider_login_home(data_root, "amp", login_id);
     let workdir = login_home.join("workspace");
     if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
         return Err(format!("failed to prepare login workspace: {err}"));
     }
-    let amp_home = match provider_accounts::ensure_amp_runtime_home(&state.core.data_root).await {
+    let amp_home = match provider_accounts::ensure_amp_runtime_home(data_root).await {
         Ok(home) => home,
         Err(err) => {
             let _ = tokio::fs::remove_dir_all(&login_home).await;
@@ -76,8 +73,12 @@ pub async fn prepare_amp_login_paths(
     })
 }
 
-pub fn amp_login_provider_env(state: &DaemonState, amp_home: &Path) -> HashMap<String, String> {
-    let mut provider_env = login_provider_base_env(state);
+pub fn amp_login_provider_env(
+    data_root: &Path,
+    daemon_url: &str,
+    amp_home: &Path,
+) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(data_root, daemon_url);
     provider_env.insert("HOME".to_string(), amp_home.to_string_lossy().to_string());
     provider_env.insert(
         "XDG_CONFIG_HOME".to_string(),
@@ -91,22 +92,21 @@ pub fn amp_login_provider_env(state: &DaemonState, amp_home: &Path) -> HashMap<S
 }
 
 pub async fn prepare_mistral_login_paths(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     login_id: &str,
 ) -> Result<PreparedMistralLoginPaths, String> {
-    let login_home = provider_login_home(&state.core.data_root, "mistral", login_id);
+    let login_home = provider_login_home(data_root, "mistral", login_id);
     let workdir = login_home.join("workspace");
     if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
         return Err(format!("failed to prepare login workspace: {err}"));
     }
-    let mistral_home =
-        match provider_accounts::ensure_mistral_runtime_home(&state.core.data_root).await {
-            Ok(home) => home,
-            Err(err) => {
-                let _ = tokio::fs::remove_dir_all(&login_home).await;
-                return Err(format!("failed to prepare mistral runtime home: {err}"));
-            }
-        };
+    let mistral_home = match provider_accounts::ensure_mistral_runtime_home(data_root).await {
+        Ok(home) => home,
+        Err(err) => {
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return Err(format!("failed to prepare mistral runtime home: {err}"));
+        }
+    };
 
     Ok(PreparedMistralLoginPaths {
         login_home,
@@ -116,10 +116,11 @@ pub async fn prepare_mistral_login_paths(
 }
 
 pub fn mistral_login_provider_env(
-    state: &DaemonState,
+    data_root: &Path,
+    daemon_url: &str,
     mistral_home: &Path,
 ) -> HashMap<String, String> {
-    let mut provider_env = login_provider_base_env(state);
+    let mut provider_env = login_provider_base_env(data_root, daemon_url);
     provider_env.insert(
         "HOME".to_string(),
         mistral_home.to_string_lossy().to_string(),
@@ -136,10 +137,10 @@ pub fn mistral_login_provider_env(
 }
 
 pub async fn prepare_gemini_login_paths(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     login_id: &str,
 ) -> Result<PreparedGeminiLoginPaths, String> {
-    let login_home = provider_login_home(&state.core.data_root, "gemini", login_id);
+    let login_home = provider_login_home(data_root, "gemini", login_id);
     let workdir = login_home.join("workspace");
     tokio::fs::create_dir_all(&workdir)
         .await
@@ -153,10 +154,11 @@ pub async fn prepare_gemini_login_paths(
 }
 
 pub fn gemini_login_provider_env(
-    state: &DaemonState,
+    data_root: &Path,
+    daemon_url: &str,
     login_home: &Path,
 ) -> HashMap<String, String> {
-    let mut provider_env = login_provider_base_env(state);
+    let mut provider_env = login_provider_base_env(data_root, daemon_url);
     provider_env.insert(
         "GEMINI_CLI_HOME".to_string(),
         login_home.to_string_lossy().to_string(),
@@ -169,10 +171,10 @@ pub fn gemini_login_provider_env(
 }
 
 pub async fn prepare_qwen_login_paths(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     login_id: &str,
 ) -> Result<PreparedQwenLoginPaths, String> {
-    let login_home = provider_login_home(&state.core.data_root, "qwen", login_id);
+    let login_home = provider_login_home(data_root, "qwen", login_id);
     let workdir = login_home.join("workspace");
     if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
         return Err(format!("failed to prepare login workspace: {err}"));
@@ -188,8 +190,12 @@ pub async fn prepare_qwen_login_paths(
     })
 }
 
-pub fn qwen_login_provider_env(state: &DaemonState, login_home: &Path) -> HashMap<String, String> {
-    let mut provider_env = login_provider_base_env(state);
+pub fn qwen_login_provider_env(
+    data_root: &Path,
+    daemon_url: &str,
+    login_home: &Path,
+) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(data_root, daemon_url);
     provider_env.insert("HOME".to_string(), login_home.to_string_lossy().to_string());
     provider_env.insert(
         "XDG_CONFIG_HOME".to_string(),

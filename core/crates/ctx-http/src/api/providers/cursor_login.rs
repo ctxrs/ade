@@ -4,7 +4,7 @@ use crate::api::MobileAuthContext;
 use axum::Extension;
 
 pub(crate) async fn start_cursor_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CursorLoginStartRouteRequest>,
 ) -> Result<Json<CursorLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -17,7 +17,7 @@ pub(crate) async fn start_cursor_login(
 }
 
 pub(crate) async fn get_cursor_login(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAccountsHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<CursorLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
