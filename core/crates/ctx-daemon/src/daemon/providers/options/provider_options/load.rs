@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 
-use crate::daemon::DaemonState;
+use crate::daemon::handle::ProviderWorkspaceLaunchRuntime;
 
 use super::ProviderOptionsResponseError;
 
@@ -13,13 +11,13 @@ pub(super) struct ProviderOptionsWorkspaceInputs {
 }
 
 pub(super) async fn load_provider_options_workspace_inputs(
-    state: &Arc<DaemonState>,
+    launch: &ProviderWorkspaceLaunchRuntime,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<ProviderOptionsWorkspaceInputs, ProviderOptionsResponseError> {
-    let workspace = load_workspace(state, workspace_id).await?;
+    let workspace = load_workspace(launch, workspace_id).await?;
     let preferred_model_id =
-        load_workspace_preferred_model_id(state, workspace_id, provider_id).await?;
+        load_workspace_preferred_model_id(launch, workspace_id, provider_id).await?;
     Ok(ProviderOptionsWorkspaceInputs {
         workspace,
         preferred_model_id,
@@ -27,23 +25,22 @@ pub(super) async fn load_provider_options_workspace_inputs(
 }
 
 async fn load_workspace(
-    state: &Arc<DaemonState>,
+    launch: &ProviderWorkspaceLaunchRuntime,
     ws_id: WorkspaceId,
 ) -> Result<Workspace, ProviderOptionsResponseError> {
-    state
-        .global_store()
-        .get_workspace(ws_id)
+    launch
+        .load_workspace(ws_id)
         .await
         .map_err(|_| ProviderOptionsResponseError::WorkspaceLoad)?
         .ok_or(ProviderOptionsResponseError::WorkspaceNotFound)
 }
 
 async fn load_workspace_preferred_model_id(
-    state: &Arc<DaemonState>,
+    launch: &ProviderWorkspaceLaunchRuntime,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<Option<String>, ProviderOptionsResponseError> {
-    let store = state
+    let store = launch
         .store_for_workspace(workspace_id)
         .await
         .map_err(ProviderOptionsResponseError::WorkspaceStoreLoad)?;

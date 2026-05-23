@@ -5,12 +5,12 @@ mod verify;
 pub(in crate::api) use verify::verify_provider_for_workspace;
 
 pub(in crate::api) async fn authenticate_provider_for_workspace(
-    State(providers): State<ProvidersHandle>,
+    State(provider_workspace_auth): State<ProviderWorkspaceAuthHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
     req: Option<Json<AuthenticateProviderForWorkspaceRouteBody>>,
 ) -> Result<Json<ProviderAuthCheckRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
     let method_id = req.and_then(|value| value.0.into_method_id());
-    providers
+    provider_workspace_auth
         .authenticate_provider_for_workspace_for_route(
             AuthenticateProviderForWorkspaceRouteRequest::new(ws_id, provider_id, method_id),
         )

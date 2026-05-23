@@ -37,6 +37,39 @@ async fn provider_options_preserve_missing_workspace_load_error() {
 }
 
 #[tokio::test]
+async fn provider_options_preserve_execution_settings_context() {
+    let git_repo = setup_git_repo().await;
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+    let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
+    fixture
+        .daemon()
+        .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{")
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/workspaces/{}/providers/qwen/options",
+            workspace.id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error = payload["error"].as_str().unwrap();
+    assert!(error.starts_with("failed to load workspace execution settings:"));
+    assert!(error.contains(&format!(
+        "loading execution settings for workspace {}",
+        workspace.id.0
+    )));
+    assert!(error.contains("workspace runtime settings"));
+}
+
+#[tokio::test]
 async fn provider_options_preserve_unsupported_provider_error() {
     let git_repo = setup_git_repo().await;
     let fixture = ProviderRouteFixture::new().await;

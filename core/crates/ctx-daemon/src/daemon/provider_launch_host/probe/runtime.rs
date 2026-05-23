@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ctx_core::models::{Workspace, Worktree};
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::probe::PreparedWorkspaceProbeRuntime;
 use ctx_settings_model::ExecutionMode;
+use ctx_store::Store;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 use ctx_worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane_with_host,
-    workspace_data_plane,
+    workspace_data_plane, WorktreeDataPlaneHost,
 };
 
-use crate::daemon::execution_effective;
 use crate::daemon::DaemonState;
 
 use self::helpers::{probe_cwd_for_workspace_runtime, runtime_data_root, synthetic_probe_worktree};
@@ -21,7 +22,34 @@ pub(super) async fn prepare_workspace_probe_runtime(
     state: &DaemonState,
     workspace: &Workspace,
 ) -> Result<PreparedWorkspaceProbeRuntime, String> {
-    let effective = execution_effective::effective_execution_settings(state, workspace.id)
+    prepare_workspace_probe_runtime_parts(
+        state,
+        state.global_store(),
+        &state.core.data_root,
+        &state.core.daemon_url,
+        &state.execution.harness,
+        workspace,
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn prepare_workspace_probe_runtime_parts<H>(
+    data_plane_host: &H,
+    global_store: &Store,
+    data_root: &Path,
+    daemon_url: &str,
+    harness: &HarnessRuntimeManager,
+    workspace: &Workspace,
+) -> Result<PreparedWorkspaceProbeRuntime, String>
+where
+    H: WorktreeDataPlaneHost,
+{
+    let store = H::workspace_store(data_plane_host, workspace.id)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
+        })?;
+    let effective = ctx_settings_service::effective_execution_settings(global_store, &store)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
@@ -48,20 +76,18 @@ pub(super) async fn prepare_workspace_probe_runtime(
         effective.mode.clone(),
         effective.container.mount_mode.clone(),
     );
-    let runtime_plan = state
-        .execution
-        .harness
-        .prepare(workspace, &worktree, &effective, &state.core.daemon_url)
+    let runtime_plan = harness
+        .prepare(workspace, &worktree, &effective, daemon_url)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("probe runtime preparation failed: {err:#}"))
         })?;
-    let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)
-        .map_err(|err| {
+    let sandbox_mode =
+        ctx_harness_runtime::selected_sandbox_command_mode(data_root).map_err(|err| {
             logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}"))
         })?;
     ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
-        &state.core.data_root,
+        data_root,
         &sandbox_mode,
         workspace,
     )
@@ -84,7 +110,34 @@ pub(super) async fn prepare_worktree_probe_runtime(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<PreparedWorkspaceProbeRuntime, String> {
-    let effective = execution_effective::effective_execution_settings(state, workspace.id)
+    prepare_worktree_probe_runtime_parts(
+        state,
+        state.global_store(),
+        &state.core.daemon_url,
+        &state.execution.harness,
+        workspace,
+        worktree,
+    )
+    .await
+}
+
+pub(in crate::daemon) async fn prepare_worktree_probe_runtime_parts<H>(
+    data_plane_host: &H,
+    global_store: &Store,
+    daemon_url: &str,
+    harness: &HarnessRuntimeManager,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<PreparedWorkspaceProbeRuntime, String>
+where
+    H: WorktreeDataPlaneHost,
+{
+    let store = H::workspace_store(data_plane_host, workspace.id)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
+        })?;
+    let effective = ctx_settings_service::effective_execution_settings(global_store, &store)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
@@ -97,7 +150,7 @@ pub(super) async fn prepare_worktree_probe_runtime(
         });
     }
 
-    let worktree_data_plane = resolve_worktree_data_plane_with_host(state, worktree)
+    let worktree_data_plane = resolve_worktree_data_plane_with_host(data_plane_host, worktree)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!(
@@ -116,10 +169,8 @@ pub(super) async fn prepare_worktree_probe_runtime(
         effective.mode.clone(),
         effective.container.mount_mode.clone(),
     );
-    let runtime_plan = state
-        .execution
-        .harness
-        .prepare(workspace, worktree, &effective, &state.core.daemon_url)
+    let runtime_plan = harness
+        .prepare(workspace, worktree, &effective, daemon_url)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("session auth runtime preparation failed: {err:#}"))

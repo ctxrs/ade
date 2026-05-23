@@ -376,6 +376,19 @@ const providerBootstrapDaemonFacadePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/bootstrap.rs",
 ]);
 
+const providerWorkspaceLaunchApiPaths = new Set([
+  "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/auth/verify.rs",
+]);
+
+const providerWorkspaceLaunchDaemonFacadePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/options/provider_options.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/options/provider_options/load.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/auth_check.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/auth_check/workspace.rs",
+]);
+
 const providerUsageApiRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status/usage.rs",
@@ -7005,6 +7018,59 @@ function scanProviderBootstrapDaemonFacadeRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderWorkspaceLaunchHandleRatchet({ filePath, contents }) {
+  if (!providerWorkspaceLaunchApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider workspace launch route extracts broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function scanProviderWorkspaceLaunchDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerWorkspaceLaunchDaemonFacadePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider workspace launch daemon facade implemented on broad providers handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
+      name: "provider workspace launch daemon facade accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7053,6 +7119,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderBootstrapHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderWorkspaceLaunchHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7132,6 +7202,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderBootstrapDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderWorkspaceLaunchDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7734,6 +7808,8 @@ module.exports = {
   scanProviderHarnessConfigHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
+  scanProviderWorkspaceLaunchDaemonFacadeRatchet,
+  scanProviderWorkspaceLaunchHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

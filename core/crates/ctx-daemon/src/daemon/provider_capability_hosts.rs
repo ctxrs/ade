@@ -18,7 +18,8 @@ use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::broadcast;
 
 use super::{
-    ProviderAdminHandle, ProviderBootstrapHandle, ProviderStatusHandle, ProviderUsageHandle,
+    handle::ProviderWorkspaceLaunchRuntime, ProviderAdminHandle, ProviderBootstrapHandle,
+    ProviderStatusHandle, ProviderUsageHandle,
 };
 
 fn current_ctx_version_for_provider_runtime() -> Option<String> {
@@ -114,6 +115,24 @@ impl ProviderRuntimeHost for ProviderAdminHandle {
 }
 
 impl ProviderRuntimeHost for ProviderBootstrapHandle {
+    fn data_root(&self) -> &Path {
+        self.data_root()
+    }
+
+    fn current_ctx_version(&self) -> Option<String> {
+        current_ctx_version_for_provider_runtime()
+    }
+
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        self.providers()
+    }
+
+    fn publish_provider_install_ops_events(&self, events: Vec<ProviderInstallOpsEvent>) {
+        emit_provider_install_ops_events(self.ops_events(), events);
+    }
+}
+
+impl ProviderRuntimeHost for ProviderWorkspaceLaunchRuntime {
     fn data_root(&self) -> &Path {
         self.data_root()
     }

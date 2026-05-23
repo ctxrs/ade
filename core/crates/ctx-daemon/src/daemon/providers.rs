@@ -4,9 +4,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
-use ctx_provider_runtime::provider_auth_check::ProviderAuthCheckSnapshot;
 use ctx_providers::adapters::ProviderStatus;
-use serde_json::Value;
 use tokio::sync::broadcast;
 
 use super::handle::ProvidersHandle;
@@ -37,9 +35,7 @@ mod usage;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use accounts::persist_successful_codex_login;
-pub use auth_check::{
-    authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
-};
+pub use auth_check::ProviderAuthCheckError;
 pub use auth_import::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
@@ -64,8 +60,8 @@ pub use login_sessions::{
     StartedCodexLoginSession, StartedLoginSession,
 };
 pub use options::{
-    effective_preferred_model_id_for_workspace, get_provider_options_response,
-    EffectivePreferredModelError, ProviderOptionsResponseError,
+    effective_preferred_model_id_for_workspace, EffectivePreferredModelError,
+    ProviderOptionsResponseError,
 };
 pub use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub use restarts::{
@@ -123,31 +119,6 @@ impl ProvidersHandle {
         target: InstallTarget,
     ) -> Result<ProviderStatus, ProviderStatusResponseError> {
         provider_status_response(&self.state, provider_id, target).await
-    }
-
-    pub async fn get_provider_options_response(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-    ) -> Result<Value, ProviderOptionsResponseError> {
-        get_provider_options_response(&self.state, workspace_id, provider_id).await
-    }
-
-    pub async fn authenticate_provider_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-        method_id: Option<String>,
-    ) -> Result<ProviderAuthCheckSnapshot, ProviderAuthCheckError> {
-        authenticate_provider_for_workspace(&self.state, workspace_id, provider_id, method_id).await
-    }
-
-    pub async fn verify_provider_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-    ) -> Result<ProviderAuthCheckSnapshot, ProviderAuthCheckError> {
-        verify_provider_for_workspace(&self.state, workspace_id, provider_id).await
     }
 
     pub async fn start_provider_install(

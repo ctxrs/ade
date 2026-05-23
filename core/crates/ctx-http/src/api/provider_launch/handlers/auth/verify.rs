@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn verify_provider_for_workspace(
-    State(providers): State<ProvidersHandle>,
+    State(provider_workspace_auth): State<ProviderWorkspaceAuthHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<ProviderAuthCheckRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
-    providers
+    provider_workspace_auth
         .verify_provider_for_workspace_for_route(VerifyProviderForWorkspaceRouteRequest::new(
             ws_id,
             provider_id,

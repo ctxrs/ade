@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ctx_core::ids::WorkspaceId;
 pub use ctx_provider_runtime::provider_auth_check::ProviderAuthCheckSnapshot;
 use ctx_provider_runtime::provider_auth_check::{
@@ -11,8 +9,7 @@ use ctx_provider_runtime::{
     ProviderAuthCheckRouteResponse, VerifyProviderForWorkspaceRouteRequest,
 };
 
-use crate::daemon::providers::install_target_for_workspace;
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::{handle::ProviderWorkspaceLaunchRuntime, ProviderWorkspaceAuthHandle};
 
 mod workspace;
 
@@ -27,18 +24,19 @@ pub enum ProviderAuthCheckError {
     Verify(String),
 }
 
-pub async fn authenticate_provider_for_workspace(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn authenticate_provider_for_workspace(
+    launch: &ProviderWorkspaceLaunchRuntime,
     workspace_id: WorkspaceId,
     provider_id: &str,
     method_id: Option<String>,
 ) -> Result<ProviderAuthCheckSnapshot, ProviderAuthCheckError> {
-    let workspace = load_workspace(state, workspace_id).await?;
-    let install_target = install_target_for_workspace(state, workspace.id)
+    let workspace = load_workspace(launch, workspace_id).await?;
+    let install_target = launch
+        .install_target_for_workspace(workspace.id)
         .await
         .map_err(ProviderAuthCheckError::ExecutionSettings)?;
     ctx_provider_runtime::provider_auth_check::authenticate_provider_for_workspace_runtime(
-        state.as_ref(),
+        launch,
         &workspace,
         workspace_id,
         provider_id,
@@ -53,14 +51,14 @@ pub async fn authenticate_provider_for_workspace(
     })
 }
 
-impl ProvidersHandle {
+impl ProviderWorkspaceAuthHandle {
     pub async fn authenticate_provider_for_workspace_for_route(
         &self,
         request: AuthenticateProviderForWorkspaceRouteRequest,
     ) -> Result<ProviderAuthCheckRouteResponse, ProviderAuthCheckRouteError> {
         let (workspace_id_raw, provider_id, method_id) = request.into_parts();
         let workspace_id = parse_workspace_id_for_auth_route(&workspace_id_raw)?;
-        authenticate_provider_for_workspace(&self.state, workspace_id, &provider_id, method_id)
+        authenticate_provider_for_workspace(self.launch(), workspace_id, &provider_id, method_id)
             .await
             .map(ProviderAuthCheckRouteResponse::from)
             .map_err(provider_auth_check_route_error)
@@ -72,7 +70,7 @@ impl ProvidersHandle {
     ) -> Result<ProviderAuthCheckRouteResponse, ProviderAuthCheckRouteError> {
         let (workspace_id_raw, provider_id) = request.into_parts();
         let workspace_id = parse_workspace_id_for_auth_route(&workspace_id_raw)?;
-        verify_provider_for_workspace(&self.state, workspace_id, &provider_id)
+        verify_provider_for_workspace(self.launch(), workspace_id, &provider_id)
             .await
             .map(ProviderAuthCheckRouteResponse::from)
             .map_err(provider_auth_check_route_error)
@@ -119,17 +117,18 @@ fn provider_launch_config_route_error(
     }
 }
 
-pub async fn verify_provider_for_workspace(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn verify_provider_for_workspace(
+    launch: &ProviderWorkspaceLaunchRuntime,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<ProviderAuthCheckSnapshot, ProviderAuthCheckError> {
-    let workspace = load_workspace(state, workspace_id).await?;
-    let install_target = install_target_for_workspace(state, workspace.id)
+    let workspace = load_workspace(launch, workspace_id).await?;
+    let install_target = launch
+        .install_target_for_workspace(workspace.id)
         .await
         .map_err(ProviderAuthCheckError::ExecutionSettings)?;
     ctx_provider_runtime::provider_auth_check::verify_provider_for_workspace_runtime(
-        state.as_ref(),
+        launch,
         &workspace,
         workspace_id,
         provider_id,

@@ -10,10 +10,10 @@ use ctx_daemon::daemon::{
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
     ProviderAccountsHandle, ProviderAdminHandle, ProviderBootstrapHandle,
-    ProviderHarnessConfigHandle, ProviderStatusHandle, ProviderUsageHandle, ProvidersHandle,
-    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
-    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderHarnessConfigHandle, ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle,
+    ProviderWorkspaceAuthHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
+    SettingsHandle, TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle,
+    UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -101,6 +101,8 @@ pub struct RouteHandles {
     pub(in crate::api) provider_usage: ProviderUsageHandle,
     pub(in crate::api) provider_harness_config: ProviderHarnessConfigHandle,
     pub(in crate::api) provider_bootstrap: ProviderBootstrapHandle,
+    pub(in crate::api) provider_options: ProviderOptionsHandle,
+    pub(in crate::api) provider_workspace_auth: ProviderWorkspaceAuthHandle,
     pub(in crate::api) telemetry: TelemetryHandle,
     pub(in crate::api) transport: TransportHandle,
     pub(in crate::api) execution_launch: ExecutionLaunchHandle,
@@ -137,6 +139,8 @@ impl RouteHandles {
             provider_usage: handle.provider_usage(),
             provider_harness_config: handle.provider_harness_config(),
             provider_bootstrap: handle.provider_bootstrap(),
+            provider_options: handle.provider_options(),
+            provider_workspace_auth: handle.provider_workspace_auth(),
             telemetry: handle.telemetry(),
             transport: handle.transport(),
             execution_launch: handle.execution_launch(),
@@ -178,6 +182,8 @@ impl_route_state_extractors! {
     ProviderUsageHandle, provider_usage;
     ProviderHarnessConfigHandle, provider_harness_config;
     ProviderBootstrapHandle, provider_bootstrap;
+    ProviderOptionsHandle, provider_options;
+    ProviderWorkspaceAuthHandle, provider_workspace_auth;
     TelemetryHandle, telemetry;
     TransportHandle, transport;
     ExecutionLaunchHandle, execution_launch;

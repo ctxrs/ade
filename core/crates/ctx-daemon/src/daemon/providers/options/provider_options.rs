@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ctx_core::ids::WorkspaceId;
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_options::service::{
@@ -9,8 +7,8 @@ use ctx_provider_runtime::provider_options::service::{
 use ctx_provider_runtime::{ProviderOptionsRouteError, ProviderOptionsRouteRequest};
 use serde_json::Value;
 
-use crate::daemon::providers::{install_target_for_workspace, ProviderLaunchConfigError};
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::providers::ProviderLaunchConfigError;
+use crate::daemon::{handle::ProviderWorkspaceLaunchRuntime, ProviderOptionsHandle};
 
 mod load;
 
@@ -27,16 +25,17 @@ pub enum ProviderOptionsResponseError {
     SelectedEndpointMissing,
 }
 
-pub async fn get_provider_options_response(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn get_provider_options_response(
+    launch: &ProviderWorkspaceLaunchRuntime,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<Value, ProviderOptionsResponseError> {
-    let install_target = install_target_for_workspace(state, workspace_id)
+    let install_target = launch
+        .install_target_for_workspace(workspace_id)
         .await
         .map_err(ProviderOptionsResponseError::ExecutionSettings)?;
     let preflight = prepare_provider_options_response(
-        state.as_ref(),
+        launch,
         ProviderOptionsPreflightRequest {
             workspace_id,
             provider_id,
@@ -50,9 +49,9 @@ pub async fn get_provider_options_response(
         ProviderOptionsPreflight::NeedsWorkspace(prepared) => prepared,
     };
     let workspace_inputs =
-        load_provider_options_workspace_inputs(state, workspace_id, provider_id).await?;
+        load_provider_options_workspace_inputs(launch, workspace_id, provider_id).await?;
     finish_provider_options_response(
-        state.as_ref(),
+        launch,
         ProviderOptionsWorkspaceInput {
             prepared,
             workspace: &workspace_inputs.workspace,
@@ -76,14 +75,14 @@ fn provider_options_service_error(
     }
 }
 
-impl ProvidersHandle {
+impl ProviderOptionsHandle {
     pub async fn get_provider_options_for_route(
         &self,
         request: ProviderOptionsRouteRequest,
     ) -> Result<Value, ProviderOptionsRouteError> {
         let (workspace_id_raw, provider_id) = request.into_parts();
         let workspace_id = parse_workspace_id_for_options_route(&workspace_id_raw)?;
-        get_provider_options_response(&self.state, workspace_id, &provider_id)
+        get_provider_options_response(self.launch(), workspace_id, &provider_id)
             .await
             .map_err(provider_options_route_error)
     }

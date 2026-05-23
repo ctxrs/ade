@@ -182,6 +182,30 @@ impl DaemonHandle {
         )
     }
 
+    fn provider_workspace_launch_runtime(&self) -> Arc<ProviderWorkspaceLaunchRuntime> {
+        Arc::new(ProviderWorkspaceLaunchRuntime::new(
+            self.state.core.data_root.clone(),
+            self.state.core.daemon_url.clone(),
+            self.state.core.auth_token.clone(),
+            ProtectedWorkspaceStoreLookup::new(
+                self.state.core.stores.clone(),
+                Arc::clone(&self.state.sessions),
+                Arc::clone(&self.state.transport.merge_queue),
+            ),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+            Arc::clone(&self.state.execution.harness),
+        ))
+    }
+
+    pub fn provider_options(&self) -> ProviderOptionsHandle {
+        ProviderOptionsHandle::new(self.provider_workspace_launch_runtime())
+    }
+
+    pub fn provider_workspace_auth(&self) -> ProviderWorkspaceAuthHandle {
+        ProviderWorkspaceAuthHandle::new(self.provider_workspace_launch_runtime())
+    }
+
     pub fn provider_status(&self) -> ProviderStatusHandle {
         ProviderStatusHandle::new(
             self.state.core.data_root.clone(),
@@ -894,6 +918,132 @@ impl ProviderBootstrapHandle {
         Ok(ctx_settings_service::install_target_for_settings(
             &effective,
         ))
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct ProviderWorkspaceLaunchRuntime {
+    data_root: PathBuf,
+    daemon_url: String,
+    auth_token: Option<String>,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    providers: Arc<ProviderRuntime>,
+    ops_events: OpsEvents,
+    harness: Arc<HarnessRuntimeManager>,
+}
+
+impl ProviderWorkspaceLaunchRuntime {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        daemon_url: String,
+        auth_token: Option<String>,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        providers: Arc<ProviderRuntime>,
+        ops_events: OpsEvents,
+        harness: Arc<HarnessRuntimeManager>,
+    ) -> Self {
+        Self {
+            data_root,
+            daemon_url,
+            auth_token,
+            workspace_stores,
+            providers,
+            ops_events,
+            harness,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+
+    pub(in crate::daemon) fn auth_token(&self) -> Option<&String> {
+        self.auth_token.as_ref()
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+
+    pub(in crate::daemon) fn harness(&self) -> &HarnessRuntimeManager {
+        self.harness.as_ref()
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        self.workspace_stores.global_store()
+    }
+
+    pub(in crate::daemon) async fn load_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<ctx_core::models::Workspace>> {
+        self.global_store().get_workspace(workspace_id).await
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn install_target_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<InstallTarget> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        let effective =
+            ctx_settings_service::effective_execution_settings(self.global_store(), &store)
+                .await
+                .with_context(|| {
+                    format!(
+                        "loading execution settings for workspace {}",
+                        workspace_id.0
+                    )
+                })?;
+        Ok(ctx_settings_service::install_target_for_settings(
+            &effective,
+        ))
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderOptionsHandle {
+    launch: Arc<ProviderWorkspaceLaunchRuntime>,
+}
+
+impl ProviderOptionsHandle {
+    pub(in crate::daemon) fn new(launch: Arc<ProviderWorkspaceLaunchRuntime>) -> Self {
+        Self { launch }
+    }
+
+    pub(in crate::daemon) fn launch(&self) -> &ProviderWorkspaceLaunchRuntime {
+        self.launch.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderWorkspaceAuthHandle {
+    launch: Arc<ProviderWorkspaceLaunchRuntime>,
+}
+
+impl ProviderWorkspaceAuthHandle {
+    pub(in crate::daemon) fn new(launch: Arc<ProviderWorkspaceLaunchRuntime>) -> Self {
+        Self { launch }
+    }
+
+    pub(in crate::daemon) fn launch(&self) -> &ProviderWorkspaceLaunchRuntime {
+        self.launch.as_ref()
     }
 }
 

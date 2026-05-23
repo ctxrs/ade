@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn get_provider_options(
-    State(providers): State<ProvidersHandle>,
+    State(provider_options): State<ProviderOptionsHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    providers
+    provider_options
         .get_provider_options_for_route(ProviderOptionsRouteRequest::new(ws_id, provider_id))
         .await
         .map(Json)
