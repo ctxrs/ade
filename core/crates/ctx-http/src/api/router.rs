@@ -9,9 +9,10 @@ use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
-    ProviderAccountsHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle,
-    TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderStatusHandle, ProviderUsageHandle,
+    ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -94,6 +95,9 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) providers: ProvidersHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
+    pub(in crate::api) provider_status: ProviderStatusHandle,
+    pub(in crate::api) provider_admin: ProviderAdminHandle,
+    pub(in crate::api) provider_usage: ProviderUsageHandle,
     pub(in crate::api) telemetry: TelemetryHandle,
     pub(in crate::api) transport: TransportHandle,
     pub(in crate::api) execution_launch: ExecutionLaunchHandle,
@@ -125,6 +129,9 @@ impl RouteHandles {
             workspace_stream: handle.workspace_stream(),
             providers: handle.providers(),
             provider_accounts: handle.provider_accounts(),
+            provider_status: handle.provider_status(),
+            provider_admin: handle.provider_admin(),
+            provider_usage: handle.provider_usage(),
             telemetry: handle.telemetry(),
             transport: handle.transport(),
             execution_launch: handle.execution_launch(),
@@ -161,6 +168,9 @@ impl_route_state_extractors! {
     WorkspaceStreamHandle, workspace_stream;
     ProvidersHandle, providers;
     ProviderAccountsHandle, provider_accounts;
+    ProviderStatusHandle, provider_status;
+    ProviderAdminHandle, provider_admin;
+    ProviderUsageHandle, provider_usage;
     TelemetryHandle, telemetry;
     TransportHandle, transport;
     ExecutionLaunchHandle, execution_launch;

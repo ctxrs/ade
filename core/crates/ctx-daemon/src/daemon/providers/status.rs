@@ -10,7 +10,7 @@ use ctx_provider_runtime::{
 use ctx_providers::adapters::ProviderStatus;
 
 use crate::daemon::providers::parse_provider_install_target;
-use crate::daemon::{execution_effective, DaemonState, ProvidersHandle};
+use crate::daemon::{execution_effective, DaemonState, ProviderStatusHandle};
 
 pub async fn install_target_for_workspace(
     state: &Arc<DaemonState>,
@@ -47,14 +47,14 @@ pub async fn provider_status_response(
     status_service::provider_status_response(state.as_ref(), provider_id, target).await
 }
 
-impl ProvidersHandle {
+impl ProviderStatusHandle {
     pub async fn providers_statuses_for_route(
         &self,
         query: ProviderStatusRouteQuery,
     ) -> Result<Vec<ProviderStatus>, ProviderStatusListRouteError> {
         let target = parse_provider_install_target(query.target())
             .map_err(|_| ProviderStatusListRouteError)?;
-        Ok(providers_statuses_response(&self.state, target, false).await)
+        Ok(status_service::providers_statuses_response(self, target, false).await)
     }
 
     pub async fn provider_status_for_route(
@@ -64,7 +64,7 @@ impl ProvidersHandle {
     ) -> Result<ProviderStatus, ProviderStatusRouteError> {
         let target = parse_provider_install_target(query.target())
             .map_err(ProviderStatusRouteError::bad_request)?;
-        provider_status_response(&self.state, provider_id, target)
+        status_service::provider_status_response(self, provider_id, target)
             .await
             .map_err(provider_status_route_error)
     }

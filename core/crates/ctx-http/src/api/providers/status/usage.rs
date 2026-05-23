@@ -10,7 +10,7 @@ fn provider_usage_route_error(error: ProviderUsageRouteError) -> (StatusCode, Js
 }
 
 pub(crate) async fn get_provider_usage(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderUsageHandle>,
     Path(id): Path<String>,
     Query(query): Query<ProviderUsageRouteQuery>,
 ) -> Result<Json<ProviderUsageRouteSnapshot>, (StatusCode, Json<ApiErrorResp>)> {

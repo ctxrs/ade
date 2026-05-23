@@ -339,13 +339,24 @@ const providerAccountCrudApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts/",
 ];
 
-const providerAccountProvidersHandleAllowedPaths = new Set([
-  "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
-]);
+const providerAccountProvidersHandleAllowedPaths = new Set([]);
 
 const providerAccountDaemonRoutePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/handle.rs",
   "core/crates/ctx-daemon/src/daemon/providers/accounts/routes/operations.rs",
+]);
+
+const providerRuntimeSurfaceApiPaths = new Set([
+  "core/crates/ctx-http/src/api/providers/status/routes.rs",
+  "core/crates/ctx-http/src/api/providers/status/usage.rs",
+  "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+  "core/crates/ctx-http/src/api/providers/install.rs",
+]);
+
+const providerRuntimeSurfaceDaemonFacadePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/status.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/admin_routes.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/usage.rs",
 ]);
 
 const providerUsageApiRoots = [
@@ -6825,6 +6836,52 @@ function scanProviderAccountDaemonFacadeRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderRuntimeSurfaceHandleRatchet({ filePath, contents }) {
+  if (!providerRuntimeSurfaceApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider runtime surface route extracts broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function scanProviderRuntimeSurfaceDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerRuntimeSurfaceDaemonFacadePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider runtime surface daemon facade implemented on broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -6861,6 +6918,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderAccountHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderRuntimeSurfaceHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -6928,6 +6989,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderAccountDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderRuntimeSurfaceDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7524,6 +7589,8 @@ module.exports = {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderRuntimeSurfaceDaemonFacadeRatchet,
+  scanProviderRuntimeSurfaceHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

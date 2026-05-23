@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn refresh_provider_matrix(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAdminHandle>,
 ) -> Result<Json<ProviderMatrixRefreshRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     providers
         .refresh_provider_matrix_for_route()
@@ -25,7 +25,7 @@ fn provider_admin_route_error(error: ProviderAdminRouteError) -> (StatusCode, Js
 }
 
 pub(crate) async fn dev_restart_providers(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderAdminHandle>,
     Json(req): Json<ProviderDevRestartRouteRequest>,
 ) -> Result<Json<ProviderDevRestartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     providers

@@ -1,6 +1,5 @@
 use ctx_observability::logs;
-
-use crate::daemon::DaemonState;
+use ctx_provider_runtime::ProviderRuntimeHost;
 
 pub struct ProviderMatrixRefreshSummary {
     pub provider_count: usize,
@@ -10,12 +9,15 @@ pub struct ProviderMatrixRefreshSummary {
     pub last_error: Option<String>,
 }
 
-pub async fn refresh_provider_inventory(
-    state: &DaemonState,
-) -> anyhow::Result<ProviderMatrixRefreshSummary> {
+pub async fn refresh_provider_inventory<H>(
+    state: &H,
+) -> anyhow::Result<ProviderMatrixRefreshSummary>
+where
+    H: ProviderRuntimeHost + ctx_managed_installs::ManagedInstallHost,
+{
     let outcome = state
-        .providers
-        .refresh_provider_matrix_from_local_sources(&state.core.data_root)
+        .provider_runtime()
+        .refresh_provider_matrix_from_local_sources(ProviderRuntimeHost::data_root(state))
         .await;
     ctx_managed_installs::refresh_provider_statuses(state).await?;
 

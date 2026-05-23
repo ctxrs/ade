@@ -32,6 +32,7 @@ pub mod mobile_access;
 mod mobile_startup;
 pub mod org_policy;
 mod org_policy_route;
+mod provider_capability_hosts;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 mod provider_launch_host;
@@ -75,9 +76,10 @@ pub use handle::{
     AuthHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle,
-    ProviderAccountsHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle,
-    TasksHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderStatusHandle, ProviderUsageHandle,
+    ProvidersHandle, RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

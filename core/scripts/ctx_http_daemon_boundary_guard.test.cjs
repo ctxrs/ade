@@ -191,6 +191,8 @@ const {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderRuntimeSurfaceDaemonFacadeRatchet,
+  scanProviderRuntimeSurfaceHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -473,8 +475,8 @@ test("appstate provider account route ratchet rejects broad providers handle", (
     scanProviderAccountHandleRatchet({
       filePath: "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
       contents: `
-        use ctx_daemon::daemon::ProvidersHandle;
-        async fn route(State(providers): State<ProvidersHandle>) {}
+        use ctx_daemon::daemon::ProviderUsageHandle;
+        async fn route(State(providers): State<ProviderUsageHandle>) {}
       `,
     }),
     [],
@@ -509,6 +511,60 @@ test("appstate provider account daemon facade ratchet rejects full-state route s
     [
       "provider account route operation accepts daemon state",
       "provider account route operation accepts daemon state",
+    ],
+  );
+});
+
+test("appstate provider runtime surface route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderRuntimeSurfaceHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/status/routes.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.providers_statuses_for_route(query).await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider runtime surface route extracts broad providers handle",
+      "provider runtime surface route extracts broad providers handle",
+    ],
+  );
+});
+
+test("appstate provider runtime surface daemon facade ratchet rejects broad providers handle", () => {
+  const singletonViolations = scanProviderRuntimeSurfaceDaemonFacadeRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/providers/usage.rs",
+      contents: `
+        use crate::daemon::ProvidersHandle;
+        impl ProvidersHandle {
+          pub async fn provider_usage_for_route(&self) {}
+        }
+      `,
+    }).map((violation) => violation.name);
+  assert.deepEqual(
+    singletonViolations,
+    [
+      "provider runtime surface daemon facade implemented on broad providers handle",
+      "provider runtime surface daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  const groupedViolations = scanProviderRuntimeSurfaceDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/status.rs",
+    contents: `
+      use crate::daemon::{ProviderStatusHandle, ProvidersHandle};
+      async fn helper(handle: ProvidersHandle) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    groupedViolations,
+    [
+      "provider runtime surface daemon facade implemented on broad providers handle",
+      "provider runtime surface daemon facade implemented on broad providers handle",
     ],
   );
 });

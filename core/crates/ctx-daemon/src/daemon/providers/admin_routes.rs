@@ -4,7 +4,7 @@ use ctx_provider_runtime::{
 };
 use ctx_providers::adapters::ProviderRestartMode;
 
-use crate::daemon::ProvidersHandle;
+use crate::daemon::ProviderAdminHandle;
 
 use super::inventory::{refresh_provider_inventory, ProviderMatrixRefreshSummary};
 
@@ -14,11 +14,11 @@ struct ProviderDevRestartRoutePlan {
     reason: String,
 }
 
-impl ProvidersHandle {
+impl ProviderAdminHandle {
     pub async fn refresh_provider_matrix_for_route(
         &self,
     ) -> Result<ProviderMatrixRefreshRouteResponse, ProviderAdminRouteError> {
-        refresh_provider_inventory(self.state.as_ref())
+        refresh_provider_inventory(self)
             .await
             .map(provider_matrix_refresh_route_response)
             .map_err(matrix_refresh_route_error)
@@ -30,8 +30,7 @@ impl ProvidersHandle {
     ) -> Result<ProviderDevRestartRouteResponse, ProviderAdminRouteError> {
         let plan = dev_restart_route_plan(dev_tools_enabled(), request)?;
         let results = self
-            .state
-            .providers
+            .providers()
             .restart_all_provider_adapters(&plan.reason, plan.mode)
             .await;
         Ok(dev_restart_route_response(plan.mode, results))

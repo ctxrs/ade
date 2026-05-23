@@ -162,6 +162,30 @@ impl DaemonHandle {
         )
     }
 
+    pub fn provider_status(&self) -> ProviderStatusHandle {
+        ProviderStatusHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    pub fn provider_admin(&self) -> ProviderAdminHandle {
+        ProviderAdminHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    pub fn provider_usage(&self) -> ProviderUsageHandle {
+        ProviderUsageHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.core.shutdown_tx.clone(),
+        )
+    }
+
     pub fn telemetry(&self) -> TelemetryHandle {
         TelemetryHandle::new(self.state.core.data_root.clone(), &self.state.telemetry)
     }
@@ -685,6 +709,105 @@ impl ProviderAccountsHandle {
 
     pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
         self.providers.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderStatusHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+    ops_events: OpsEvents,
+}
+
+impl ProviderStatusHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        providers: Arc<ProviderRuntime>,
+        ops_events: OpsEvents,
+    ) -> Self {
+        Self {
+            data_root,
+            providers,
+            ops_events,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderAdminHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+    ops_events: OpsEvents,
+}
+
+impl ProviderAdminHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        providers: Arc<ProviderRuntime>,
+        ops_events: OpsEvents,
+    ) -> Self {
+        Self {
+            data_root,
+            providers,
+            ops_events,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderUsageHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+impl ProviderUsageHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        providers: Arc<ProviderRuntime>,
+        shutdown_tx: broadcast::Sender<()>,
+    ) -> Self {
+        Self {
+            data_root,
+            providers,
+            shutdown_tx,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn shutdown_tx(&self) -> &broadcast::Sender<()> {
+        &self.shutdown_tx
     }
 }
 

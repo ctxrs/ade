@@ -4,7 +4,7 @@ use ctx_provider_runtime::{
 };
 
 pub(crate) async fn list_providers(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderStatusHandle>,
     Query(query): Query<ProviderStatusRouteQuery>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
     providers
@@ -15,7 +15,7 @@ pub(crate) async fn list_providers(
 }
 
 pub(crate) async fn get_provider(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderStatusHandle>,
     Path(id): Path<String>,
     Query(query): Query<ProviderStatusRouteQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {

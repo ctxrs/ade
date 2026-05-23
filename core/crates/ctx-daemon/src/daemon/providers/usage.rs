@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -9,15 +9,15 @@ use ctx_provider_runtime::{
     ProviderUsageRouteError, ProviderUsageRouteQuery, ProviderUsageRouteSnapshot,
 };
 
-use crate::daemon::{DaemonState, ProvidersHandle};
+use crate::daemon::ProviderUsageHandle;
 
-impl ProvidersHandle {
+impl ProviderUsageHandle {
     pub async fn provider_usage_for_route(
         &self,
         provider_id: &str,
         query: ProviderUsageRouteQuery,
     ) -> Result<ProviderUsageRouteSnapshot, ProviderUsageRouteError> {
-        load_provider_usage(&self.state, provider_id, query.refresh())
+        load_provider_usage(self, provider_id, query.refresh())
             .await
             .map(Into::into)
             .map_err(provider_usage_route_error)
@@ -27,7 +27,7 @@ impl ProvidersHandle {
         &self,
         query: ProviderUsageRouteQuery,
     ) -> Result<CodexAccountsUsageRouteResponse, ProviderUsageRouteError> {
-        let entries = load_codex_accounts_usage(&self.state, query.refresh())
+        let entries = load_codex_accounts_usage(self, query.refresh())
             .await
             .map_err(provider_usage_route_error)?
             .into_iter()
@@ -42,18 +42,17 @@ fn provider_usage_route_error(error: anyhow::Error) -> ProviderUsageRouteError {
 }
 
 async fn provider_usage_env(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     provider_id: &str,
 ) -> Result<HashMap<String, String>> {
     if provider_id != CODEX_PROVIDER_ID {
         return Ok(HashMap::new());
     }
 
-    let mut env =
-        ctx_provider_accounts::codex_usage_env_for_active_account(&state.core.data_root).await?;
+    let mut env = ctx_provider_accounts::codex_usage_env_for_active_account(data_root).await?;
     let (cfg, config_error) =
         ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
+            data_root,
         )
         .await;
     if let Some(config_error) = config_error {
@@ -69,21 +68,21 @@ async fn provider_usage_env(
 }
 
 async fn load_provider_usage(
-    state: &Arc<DaemonState>,
+    handle: &ProviderUsageHandle,
     provider_id: &str,
     refresh: bool,
 ) -> Result<provider_usage::ProviderUsageSnapshot> {
-    let env = provider_usage_env(state, provider_id).await?;
+    let env = provider_usage_env(handle.data_root(), provider_id).await?;
     if !refresh {
-        if let Some(snapshot) = state
-            .providers
+        if let Some(snapshot) = handle
+            .providers()
             .provider_usage_cache_entry(provider_id)
             .await
         {
             return Ok(snapshot);
         }
     }
-    provider_usage::refresh_provider_usage_for(state.as_ref(), provider_id, env).await
+    provider_usage::refresh_provider_usage_for(handle, provider_id, env).await
 }
 
 struct CodexAccountUsageRecord {
@@ -119,14 +118,14 @@ fn codex_account_usage_error(error: String) -> provider_usage::ProviderUsageSnap
 }
 
 async fn load_codex_accounts_usage(
-    state: &Arc<DaemonState>,
+    handle: &ProviderUsageHandle,
     refresh: bool,
 ) -> Result<Vec<CodexAccountUsageRecord>> {
-    let registry = ctx_provider_accounts::load_codex_registry(&state.core.data_root).await?;
+    let registry = ctx_provider_accounts::load_codex_registry(handle.data_root()).await?;
     let active_id = registry.active_account_id.clone();
     let cached_active = if !refresh {
-        state
-            .providers
+        handle
+            .providers()
             .provider_usage_cache_entry(CODEX_PROVIDER_ID)
             .await
     } else {
@@ -134,7 +133,7 @@ async fn load_codex_accounts_usage(
     };
     let (cfg, config_error) =
         ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
+            handle.data_root(),
         )
         .await;
     if let Some(config_error) = config_error {
@@ -144,7 +143,7 @@ async fn load_codex_accounts_usage(
     let mut entries = Vec::new();
     for account in registry.accounts {
         let usage = match ctx_provider_accounts::codex_usage_env_for_account(
-            &state.core.data_root,
+            handle.data_root(),
             &account.id,
         )
         .await
