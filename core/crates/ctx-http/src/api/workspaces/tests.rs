@@ -67,6 +67,31 @@ async fn workspace_registry_and_harness_status_routes_return_seeded_workspace() 
 }
 
 #[tokio::test]
+async fn invalid_worktree_routes_return_bad_request() {
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/worktrees/not-a-worktree")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/worktrees/not-a-worktree/bootstrap/logs")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    daemon.request_shutdown();
+}
+
+#[tokio::test]
 async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
     let daemon = fixture.daemon();

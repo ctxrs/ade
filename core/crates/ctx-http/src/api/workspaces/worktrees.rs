@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn get_worktree(
-    State(workspaces): State<WorkspacesHandle>,
+    State(worktrees): State<WorkspaceWorktreeHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorktreeRouteResponse>, StatusCode> {
-    workspaces
+    worktrees
         .get_worktree_for_route_params(WorktreeRouteParams::new(id))
         .await
         .map(Json)
@@ -12,10 +12,10 @@ pub(in crate::api) async fn get_worktree(
 }
 
 pub(in crate::api) async fn get_worktree_bootstrap_logs(
-    State(workspaces): State<WorkspacesHandle>,
+    State(worktrees): State<WorkspaceWorktreeHandle>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
-    let download = workspaces
+    let download = worktrees
         .download_worktree_bootstrap_logs_for_route_params(WorktreeRouteParams::new(id))
         .await
         .map_err(|error| workspace_route_status(&error))?;

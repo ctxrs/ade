@@ -229,6 +229,9 @@ const {
   scanWorkspaceHarnessContainerDaemonImplementationRatchet,
   scanWorkspaceHarnessContainerHandleFieldRatchet,
   scanWorkspaceHarnessContainerRouteExtractorRatchet,
+  scanWorkspaceWorktreeDaemonImplementationRatchet,
+  scanWorkspaceWorktreeHandleFieldRatchet,
+  scanWorkspaceWorktreeRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -2862,6 +2865,155 @@ test("appstate guard rejects workspace harness container broad handle fields", (
         workspace_stores: ProtectedWorkspaceStoreLookup,
         daemon_url: String,
         harness: Arc<HarnessRuntimeManager>,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace worktree extraction outside allowed route", () => {
+  const violations = scanWorkspaceWorktreeRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceWorktreeHandle;
+      async fn handler(
+        State(state): State<WorkspaceWorktreeHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace worktree route extracts WorkspaceWorktreeHandle outside worktree route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceWorktreeRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+      contents: `
+        async fn get_worktree(
+          State(state): State<WorkspaceWorktreeHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace worktree broad route and router composition", () => {
+  const routeViolations = scanWorkspaceWorktreeRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+    contents: `
+      pub(in crate::api) async fn get_worktree(
+        State(workspaces): State<WorkspacesHandle>,
+        Path(id): Path<String>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "workspace worktree route uses broad workspace handle",
+  ]);
+
+  const routerViolations = scanWorkspaceWorktreeRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_worktree: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace worktree router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace worktree daemon facade broad seams", () => {
+  const violations = scanWorkspaceWorktreeDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/worktrees.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace worktree daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace worktree daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace worktree daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace worktree daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects legacy workspace worktree facades on broad handle", () => {
+  const violations = scanWorkspaceWorktreeDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn get_worktree_with_live_root(&self) {}
+        pub async fn get_worktree_bootstrap_log_path(&self) {}
+        pub async fn download_worktree_bootstrap_logs_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace worktree route facade remains on broad workspace handle",
+    "workspace worktree route facade remains on broad workspace handle",
+    "workspace worktree route facade remains on broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace worktree broad handle fields", () => {
+  const fieldViolations = scanWorkspaceWorktreeHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceWorktreeHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace worktree capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace worktree capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceWorktreeHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceWorktreeHandle {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        data_root: PathBuf,
       }
     `,
   });

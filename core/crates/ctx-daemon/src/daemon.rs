@@ -87,7 +87,7 @@ pub use handle::{
     WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle,
     WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

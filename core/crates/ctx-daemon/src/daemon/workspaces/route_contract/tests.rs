@@ -8,7 +8,7 @@ use super::common::{
 };
 use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
 use crate::test_support::TestDaemon;
-use ctx_core::ids::WorkspaceId;
+use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
@@ -21,6 +21,7 @@ use ctx_route_contracts::workspaces::{
     WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind, WorkspaceRouteParams,
     WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
+use ctx_store::WorktreeBootstrapResultUpdate;
 
 fn assert_same_json<T, U>(left: T, right: U)
 where
@@ -52,6 +53,58 @@ async fn create_route_contract_workspace_with_store(daemon: &TestDaemon, name: &
         .seed_workspace_for_test(name, &root, VcsKind::Git)
         .await
         .expect("seed workspace")
+}
+
+async fn create_route_contract_worktree(
+    daemon: &TestDaemon,
+    workspace: &Workspace,
+    name: &str,
+    bootstrap_log_path: Option<String>,
+) -> Worktree {
+    let root = daemon.data_root().join(name);
+    std::fs::create_dir_all(&root).expect("create worktree root");
+    let store = daemon
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            root.to_string_lossy().to_string(),
+            "base-sha".to_string(),
+            Some("main".to_string()),
+        )
+        .await
+        .expect("create worktree");
+    daemon
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("index worktree");
+    if bootstrap_log_path.is_some() {
+        let now = Utc::now();
+        store
+            .update_worktree_bootstrap_result(WorktreeBootstrapResultUpdate {
+                worktree_id: worktree.id,
+                status: WorktreeBootstrapStatus::Success,
+                started_at: now,
+                finished_at: now,
+                exit_code: Some(0),
+                timeout_sec: Some(30),
+                error: None,
+                log_path: bootstrap_log_path,
+                log_truncated: Some(false),
+                command: Some("true".to_string()),
+                script_path: None,
+            })
+            .await
+            .expect("update bootstrap result");
+    }
+    store
+        .get_worktree(worktree.id)
+        .await
+        .expect("load worktree")
+        .expect("worktree exists")
 }
 
 #[test]
@@ -189,6 +242,90 @@ fn workspace_route_error_helpers_preserve_status_classes() {
     );
     assert_eq!(harness_ensure.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(harness_ensure.message(), "bad container request");
+}
+
+#[tokio::test]
+async fn worktree_routes_reject_invalid_worktree_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_worktree();
+
+    let get_error = handle
+        .get_worktree_for_route_params(WorktreeRouteParams::new("not-a-worktree"))
+        .await
+        .unwrap_err();
+    assert_eq!(get_error.kind(), WorkspaceRouteErrorKind::BadRequest);
+
+    let log_error = handle
+        .download_worktree_bootstrap_logs_for_route_params(WorktreeRouteParams::new(
+            "not-a-worktree",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(log_error.kind(), WorkspaceRouteErrorKind::BadRequest);
+}
+
+#[tokio::test]
+async fn worktree_routes_map_missing_worktree_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_worktree();
+    let missing = WorktreeId::new().0.to_string();
+
+    let get_error = handle
+        .get_worktree_for_route_params(WorktreeRouteParams::new(missing.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(get_error.kind(), WorkspaceRouteErrorKind::NotFound);
+
+    let log_error = handle
+        .download_worktree_bootstrap_logs_for_route_params(WorktreeRouteParams::new(missing))
+        .await
+        .unwrap_err();
+    assert_eq!(log_error.kind(), WorkspaceRouteErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn worktree_bootstrap_logs_route_rejects_missing_blank_and_outside_paths() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace_with_store(&daemon, "worktree-logs").await;
+    let missing_path =
+        create_route_contract_worktree(&daemon, &workspace, "missing-log", None).await;
+    let blank_path =
+        create_route_contract_worktree(&daemon, &workspace, "blank-log", Some(" ".to_string()))
+            .await;
+    let outside_path = temp.path().join("outside-bootstrap.log");
+    std::fs::write(&outside_path, "outside").expect("write outside log");
+    let log_root = ctx_observability::logs::logs_dir(daemon.data_root()).join("worktree-bootstrap");
+    std::fs::create_dir_all(&log_root).expect("create bootstrap log root");
+    let outside_path = create_route_contract_worktree(
+        &daemon,
+        &workspace,
+        "outside-log",
+        Some(outside_path.to_string_lossy().to_string()),
+    )
+    .await;
+    let handle = daemon.handle().workspace_worktree();
+
+    for worktree in [missing_path, blank_path, outside_path] {
+        let error = handle
+            .download_worktree_bootstrap_logs_for_route_params(WorktreeRouteParams::new(
+                worktree.id.0.to_string(),
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), WorkspaceRouteErrorKind::NotFound);
+    }
 }
 
 #[tokio::test]

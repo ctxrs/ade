@@ -4,14 +4,12 @@ use std::sync::Arc;
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{SandboxBinding, VcsKind, Workspace, WorkspaceAttachment, Worktree};
 use ctx_observability::telemetry::TelemetryEvent;
-use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::Store;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
-use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
 use crate::daemon::{settings, WorkspaceStoreAccessError};
 
 mod active_snapshot_state;
@@ -120,58 +118,6 @@ impl WorkspacesHandle {
             .map_err(WorkspaceStoreAccessError::Unavailable)
     }
 
-    pub async fn get_worktree_with_live_root(
-        &self,
-        worktree_id: WorktreeId,
-    ) -> anyhow::Result<Option<Worktree>> {
-        let Some(store) = self.worktree_store_or_none(worktree_id).await? else {
-            return Ok(None);
-        };
-        let Some(mut worktree) = store.get_worktree(worktree_id).await? else {
-            return Ok(None);
-        };
-        worktree.root_path = self
-            .resolve_live_worktree_root(&worktree)
-            .await?
-            .to_string_lossy()
-            .to_string();
-        Ok(Some(worktree))
-    }
-
-    pub async fn get_worktree_bootstrap_log_path(
-        &self,
-        worktree_id: WorktreeId,
-    ) -> anyhow::Result<Option<String>> {
-        let Some(store) = self.worktree_store_or_none(worktree_id).await? else {
-            return Ok(None);
-        };
-        let Some(worktree) = store.get_worktree(worktree_id).await? else {
-            return Ok(None);
-        };
-        Ok(worktree.bootstrap_log_path)
-    }
-
-    pub async fn download_worktree_bootstrap_logs_for_route(
-        &self,
-        worktree_id: WorktreeId,
-    ) -> Result<TextRouteDownload, RouteFileDownloadError> {
-        let path = self
-            .get_worktree_bootstrap_log_path(worktree_id)
-            .await
-            .map_err(|_| RouteFileDownloadError::Internal)?
-            .ok_or(RouteFileDownloadError::NotFound)?;
-        if path.trim().is_empty() {
-            return Err(RouteFileDownloadError::NotFound);
-        }
-        let log_root = self.worktree_bootstrap_logs_root();
-        read_text_route_file(
-            std::path::Path::new(&path),
-            &log_root,
-            format!("worktree-bootstrap-{}.log", worktree_id.0),
-        )
-        .await
-    }
-
     pub(in crate::daemon) async fn store_for_workspace(
         &self,
         workspace_id: WorkspaceId,
@@ -184,25 +130,6 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
     ) -> Result<Store, WorkspaceStoreAccessError> {
         self.state.existing_workspace_store(workspace_id).await
-    }
-
-    async fn worktree_store_or_none(
-        &self,
-        worktree_id: WorktreeId,
-    ) -> anyhow::Result<Option<Store>> {
-        let Some(workspace_id) = self
-            .state
-            .global_store()
-            .get_workspace_id_for_worktree(worktree_id)
-            .await?
-        else {
-            return Ok(None);
-        };
-        match self.existing_workspace_store(workspace_id).await {
-            Ok(store) => Ok(Some(store)),
-            Err(WorkspaceStoreAccessError::NotFound) => Ok(None),
-            Err(WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
-        }
     }
 
     pub async fn record_workspace_registered(&self) {
@@ -296,21 +223,6 @@ impl WorkspacesHandle {
         worktree: &Worktree,
     ) -> Option<PathBuf> {
         managed_worktree_root(self.state.as_ref(), workspace, worktree)
-    }
-
-    pub async fn resolve_live_worktree_root(&self, worktree: &Worktree) -> anyhow::Result<PathBuf> {
-        Ok(
-            ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(
-                self.state.as_ref(),
-                worktree,
-            )
-            .await?
-            .live_worktree_root,
-        )
-    }
-
-    pub fn worktree_bootstrap_logs_root(&self) -> PathBuf {
-        ctx_observability::logs::logs_dir(&self.state.core.data_root).join("worktree-bootstrap")
     }
 
     pub async fn cleanup_task_worktrees(
