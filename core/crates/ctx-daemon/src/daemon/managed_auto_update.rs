@@ -24,7 +24,8 @@ impl ctx_update_service::ManagedDaemonAutoUpdateHooks for ManagedDaemonAutoUpdat
     }
 
     async fn daemon_is_idle(&self) -> Result<bool> {
-        Ok(daemon_turn_activity_summary(&self.state).await?.idle)
+        let activity = daemon_turn_activity_summary(&self.state).await?;
+        Ok(activity.queued_turn_count == 0 && activity.running_turn_count == 0)
     }
 }
 

@@ -116,7 +116,7 @@ pub(in crate::daemon) async fn begin_update_drain_parts(
                 return Err(BeginUpdateDrainError::ActivityUnavailable(error));
             }
         };
-    if !activity.idle {
+    if turn_activity_blocks_update_drain(&activity) {
         let _ = update_drain.release().await;
         return Err(BeginUpdateDrainError::Busy);
     }
@@ -254,6 +254,10 @@ pub async fn request_daemon_shutdown(
 
 fn sandbox_work_is_active(activity: &DaemonSandboxWorkActivitySummary) -> bool {
     activity.active
+}
+
+fn turn_activity_blocks_update_drain(activity: &DaemonTurnActivitySummary) -> bool {
+    activity.queued_turn_count > 0 || activity.running_turn_count > 0
 }
 
 async fn release_shutdown_drain_on_error(state: &DaemonState, acquired_drain: bool) {
