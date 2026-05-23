@@ -1,11 +1,11 @@
 use ctx_route_contracts::tasks::UpdateTaskTitleRouteRequest;
 
-use crate::daemon::TasksHandle;
+use crate::daemon::{TaskReadStateHandle, TaskSessionListingHandle, TaskTitleHandle};
 
 use super::common::{classified_internal_route_error, TaskRouteError, TaskRouteParams};
 use super::responses::{SessionRouteResponse, TaskRouteResponse};
 
-impl TasksHandle {
+impl TaskSessionListingHandle {
     pub async fn list_task_sessions_for_route(
         &self,
         params: TaskRouteParams,
@@ -14,14 +14,19 @@ impl TasksHandle {
         let sessions = self
             .list_task_sessions(task_id)
             .await
-            .map_err(|_| TaskRouteError::not_found("task not found"))?
+            .map_err(|error| {
+                let message = ctx_observability::logs::redact_sensitive(&error.to_string());
+                classified_internal_route_error(&error, message)
+            })?
             .ok_or_else(|| TaskRouteError::not_found("task not found"))?;
         Ok(sessions
             .into_iter()
             .map(SessionRouteResponse::from)
             .collect())
     }
+}
 
+impl TaskReadStateHandle {
     pub async fn mark_task_read_for_route(
         &self,
         params: TaskRouteParams,
@@ -47,7 +52,9 @@ impl TasksHandle {
             .ok_or_else(|| TaskRouteError::not_found("task not found"))?;
         Ok(TaskRouteResponse::from(task))
     }
+}
 
+impl TaskTitleHandle {
     pub async fn update_task_title_for_route(
         &self,
         params: TaskRouteParams,

@@ -155,10 +155,6 @@ impl DaemonHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
 
-    pub fn tasks(&self) -> TasksHandle {
-        TasksHandle::new(Arc::clone(&self.state))
-    }
-
     fn task_lifecycle_workspace_runtime(&self) -> Arc<TaskLifecycleWorkspaceRuntime> {
         let state = Arc::clone(&self.state);
         let cleanup_task_worktrees = Arc::new({
@@ -336,6 +332,81 @@ impl DaemonHandle {
             ),
             self.task_lifecycle_workspace_runtime(),
             self.task_lifecycle_effects(),
+        )
+    }
+
+    fn protected_workspace_store_lookup(&self) -> ProtectedWorkspaceStoreLookup {
+        ProtectedWorkspaceStoreLookup::new(
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.sessions),
+            Arc::clone(&self.state.transport.merge_queue),
+        )
+    }
+
+    fn task_store_lookup(&self) -> TaskStoreLookup {
+        TaskStoreLookup::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+        )
+    }
+
+    fn task_metadata_effects(&self) -> Arc<TaskMetadataEffects> {
+        let state = Arc::clone(&self.state);
+        let emit_workspace_task_delta = Arc::new({
+            let state = Arc::clone(&state);
+            move |task: Task, kind: TaskDeltaKind| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    let _ = state.emit_workspace_task_delta(task, kind).await;
+                }) as TaskMetadataFuture<_>
+            }
+        });
+        let emit_workspace_task_upsert = Arc::new({
+            let state = Arc::clone(&state);
+            move |task_id: TaskId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
+                    as TaskMetadataFuture<_>
+            }
+        });
+        TaskMetadataEffects::new(emit_workspace_task_delta, emit_workspace_task_upsert)
+    }
+
+    pub fn task_listing(&self) -> TaskListingHandle {
+        let snapshot = Arc::clone(&self.state.workspaces.workspace_active_snapshot);
+        let archived_rev_loader: TaskArchivedRevLoader = Arc::new(move |workspace_id| {
+            let snapshot = Arc::clone(&snapshot);
+            Box::pin(async move {
+                let (_, archived_rev) = snapshot.snapshot_state(workspace_id).await;
+                archived_rev
+            })
+        });
+        TaskListingHandle::new(self.protected_workspace_store_lookup(), archived_rev_loader)
+    }
+
+    pub fn task_session_listing(&self) -> TaskSessionListingHandle {
+        TaskSessionListingHandle::new(self.task_store_lookup())
+    }
+
+    pub fn task_read_state(&self) -> TaskReadStateHandle {
+        TaskReadStateHandle::new(self.task_store_lookup(), self.task_metadata_effects())
+    }
+
+    pub fn task_title(&self) -> TaskTitleHandle {
+        let web_sessions = Arc::clone(&self.state.transport.web_sessions);
+        let close_web_sessions_for_task: TaskCloseWebSessionsForTask =
+            Arc::new(move |session_ids, worktree_ids| {
+                let web_sessions = Arc::clone(&web_sessions);
+                Box::pin(async move {
+                    web_sessions
+                        .close_for_task(&session_ids, &worktree_ids)
+                        .await
+                })
+            });
+        TaskTitleHandle::new(
+            self.task_store_lookup(),
+            self.task_metadata_effects(),
+            close_web_sessions_for_task,
         )
     }
 
@@ -1297,6 +1368,15 @@ impl ProtectedWorkspaceStoreLookup {
 
 type TaskAdmissionFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type TaskLifecycleFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub(in crate::daemon) type TaskMetadataFuture<T> =
+    Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub(in crate::daemon) type TaskArchivedRevLoader =
+    Arc<dyn Fn(WorkspaceId) -> TaskMetadataFuture<i64> + Send + Sync>;
+pub(in crate::daemon) type TaskCloseWebSessionsForTask = Arc<
+    dyn Fn(HashSet<String>, HashSet<String>) -> TaskMetadataFuture<anyhow::Result<usize>>
+        + Send
+        + Sync,
+>;
 type TaskAdmissionModelCatalogLoader = Arc<
     dyn Fn(
             Workspace,
@@ -1306,6 +1386,181 @@ type TaskAdmissionModelCatalogLoader = Arc<
         + Send
         + Sync,
 >;
+
+#[derive(Clone)]
+pub struct TaskListingHandle {
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    archived_rev_loader: TaskArchivedRevLoader,
+}
+
+impl TaskListingHandle {
+    pub(in crate::daemon) fn new(
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        archived_rev_loader: TaskArchivedRevLoader,
+    ) -> Self {
+        Self {
+            workspace_stores,
+            archived_rev_loader,
+        }
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn load_archived_rev(&self, workspace_id: WorkspaceId) -> i64 {
+        (self.archived_rev_loader)(workspace_id).await
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct TaskStoreLookup {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+impl TaskStoreLookup {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+        }
+    }
+
+    pub(in crate::daemon) async fn task_store_or_none(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<Option<Store>> {
+        let Some(workspace_id) = self.global_store.get_workspace_id_for_task(task_id).await? else {
+            return Ok(None);
+        };
+        match self
+            .workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+        {
+            Ok(store) => Ok(Some(store)),
+            Err(crate::daemon::WorkspaceStoreAccessError::NotFound) => Ok(None),
+            Err(crate::daemon::WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskSessionListingHandle {
+    lookup: TaskStoreLookup,
+}
+
+impl TaskSessionListingHandle {
+    pub(in crate::daemon) fn new(lookup: TaskStoreLookup) -> Self {
+        Self { lookup }
+    }
+
+    pub(in crate::daemon) async fn task_store_or_none(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<Option<Store>> {
+        self.lookup.task_store_or_none(task_id).await
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskReadStateHandle {
+    lookup: TaskStoreLookup,
+    effects: Arc<TaskMetadataEffects>,
+}
+
+impl TaskReadStateHandle {
+    pub(in crate::daemon) fn new(
+        lookup: TaskStoreLookup,
+        effects: Arc<TaskMetadataEffects>,
+    ) -> Self {
+        Self { lookup, effects }
+    }
+
+    pub(in crate::daemon) async fn task_store_or_none(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<Option<Store>> {
+        self.lookup.task_store_or_none(task_id).await
+    }
+
+    pub(in crate::daemon) fn effects(&self) -> &TaskMetadataEffects {
+        self.effects.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn with_effects_for_test(
+        &self,
+        effects: Arc<TaskMetadataEffects>,
+    ) -> Self {
+        Self {
+            lookup: self.lookup.clone(),
+            effects,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskTitleHandle {
+    lookup: TaskStoreLookup,
+    effects: Arc<TaskMetadataEffects>,
+    close_web_sessions_for_task: TaskCloseWebSessionsForTask,
+}
+
+impl TaskTitleHandle {
+    pub(in crate::daemon) fn new(
+        lookup: TaskStoreLookup,
+        effects: Arc<TaskMetadataEffects>,
+        close_web_sessions_for_task: TaskCloseWebSessionsForTask,
+    ) -> Self {
+        Self {
+            lookup,
+            effects,
+            close_web_sessions_for_task,
+        }
+    }
+
+    pub(in crate::daemon) async fn task_store_or_none(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<Option<Store>> {
+        self.lookup.task_store_or_none(task_id).await
+    }
+
+    pub(in crate::daemon) fn effects(&self) -> &TaskMetadataEffects {
+        self.effects.as_ref()
+    }
+
+    pub(in crate::daemon) async fn close_web_sessions_for_task(
+        &self,
+        session_ids: HashSet<String>,
+        worktree_ids: HashSet<String>,
+    ) -> anyhow::Result<usize> {
+        (self.close_web_sessions_for_task)(session_ids, worktree_ids).await
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn with_effects_and_close_for_test(
+        &self,
+        effects: Arc<TaskMetadataEffects>,
+        close_web_sessions_for_task: TaskCloseWebSessionsForTask,
+    ) -> Self {
+        Self {
+            lookup: self.lookup.clone(),
+            effects,
+            close_web_sessions_for_task,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TaskLifecycleHandle {
@@ -1651,6 +1906,36 @@ impl TaskLifecycleWorkspaceRuntime {
         task_id: TaskId,
     ) -> anyhow::Result<()> {
         (self.ensure_task_commit_hook)(workspace.clone(), worktree.clone(), task_id).await
+    }
+}
+
+pub(in crate::daemon) struct TaskMetadataEffects {
+    emit_workspace_task_delta:
+        Arc<dyn Fn(Task, TaskDeltaKind) -> TaskMetadataFuture<()> + Send + Sync>,
+    emit_workspace_task_upsert:
+        Arc<dyn Fn(TaskId) -> TaskMetadataFuture<anyhow::Result<()>> + Send + Sync>,
+}
+
+impl TaskMetadataEffects {
+    pub(in crate::daemon) fn new(
+        emit_workspace_task_delta: Arc<
+            dyn Fn(Task, TaskDeltaKind) -> TaskMetadataFuture<()> + Send + Sync,
+        >,
+        emit_workspace_task_upsert: Arc<
+            dyn Fn(TaskId) -> TaskMetadataFuture<anyhow::Result<()>> + Send + Sync,
+        >,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            emit_workspace_task_delta,
+            emit_workspace_task_upsert,
+        })
+    }
+
+    pub(in crate::daemon) async fn publish_task_updated(&self, task_id: TaskId, task: Task) {
+        (self.emit_workspace_task_delta)(task, TaskDeltaKind::Updated).await;
+        if let Err(error) = (self.emit_workspace_task_upsert)(task_id).await {
+            tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {error:?}");
+        }
     }
 }
 
@@ -2573,7 +2858,6 @@ macro_rules! domain_handle_with_accessor {
 }
 
 domain_handle_with_accessor!(SessionsHandle, sessions);
-domain_handle_with_accessor!(TasksHandle, tasks);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);
 domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
 domain_handle_with_accessor!(ProvidersHandle, providers);

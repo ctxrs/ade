@@ -2,12 +2,12 @@ use ctx_route_contracts::tasks::{
     ListWorkspaceArchivedTasksRouteParams, ListWorkspaceTasksRouteParams,
 };
 
-use crate::daemon::TasksHandle;
+use crate::daemon::TaskListingHandle;
 
 use super::common::{task_route_error_from_workspace_store, TaskRouteError};
 use super::responses::{TaskRouteResponse, WorkspaceArchivedPageRouteResponse};
 
-impl TasksHandle {
+impl TaskListingHandle {
     pub async fn list_workspace_tasks_for_route(
         &self,
         params: ListWorkspaceTasksRouteParams,

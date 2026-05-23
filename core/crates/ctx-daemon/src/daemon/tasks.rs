@@ -4,7 +4,6 @@ mod lifecycle;
 mod metadata;
 mod read_models;
 mod route_contract;
-mod store_bridge;
 
 pub use create_session::{CreateTaskSessionInput, DefaultSessionSeed, TaskSessionCreateError};
 pub use create_task::{CreateTaskInput, TaskCreateError};

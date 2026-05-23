@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(in crate::api) async fn list_workspace_tasks(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskListingHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TaskRouteResponse>>, StatusCode> {
     let tasks = tasks
@@ -12,7 +12,7 @@ pub(in crate::api) async fn list_workspace_tasks(
 }
 
 pub(in crate::api) async fn list_workspace_archived_task_summaries(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskListingHandle>,
     Path(id): Path<String>,
     Query(query): Query<ListWorkspaceArchivedTasksRouteRequest>,
 ) -> Result<Json<WorkspaceArchivedPageRouteResponse>, StatusCode> {
@@ -26,7 +26,7 @@ pub(in crate::api) async fn list_workspace_archived_task_summaries(
 }
 
 pub(in crate::api) async fn list_task_sessions(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskSessionListingHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<SessionRouteResponse>>, StatusCode> {
     let sessions = tasks

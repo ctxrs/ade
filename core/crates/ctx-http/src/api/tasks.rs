@@ -27,7 +27,8 @@ use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
 use ctx_daemon::daemon::{
-    TaskCreationHandle, TaskLifecycleHandle, TaskSessionAdmissionHandle, TasksHandle,
+    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
+    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
 };
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
@@ -40,8 +41,20 @@ use ctx_route_contracts::tasks::{
 };
 
 #[cfg(test)]
-pub(super) fn task_api_task_state(daemon: &TestDaemon) -> State<TasksHandle> {
-    State(daemon.handle().tasks())
+pub(super) fn task_api_task_session_listing_state(
+    daemon: &TestDaemon,
+) -> State<TaskSessionListingHandle> {
+    State(daemon.handle().task_session_listing())
+}
+
+#[cfg(test)]
+pub(super) fn task_api_task_read_state_state(daemon: &TestDaemon) -> State<TaskReadStateHandle> {
+    State(daemon.handle().task_read_state())
+}
+
+#[cfg(test)]
+pub(super) fn task_api_task_title_state(daemon: &TestDaemon) -> State<TaskTitleHandle> {
+    State(daemon.handle().task_title())
 }
 
 #[cfg(test)]

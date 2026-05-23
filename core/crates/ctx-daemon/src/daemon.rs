@@ -80,9 +80,9 @@ pub use handle::{
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
     RequestBaseHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
-    TaskSessionAdmissionHandle, TasksHandle, TelemetryHandle, TransportHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
-    WorkspacesHandle,
+    TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
+    TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
+    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

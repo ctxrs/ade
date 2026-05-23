@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(in crate::api) async fn mark_task_read(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskReadStateHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<TaskRouteResponse>, StatusCode> {
     let task = tasks
@@ -12,7 +12,7 @@ pub(in crate::api) async fn mark_task_read(
 }
 
 pub(in crate::api) async fn mark_task_unread(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskReadStateHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<TaskRouteResponse>, StatusCode> {
     let task = tasks

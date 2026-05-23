@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn update_task_title(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskTitleHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateTaskTitleRouteRequest>,
 ) -> Result<Json<TaskRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

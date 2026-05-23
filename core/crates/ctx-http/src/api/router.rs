@@ -12,10 +12,10 @@ use ctx_daemon::daemon::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
-    SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
-    TaskSessionAdmissionHandle, TasksHandle, TelemetryHandle, TransportHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
-    WorkspacesHandle,
+    SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
+    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -93,10 +93,13 @@ pub struct RouteHandles {
     pub(in crate::api) mobile_runtime: MobileRuntimeHandle,
     pub(in crate::api) mobile_secure_proxy: MobileSecureProxyHandle,
     pub(in crate::api) sessions: SessionsHandle,
-    pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) task_creation: TaskCreationHandle,
     pub(in crate::api) task_lifecycle: TaskLifecycleHandle,
+    pub(in crate::api) task_listing: TaskListingHandle,
+    pub(in crate::api) task_read_state: TaskReadStateHandle,
     pub(in crate::api) task_session_admission: TaskSessionAdmissionHandle,
+    pub(in crate::api) task_session_listing: TaskSessionListingHandle,
+    pub(in crate::api) task_title: TaskTitleHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
@@ -135,10 +138,13 @@ impl RouteHandles {
             mobile_runtime: handle.mobile_runtime(),
             mobile_secure_proxy: handle.mobile_secure_proxy(),
             sessions: handle.sessions(),
-            tasks: handle.tasks(),
             task_creation: handle.task_creation(),
             task_lifecycle: handle.task_lifecycle(),
+            task_listing: handle.task_listing(),
+            task_read_state: handle.task_read_state(),
             task_session_admission: handle.task_session_admission(),
+            task_session_listing: handle.task_session_listing(),
+            task_title: handle.task_title(),
             workspaces: handle.workspaces(),
             workspace_stream: handle.workspace_stream(),
             provider_accounts: handle.provider_accounts(),
@@ -182,10 +188,13 @@ impl_route_state_extractors! {
     MobileRuntimeHandle, mobile_runtime;
     MobileSecureProxyHandle, mobile_secure_proxy;
     SessionsHandle, sessions;
-    TasksHandle, tasks;
     TaskCreationHandle, task_creation;
     TaskLifecycleHandle, task_lifecycle;
+    TaskListingHandle, task_listing;
+    TaskReadStateHandle, task_read_state;
     TaskSessionAdmissionHandle, task_session_admission;
+    TaskSessionListingHandle, task_session_listing;
+    TaskTitleHandle, task_title;
     WorkspacesHandle, workspaces;
     WorkspaceStreamHandle, workspace_stream;
     ProviderAccountsHandle, provider_accounts;

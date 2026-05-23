@@ -211,6 +211,9 @@ const {
   scanTaskLifecycleDaemonImplementationRatchet,
   scanTaskLifecycleHandleFieldRatchet,
   scanTaskLifecycleHandleRatchet,
+  scanTaskReadMetadataDaemonImplementationRatchet,
+  scanTaskReadMetadataHandleFieldRatchet,
+  scanTaskReadMetadataHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -1168,6 +1171,79 @@ test("appstate guard rejects task lifecycle broad daemon seams", () => {
   assert.deepEqual(fieldViolations, [
     "task lifecycle capability stores broad handle or daemon state",
     "task creation cleanup reconstructs broad tasks handle",
+  ]);
+});
+
+test("appstate guard rejects task read metadata broad route handles", () => {
+  const handlerViolations = scanTaskReadMetadataHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/tasks/handlers/listing.rs",
+    contents: `
+      async fn list_task_sessions(
+        State(tasks): State<TasksHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "task read metadata route extracts broad tasks handle",
+  ]);
+
+  const routerViolations = scanTaskReadMetadataHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      use ctx_daemon::daemon::TasksHandle;
+      pub(in crate::api) tasks: TasksHandle,
+      impl_route_state_extractors! {
+        TasksHandle, tasks;
+      }
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { tasks: handle.tasks() }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "task read metadata route exposes broad tasks handle",
+  ]));
+});
+
+test("appstate guard rejects task read metadata broad daemon seams", () => {
+  const daemonViolations = scanTaskReadMetadataDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/metadata.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, TasksHandle, SessionsHandle, ProvidersHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+      impl TasksHandle {
+        fn update_title(handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "task read metadata daemon implementation uses broad daemon handle",
+    "task read metadata daemon implementation uses broad task/session/provider/workspace handle",
+    "task read metadata daemon implementation accepts daemon state",
+  ]));
+
+  const fieldViolations = scanTaskReadMetadataHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct TaskReadStateHandle {
+        tasks: TasksHandle,
+      }
+      pub struct TaskTitleHandle {
+        state: Arc<DaemonState>,
+      }
+      fn rebuild(&self) {
+        let tasks = TasksHandle::new(Arc::clone(&self.state));
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "task read metadata capability stores broad handle or daemon state",
+    "task read metadata capability stores broad handle or daemon state",
+    "task read metadata reconstructs broad tasks handle",
   ]);
 });
 

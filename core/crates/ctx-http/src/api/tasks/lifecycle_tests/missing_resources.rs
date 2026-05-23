@@ -24,21 +24,23 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
 }
 
 async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task_id: TaskId) {
-    let tasks = task_api_task_state(state);
+    let task_sessions = task_api_task_session_listing_state(state);
+    let task_read = task_api_task_read_state_state(state);
+    let task_title = task_api_task_title_state(state);
     let lifecycle = task_api_lifecycle_state(state);
 
     let task_sessions_status =
-        list_task_sessions(tasks.clone(), Path(missing_task_id.0.to_string()))
+        list_task_sessions(task_sessions.clone(), Path(missing_task_id.0.to_string()))
             .await
             .expect_err("missing task sessions should fail");
     assert_eq!(task_sessions_status, StatusCode::NOT_FOUND);
 
-    let read_status = mark_task_read(tasks.clone(), Path(missing_task_id.0.to_string()))
+    let read_status = mark_task_read(task_read.clone(), Path(missing_task_id.0.to_string()))
         .await
         .expect_err("missing task read should fail");
     assert_eq!(read_status, StatusCode::NOT_FOUND);
 
-    let unread_status = mark_task_unread(tasks.clone(), Path(missing_task_id.0.to_string()))
+    let unread_status = mark_task_unread(task_read.clone(), Path(missing_task_id.0.to_string()))
         .await
         .expect_err("missing task unread should fail");
     assert_eq!(unread_status, StatusCode::NOT_FOUND);
@@ -46,7 +48,7 @@ async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task
     let title_req: UpdateTaskTitleRouteRequest =
         serde_json::from_value(serde_json::json!({"title": "renamed"})).expect("title request");
     let (title_status, Json(title_body)) = update_task_title(
-        tasks.clone(),
+        task_title.clone(),
         Path(missing_task_id.0.to_string()),
         Json(title_req),
     )

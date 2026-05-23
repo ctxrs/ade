@@ -232,6 +232,13 @@ const taskLifecycleDaemonImplementationRoots = [
   "core/crates/ctx-daemon/src/daemon/tasks/lifecycle.rs",
 ];
 
+const taskReadMetadataDaemonImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/tasks/route_contract/listing.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/route_contract/lifecycle.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/read_models.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/metadata.rs",
+];
+
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
   "core/crates/ctx-http/src/api/run_archive/",
@@ -7529,14 +7536,142 @@ function scanTaskLifecycleHandleFieldRatchet({ filePath, contents }) {
   ) {
     const line = contents.slice(0, backdoor.index).split(/\r?\n/u).length;
     const text = lines[line - 1]?.trim() ?? backdoor[0];
-    if (text === "TasksHandle::new(Arc::clone(&self.state))") {
-      continue;
-    }
     violations.push({
       filePath,
       line,
       name: "task creation cleanup reconstructs broad tasks handle",
       text,
+    });
+  }
+  return violations;
+}
+
+function scanTaskReadMetadataHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (filePath.startsWith("core/crates/ctx-http/src/api/tasks")) {
+    const tasksHandleRegex = /\bTasksHandle\b|State\s*<\s*TasksHandle\s*>/gu;
+    for (
+      let match = tasksHandleRegex.exec(contents);
+      match;
+      match = tasksHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task read metadata route extracts broad tasks handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routerBackdoorRegex =
+      /\bTasksHandle\b|\btasks\s*:\s*TasksHandle\b|\bTasksHandle\s*,\s*tasks\s*;|\bhandle\.tasks\s*\(\s*\)/gu;
+    for (
+      let match = routerBackdoorRegex.exec(contents);
+      match;
+      match = routerBackdoorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task read metadata route exposes broad tasks handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTaskReadMetadataDaemonImplementationRatchet({ filePath, contents }) {
+  if (
+    !taskReadMetadataDaemonImplementationRoots.some((root) => filePath.startsWith(root))
+  ) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "task read metadata daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "task read metadata daemon implementation uses broad task/session/provider/workspace handle",
+      regex: /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle)\b/gu,
+    },
+    {
+      name: "task read metadata daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTaskReadMetadataHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const handleNames = [
+    "TaskListingHandle",
+    "TaskSessionListingHandle",
+    "TaskReadStateHandle",
+    "TaskTitleHandle",
+  ];
+  for (const handleName of handleNames) {
+    const structRegex = new RegExp(
+      `pub\\s+struct\\s+${handleName}\\s*\\{[\\s\\S]*?\\n\\s*\\}`,
+      "u",
+    );
+    const match = structRegex.exec(contents);
+    if (!match) {
+      continue;
+    }
+    const broadFieldRegex =
+      /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(match[0]);
+      broad;
+      broad = broadFieldRegex.exec(match[0])
+    ) {
+      const offset = match.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task read metadata capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  const tasksHandleConstructionRegex = /\bTasksHandle::new\s*\(/gu;
+  for (
+    let match = tasksHandleConstructionRegex.exec(contents);
+    match;
+    match = tasksHandleConstructionRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "task read metadata reconstructs broad tasks handle",
+      text: lines[line - 1]?.trim() ?? match[0],
     });
   }
   return violations;
@@ -7617,6 +7752,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTaskReadMetadataHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -7659,6 +7798,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskLifecycleHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskReadMetadataHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7725,6 +7868,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskLifecycleDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskReadMetadataDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8341,6 +8488,9 @@ module.exports = {
   scanTaskLifecycleDaemonImplementationRatchet,
   scanTaskLifecycleHandleFieldRatchet,
   scanTaskLifecycleHandleRatchet,
+  scanTaskReadMetadataDaemonImplementationRatchet,
+  scanTaskReadMetadataHandleFieldRatchet,
+  scanTaskReadMetadataHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
