@@ -26,6 +26,7 @@ mod harness_container;
 mod hydration;
 mod management;
 mod model_preferences;
+mod prompt_bootstrap_config;
 mod retry;
 mod route_config;
 mod route_contract;

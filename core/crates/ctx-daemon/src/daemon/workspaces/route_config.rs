@@ -8,18 +8,15 @@ use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
 mod management_config;
 mod prompt_and_model;
 
-pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
-    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
-};
 pub use ctx_route_contracts::workspaces::{
     CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
     WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
+};
+pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, WorkspaceExecutionConfigRouteSnapshot,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse,
 };
 pub(in crate::daemon::workspaces) use management_config::{
     merge_queue_config_route_response, merge_queue_config_update,

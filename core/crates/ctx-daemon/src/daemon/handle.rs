@@ -123,6 +123,10 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_prompt_bootstrap_config(&self) -> WorkspacePromptBootstrapConfigHandle {
+        WorkspacePromptBootstrapConfigHandle::new(self.protected_workspace_store_lookup())
+    }
+
     pub fn dictation(&self) -> DictationHandle {
         DictationHandle::new(self.state.global_store().clone())
     }
@@ -1315,6 +1319,26 @@ impl WorkspaceOrgPolicyHandle {
 
     pub(in crate::daemon) fn global_store(&self) -> &Store {
         &self.global_store
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspacePromptBootstrapConfigHandle {
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+impl WorkspacePromptBootstrapConfigHandle {
+    pub(in crate::daemon) fn new(workspace_stores: ProtectedWorkspaceStoreLookup) -> Self {
+        Self { workspace_stores }
     }
 
     pub(in crate::daemon) async fn existing_workspace_store(

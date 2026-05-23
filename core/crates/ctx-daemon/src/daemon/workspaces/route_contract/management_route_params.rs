@@ -3,10 +3,9 @@ use ctx_route_contracts::workspaces::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceAttachmentRouteResponse,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigRouteSnapshot,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
-    WorkspaceRouteParams, WorkspaceWorktreeBootstrapConfigRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteParams,
 };
 
 impl WorkspacesHandle {
@@ -103,24 +102,6 @@ impl WorkspacesHandle {
     ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
         self.update_workspace_execution_config_for_request(workspace_id, request)
-            .await
-    }
-
-    pub async fn worktree_bootstrap_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-    ) -> Result<WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.worktree_bootstrap_config_for_route(workspace_id).await
-    }
-
-    pub async fn update_worktree_bootstrap_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-        request: UpdateWorktreeBootstrapConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.update_worktree_bootstrap_config_for_route(workspace_id, request)
             .await
     }
 }

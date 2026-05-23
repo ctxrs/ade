@@ -238,6 +238,12 @@ const workspaceOrgPolicyRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs",
 ]);
 
+const workspacePromptBootstrapConfigRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
+]);
+
 const workspaceStreamActiveDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/access.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/cursor_acceptance.rs",
@@ -9047,6 +9053,164 @@ function scanWorkspaceOrgPolicyHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (!workspacePromptBootstrapConfigRouteExtractorAllowedPaths.has(filePath)) {
+    const extractorRegex =
+      /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspacePromptBootstrapConfigHandle\s*>/gu;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace prompt/bootstrap config route extracts WorkspacePromptBootstrapConfigHandle outside prompt/bootstrap routes",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspacePromptBootstrapConfigRouteExtractorAllowedPaths.has(filePath)) {
+    const broadRegex = /\bWorkspacesHandle\b/gu;
+    for (let match = broadRegex.exec(contents); match; match = broadRegex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace prompt/bootstrap config route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_prompt_bootstrap_config\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace prompt/bootstrap config router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
+  filePath,
+  contents,
+}) {
+  if (
+    filePath !==
+    "core/crates/ctx-daemon/src/daemon/workspaces/prompt_bootstrap_config.rs"
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace prompt/bootstrap config daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace prompt/bootstrap config daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace prompt/bootstrap config daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace prompt/bootstrap config daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspacePromptBootstrapConfigHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|TransportHandle|ExecutionHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspacePromptBootstrapConfigHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace prompt/bootstrap config capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace prompt/bootstrap config capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -9228,6 +9392,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -9310,6 +9478,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceOrgPolicyHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -9412,6 +9584,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceOrgPolicyDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10034,6 +10210,9 @@ module.exports = {
   scanWorkspaceOrgPolicyDaemonImplementationRatchet,
   scanWorkspaceOrgPolicyHandleFieldRatchet,
   scanWorkspaceOrgPolicyRouteExtractorRatchet,
+  scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
+  scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
+  scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,

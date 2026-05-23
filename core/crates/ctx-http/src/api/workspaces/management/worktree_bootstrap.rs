@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn get_worktree_bootstrap_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(config): State<WorkspacePromptBootstrapConfigHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceWorktreeBootstrapConfigRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    config
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map_err(workspace_route_api_error)
@@ -12,11 +12,11 @@ pub(in crate::api) async fn get_worktree_bootstrap_config(
 }
 
 pub(in crate::api) async fn update_worktree_bootstrap_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(config): State<WorkspacePromptBootstrapConfigHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorktreeBootstrapConfigRequest>,
 ) -> Result<Json<WorkspaceConfigUpdateResult>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    config
         .update_worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(id), req)
         .await
         .map_err(workspace_route_api_error)

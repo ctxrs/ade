@@ -5,15 +5,15 @@ use axum::Json;
 use crate::api::errors::ApiErrorResp;
 use crate::api::workspaces::{
     workspace_route_api_error, SubagentSystemPromptConfigRouteResponse,
-    UpdateSubagentSystemPromptConfigRouteRequest, WorkspacePromptConfigRouteParams,
-    WorkspacesHandle,
+    UpdateSubagentSystemPromptConfigRouteRequest, WorkspacePromptBootstrapConfigHandle,
+    WorkspacePromptConfigRouteParams,
 };
 
 pub(in crate::api) async fn get_subagent_system_prompt(
-    State(workspaces): State<WorkspacesHandle>,
+    State(config): State<WorkspacePromptBootstrapConfigHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SubagentSystemPromptConfigRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    config
         .subagent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(id))
         .await
         .map_err(workspace_route_api_error)
@@ -21,11 +21,11 @@ pub(in crate::api) async fn get_subagent_system_prompt(
 }
 
 pub(in crate::api) async fn update_subagent_system_prompt(
-    State(workspaces): State<WorkspacesHandle>,
+    State(config): State<WorkspacePromptBootstrapConfigHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateSubagentSystemPromptConfigRouteRequest>,
 ) -> Result<Json<SubagentSystemPromptConfigRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    config
         .update_subagent_system_prompt_config_for_route(
             WorkspacePromptConfigRouteParams::new(id),
             req,

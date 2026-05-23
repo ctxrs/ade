@@ -217,6 +217,9 @@ const {
   scanWorkspaceOrgPolicyDaemonImplementationRatchet,
   scanWorkspaceOrgPolicyHandleFieldRatchet,
   scanWorkspaceOrgPolicyRouteExtractorRatchet,
+  scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
+  scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
+  scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
@@ -2297,6 +2300,146 @@ test("appstate guard rejects workspace org policy broad handle fields", () => {
     contents: `
       pub struct WorkspaceOrgPolicyHandle {
         global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace prompt/bootstrap extraction outside allowed routes", () => {
+  const violations = scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacePromptBootstrapConfigHandle;
+      async fn handler(
+        State(state): State<WorkspacePromptBootstrapConfigHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace prompt/bootstrap config route extracts WorkspacePromptBootstrapConfigHandle outside prompt/bootstrap routes",
+  ]);
+
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+    "core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs",
+    "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
+  ]) {
+    assert.deepEqual(
+      scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({
+        filePath,
+        contents: `
+          async fn handler(
+            State(state): State<WorkspacePromptBootstrapConfigHandle>,
+          ) {}
+        `,
+      }),
+      [],
+    );
+  }
+});
+
+test("appstate guard rejects workspace prompt/bootstrap broad route and router composition", () => {
+  const routeViolations = scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes(
+      "workspace prompt/bootstrap config route uses broad workspace handle",
+    ),
+  );
+
+  const routerViolations = scanWorkspacePromptBootstrapConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_prompt_bootstrap_config: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace prompt/bootstrap config router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace prompt/bootstrap daemon facade broad seams", () => {
+  const violations = scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/prompt_bootstrap_config.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "workspace prompt/bootstrap config daemon facade uses broad daemon state",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace prompt/bootstrap config daemon facade uses broad daemon handle",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace prompt/bootstrap config daemon facade uses broad workspace handle",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace prompt/bootstrap config daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects workspace prompt/bootstrap broad handle fields", () => {
+  const fieldViolations = scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspacePromptBootstrapConfigHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace prompt/bootstrap config capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace prompt/bootstrap config capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspacePromptBootstrapConfigHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
       }
     `,

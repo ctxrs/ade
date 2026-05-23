@@ -14,9 +14,11 @@ use ctx_core::models::{
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
 use ctx_route_contracts::workspaces::{
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorktreeBootstrapConfigRequest,
     WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery, WorkspaceRouteErrorKind,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery,
+    WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind, WorkspaceRouteParams,
+    WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 
 fn assert_same_json<T, U>(left: T, right: U)
@@ -28,6 +30,18 @@ where
         serde_json::to_value(left).unwrap(),
         serde_json::to_value(right).unwrap()
     );
+}
+
+async fn create_route_contract_workspace(daemon: &TestDaemon, name: &str) -> Workspace {
+    daemon
+        .global_store()
+        .create_workspace(
+            name.to_string(),
+            daemon.data_root().join(name).to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace")
 }
 
 #[test]
@@ -243,11 +257,152 @@ async fn worktree_bootstrap_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.handle().workspaces();
+    let handle = daemon.handle().workspace_prompt_bootstrap_config();
     let error = handle
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
         .unwrap_err();
     assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn prompt_config_route_params_reject_invalid_workspace_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_prompt_bootstrap_config();
+    let error = handle
+        .agent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(
+            "not-a-workspace",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn prompt_bootstrap_config_routes_treat_deleting_workspace_as_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "deleting-prompt-bootstrap").await;
+    daemon.stores().begin_workspace_delete(workspace.id).await;
+    let handle = daemon.handle().workspace_prompt_bootstrap_config();
+
+    let bootstrap_error = handle
+        .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(bootstrap_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(bootstrap_error.message(), "workspace not found");
+
+    let prompt_error = handle
+        .agent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(prompt_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(prompt_error.message(), "workspace not found");
+    daemon.stores().finish_workspace_delete(workspace.id).await;
+}
+
+#[tokio::test]
+async fn prompt_bootstrap_config_routes_map_unavailable_workspace_store_to_internal() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "unavailable-prompt-bootstrap").await;
+    daemon
+        .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
+        .await
+        .expect("block workspace store");
+    let handle = daemon.handle().workspace_prompt_bootstrap_config();
+
+    let bootstrap_error = handle
+        .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(bootstrap_error.kind(), WorkspaceRouteErrorKind::Internal);
+
+    let prompt_error = handle
+        .agent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(prompt_error.kind(), WorkspaceRouteErrorKind::Internal);
+}
+
+#[tokio::test]
+async fn prompt_bootstrap_config_routes_preserve_malformed_runtime_settings_statuses() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "invalid-prompt-bootstrap").await;
+    daemon
+        .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{ not json")
+        .await
+        .expect("seed invalid runtime settings");
+    let handle = daemon.handle().workspace_prompt_bootstrap_config();
+
+    let bootstrap_get_error = handle
+        .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        bootstrap_get_error.kind(),
+        WorkspaceRouteErrorKind::Internal
+    );
+
+    let bootstrap_post_error = handle
+        .update_worktree_bootstrap_config_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorktreeBootstrapConfigRequest {
+                setup_command: Some("true".to_string()),
+                timeout_sec: Some(30),
+                wait_for_completion: Some(true),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        bootstrap_post_error.kind(),
+        WorkspaceRouteErrorKind::BadRequest
+    );
+
+    let prompt_get_error = handle
+        .agent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(prompt_get_error.kind(), WorkspaceRouteErrorKind::Internal);
+
+    let prompt_post_error = handle
+        .update_agent_system_prompt_config_for_route(
+            WorkspacePromptConfigRouteParams::new(workspace.id.0.to_string()),
+            UpdateAgentSystemPromptConfigRouteRequest {
+                system_prompt_append: Some("prompt".to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(prompt_post_error.kind(), WorkspaceRouteErrorKind::Internal);
 }
