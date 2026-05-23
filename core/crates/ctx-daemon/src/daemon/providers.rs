@@ -1,7 +1,6 @@
 use std::path::Path as StdPath;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_harness_sources as harness_sources;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
@@ -48,10 +47,7 @@ pub use auth_import::{
 pub use diagnostics::provider_diagnostics_snapshot;
 pub(in crate::daemon) use diagnostics::provider_diagnostics_snapshot_for_runtime;
 pub use harness_config::{
-    delete_provider_harness_endpoint, get_provider_harness_config,
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
-    refresh_provider_harness_endpoint_models, select_provider_harness_source,
-    set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
 };
 pub use installs::{
     cancel_provider_install, get_provider_install_info, list_provider_install_events,
@@ -189,22 +185,6 @@ impl ProvidersHandle {
         install_id: InstallId,
     ) -> Option<broadcast::Sender<InstallProgressEvent>> {
         provider_install_event_sender(&self.state, install_id).await
-    }
-
-    pub async fn get_provider_harness_config(
-        &self,
-        provider_id: &str,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        get_provider_harness_config(&self.state, provider_id).await
-    }
-
-    pub async fn select_provider_harness_source(
-        &self,
-        provider_id: &str,
-        source_kind: harness_sources::HarnessSourceKind,
-        endpoint_id: Option<String>,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        select_provider_harness_source(&self.state, provider_id, source_kind, endpoint_id).await
     }
 
     pub async fn list_provider_auth_import_profiles(

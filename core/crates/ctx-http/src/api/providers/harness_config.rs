@@ -38,7 +38,7 @@ fn provider_harness_endpoint_error(
 }
 
 pub(crate) async fn get_provider_harness_config(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderHarnessConfigHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ProviderHarnessSourceConfig>, (StatusCode, Json<serde_json::Value>)> {
     let config = providers
@@ -49,7 +49,7 @@ pub(crate) async fn get_provider_harness_config(
 }
 
 pub(crate) async fn select_provider_harness_source(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderHarnessConfigHandle>,
     Path(id): Path<String>,
     Json(req): Json<SelectProviderHarnessSourceRouteRequest>,
 ) -> Result<Json<ProviderHarnessSourceConfig>, (StatusCode, Json<serde_json::Value>)> {

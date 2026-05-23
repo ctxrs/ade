@@ -191,6 +191,8 @@ const {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderHarnessConfigDaemonFacadeRatchet,
+  scanProviderHarnessConfigHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
   scanRepo,
@@ -565,6 +567,71 @@ test("appstate provider runtime surface daemon facade ratchet rejects broad prov
     [
       "provider runtime surface daemon facade implemented on broad providers handle",
       "provider runtime surface daemon facade implemented on broad providers handle",
+    ],
+  );
+});
+
+test("appstate provider harness config route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderHarnessConfigHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/harness_config.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.get_provider_harness_config_for_route("codex").await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider harness config route extracts broad providers handle",
+      "provider harness config route extracts broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderHarnessConfigHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+      contents: `
+        use ctx_daemon::daemon::ProviderHarnessConfigHandle;
+        async fn route(State(providers): State<ProviderHarnessConfigHandle>) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate provider harness config daemon facade ratchet rejects full-state route seam", () => {
+  const broadHandleViolations = scanProviderHarnessConfigDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/harness_config/routes.rs",
+    contents: `
+      use crate::daemon::ProvidersHandle;
+      impl ProvidersHandle {
+        pub async fn get_provider_harness_config_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    broadHandleViolations,
+    [
+      "provider harness config daemon facade implemented on broad providers handle",
+      "provider harness config daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  const daemonStateViolations = scanProviderHarnessConfigDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/harness_config/routes.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      async fn get_config(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    daemonStateViolations,
+    [
+      "provider harness config daemon facade accepts daemon state",
+      "provider harness config daemon facade accepts daemon state",
     ],
   );
 });

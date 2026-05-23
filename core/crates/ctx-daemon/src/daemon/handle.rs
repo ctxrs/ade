@@ -186,6 +186,13 @@ impl DaemonHandle {
         )
     }
 
+    pub fn provider_harness_config(&self) -> ProviderHarnessConfigHandle {
+        ProviderHarnessConfigHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+        )
+    }
+
     pub fn telemetry(&self) -> TelemetryHandle {
         TelemetryHandle::new(self.state.core.data_root.clone(), &self.state.telemetry)
     }
@@ -808,6 +815,29 @@ impl ProviderUsageHandle {
 
     pub(in crate::daemon) fn shutdown_tx(&self) -> &broadcast::Sender<()> {
         &self.shutdown_tx
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderHarnessConfigHandle {
+    data_root: PathBuf,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl ProviderHarnessConfigHandle {
+    pub(in crate::daemon) fn new(data_root: PathBuf, providers: Arc<ProviderRuntime>) -> Self {
+        Self {
+            data_root,
+            providers,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
     }
 }
 

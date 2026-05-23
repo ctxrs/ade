@@ -28,7 +28,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     seed_verify_cache_status(&daemon, "ws-b/container/claude-crp", "ok").await;
 
     let Json(config) = select_provider_harness_source(
-        State(fixture.providers()),
+        State(fixture.provider_harness_config()),
         Path("codex".to_string()),
         Json(SelectProviderHarnessSourceRouteRequest::new(
             HarnessSourceKind::Subscription,
