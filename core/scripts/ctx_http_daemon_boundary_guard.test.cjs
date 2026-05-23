@@ -220,6 +220,9 @@ const {
   scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
   scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
   scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
+  scanWorkspaceExecutionConfigDaemonImplementationRatchet,
+  scanWorkspaceExecutionConfigHandleFieldRatchet,
+  scanWorkspaceExecutionConfigRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -2444,6 +2447,148 @@ test("appstate guard rejects workspace prompt/bootstrap broad handle fields", ()
     contents: `
       pub struct WorkspacePromptBootstrapConfigHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace execution config extraction outside allowed route", () => {
+  const violations = scanWorkspaceExecutionConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceExecutionConfigHandle;
+      async fn handler(
+        State(state): State<WorkspaceExecutionConfigHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace execution config route extracts WorkspaceExecutionConfigHandle outside execution config route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceExecutionConfigRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+      contents: `
+        async fn get_execution_config(
+          State(state): State<WorkspaceExecutionConfigHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace execution config broad route and router composition", () => {
+  const routeViolations = scanWorkspaceExecutionConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      pub(in crate::api) async fn get_execution_config(
+        State(workspaces): State<WorkspacesHandle>,
+        Path(id): Path<String>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "workspace execution config route uses broad workspace handle",
+  ]);
+
+  const routerViolations = scanWorkspaceExecutionConfigRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_execution_config: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace execution config router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace execution config daemon facade broad seams", () => {
+  const violations = scanWorkspaceExecutionConfigDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = settings::load_settings(state.as_ref()).await;
+          let _ = self.shared_vm_container_runtime_available();
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace execution config daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace execution config daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace execution config daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace execution config daemon facade reuses full-state settings helper",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace execution config daemon facade reuses full-state sandbox availability helper",
+    ),
+  );
+  assert(
+    violations.includes(
+      "workspace execution config daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects workspace execution config broad handle fields", () => {
+  const fieldViolations = scanWorkspaceExecutionConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceExecutionConfigHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace execution config capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace execution config capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceExecutionConfigHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceExecutionConfigHandle {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        data_root: PathBuf,
       }
     `,
   });

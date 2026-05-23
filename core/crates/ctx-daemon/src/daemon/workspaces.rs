@@ -21,6 +21,7 @@ mod cache_stats;
 mod deletion;
 mod diff_exec;
 mod execution;
+mod execution_config;
 mod file_completions;
 mod harness_container;
 mod hydration;

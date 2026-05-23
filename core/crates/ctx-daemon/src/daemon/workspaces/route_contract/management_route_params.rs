@@ -1,10 +1,9 @@
 use crate::daemon::workspaces::WorkspacesHandle;
 use ctx_route_contracts::workspaces::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceAttachmentRouteResponse,
+    WorkspaceConfigUpdateResult, WorkspaceMergeQueueConfigRouteResponse,
     WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteParams,
 };
 
@@ -83,25 +82,6 @@ impl WorkspacesHandle {
     ) -> Result<WorkspacePrimaryBranchSnapshot, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
         self.update_workspace_primary_branch_for_request(workspace_id, request)
-            .await
-    }
-
-    pub async fn workspace_execution_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-    ) -> Result<WorkspaceExecutionConfigRouteSnapshot, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.workspace_execution_config_for_request(workspace_id)
-            .await
-    }
-
-    pub async fn update_workspace_execution_config_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-        request: UpdateWorkspaceExecutionConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.update_workspace_execution_config_for_request(workspace_id, request)
             .await
     }
 }

@@ -244,6 +244,10 @@ const workspacePromptBootstrapConfigRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
 ]);
 
+const workspaceExecutionConfigRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+]);
+
 const workspaceProviderModelPreferenceRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
 ]);
@@ -9220,6 +9224,171 @@ function scanWorkspacePromptBootstrapConfigHandleFieldRatchet({ filePath, conten
   return violations;
 }
 
+function scanWorkspaceExecutionConfigRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (!workspaceExecutionConfigRouteExtractorAllowedPaths.has(filePath)) {
+    const extractorRegex =
+      /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceExecutionConfigHandle\s*>/gu;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace execution config route extracts WorkspaceExecutionConfigHandle outside execution config route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspaceExecutionConfigRouteExtractorAllowedPaths.has(filePath)) {
+    const broadExecutionHandlerRegex =
+      /\bpub\(in\s+crate::api\)\s+async\s+fn\s+(?:get_execution_config|update_execution_config)\s*\([\s\S]*?\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspacesHandle\s*>/gu;
+    for (
+      let match = broadExecutionHandlerRegex.exec(contents);
+      match;
+      match = broadExecutionHandlerRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace execution config route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_execution_config\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace execution config router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceExecutionConfigDaemonImplementationRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace execution config daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace execution config daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace execution config daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace execution config daemon facade reuses full-state settings helper",
+      regex: /\bsettings::load_settings\s*\(/gu,
+    },
+    {
+      name: "workspace execution config daemon facade reuses full-state sandbox availability helper",
+      regex: /\bshared_vm_container_runtime_available\s*\(/gu,
+    },
+    {
+      name: "workspace execution config daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceExecutionConfigHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|WorkspaceProviderModelPreferenceHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspaceExecutionConfigHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace execution config capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace execution config capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -9564,6 +9733,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceExecutionConfigRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -9654,6 +9827,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceExecutionConfigHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -9764,6 +9941,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceExecutionConfigDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10393,6 +10574,9 @@ module.exports = {
   scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
   scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
   scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
+  scanWorkspaceExecutionConfigDaemonImplementationRatchet,
+  scanWorkspaceExecutionConfigHandleFieldRatchet,
+  scanWorkspaceExecutionConfigRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,

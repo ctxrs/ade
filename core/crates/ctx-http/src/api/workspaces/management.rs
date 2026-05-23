@@ -63,10 +63,10 @@ pub(in crate::api) async fn update_workspace_primary_branch(
 }
 
 pub(in crate::api) async fn get_execution_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(execution_config): State<WorkspaceExecutionConfigHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceExecutionConfigRouteSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    execution_config
         .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map_err(workspace_route_api_error)
@@ -74,12 +74,18 @@ pub(in crate::api) async fn get_execution_config(
 }
 
 pub(in crate::api) async fn update_execution_config(
-    State(workspaces): State<WorkspacesHandle>,
+    State(execution_config): State<WorkspaceExecutionConfigHandle>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateWorkspaceExecutionConfigRequest>,
+    request: Request,
 ) -> Result<Json<WorkspaceConfigUpdateResult>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
-        .update_workspace_execution_config_for_route_params(WorkspaceRouteParams::new(id), req)
+    let params = WorkspaceRouteParams::new(id);
+    execution_config
+        .workspace_execution_config_update_target_for_route_params(&params)
+        .await
+        .map_err(workspace_route_api_error)?;
+    let req: UpdateWorkspaceExecutionConfigRequest = parse_json_request(request).await?;
+    execution_config
+        .update_workspace_execution_config_for_route_params(params, req)
         .await
         .map_err(workspace_route_api_error)
         .map(Json)

@@ -13,8 +13,7 @@ pub use ctx_route_contracts::workspaces::{
     WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
 };
 pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    UpdateWorkspaceMergeQueueConfigRequest, WorkspaceMergeQueueConfigRouteResponse,
 };
 pub(in crate::daemon::workspaces) use management_config::{
     merge_queue_config_route_response, merge_queue_config_update,

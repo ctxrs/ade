@@ -9,14 +9,12 @@ use ctx_workspace_config as workspace_config;
 
 use super::route_config::{
     merge_queue_config_route_response, merge_queue_config_update, request_or_policy_route_error,
-    workspace_execution_config_route_snapshot, workspace_store_route_error,
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    workspace_store_route_error, UpdateWorkspaceMergeQueueConfigRequest,
     UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
 };
 use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
-use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
 
 impl WorkspacesHandle {
     pub async fn update_workspace_primary_branch(
@@ -163,91 +161,6 @@ impl WorkspacesHandle {
         .await
     }
 
-    pub async fn load_workspace_execution_override(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Option<workspace_config::ExecutionSettingsOverride>, WorkspaceStoreAccessError>
-    {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_execution_settings_override(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_workspace_execution_config(
-        &self,
-        workspace_id: WorkspaceId,
-        update: workspace_config::ExecutionConfigUpdate,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace_id).await?;
-        workspace_config::update_execution_config(&store, update).await
-    }
-
-    pub async fn workspace_execution_config_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceExecutionConfigRouteSnapshot, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(workspace_store_route_error)?;
-        let settings = settings::load_settings(self.state.as_ref())
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        match ctx_settings_service::workspace_execution_config_snapshot_for_loaded_settings(
-            &settings, &store,
-        )
-        .await
-        {
-            Ok(snapshot) => Ok(workspace_execution_config_route_snapshot(snapshot)),
-            Err(
-                ctx_settings_service::WorkspaceExecutionConfigSnapshotError::InvalidWorkspaceConfig(
-                    error,
-                ),
-            ) => Err(WorkspaceRouteError::bad_request(error)),
-            Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::RequestOrPolicy(
-                error,
-            )) => Err(request_or_policy_route_error(error)),
-            Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::Internal(error)) => {
-                Err(WorkspaceRouteError::internal(error))
-            }
-        }
-    }
-
-    pub async fn update_workspace_execution_config_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-        req: UpdateWorkspaceExecutionConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(workspace_store_route_error)?;
-        let update = workspace_config::parse_execution_config_update_input(
-            req.environment.trim(),
-            req.network_mode.as_deref(),
-            req.allowlist,
-            self.sandbox_runtime_available_for_execution_config(),
-        )
-        .map_err(WorkspaceRouteError::bad_request)?;
-        let settings = settings::load_settings(self.state.as_ref())
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        ctx_settings_service::update_workspace_execution_config_for_loaded_settings(
-            &settings, &store, update,
-        )
-        .await
-        .map_err(|error| match error {
-            ctx_settings_service::WorkspaceExecutionConfigUpdateError::RequestOrPolicy(error) => {
-                request_or_policy_route_error(error)
-            }
-            ctx_settings_service::WorkspaceExecutionConfigUpdateError::Persistence(error) => {
-                WorkspaceRouteError::bad_request(error)
-            }
-        })?;
-        Ok(WorkspaceConfigUpdateResult { ok: true })
-    }
-
     pub async fn workspace_merge_queue_config_for_route(
         &self,
         workspace_id: WorkspaceId,
@@ -332,16 +245,5 @@ impl WorkspacesHandle {
             workspace_id,
         )
         .await
-    }
-
-    fn sandbox_runtime_available_for_execution_config(&self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            self.shared_vm_container_runtime_available()
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            true
-        }
     }
 }

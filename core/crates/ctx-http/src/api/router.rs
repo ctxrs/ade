@@ -16,9 +16,9 @@ use ctx_daemon::daemon::{
     SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
     TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceOrgPolicyHandle,
-    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceExecutionConfigHandle,
+    WorkspaceOrgPolicyHandle, WorkspacePromptBootstrapConfigHandle,
+    WorkspaceProviderModelPreferenceHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -91,6 +91,7 @@ pub struct RouteHandles {
     pub(in crate::api) org_policy: OrgPolicyHandle,
     pub(in crate::api) workspace_org_policy: WorkspaceOrgPolicyHandle,
     pub(in crate::api) workspace_prompt_bootstrap_config: WorkspacePromptBootstrapConfigHandle,
+    pub(in crate::api) workspace_execution_config: WorkspaceExecutionConfigHandle,
     pub(in crate::api) workspace_provider_model_preferences: WorkspaceProviderModelPreferenceHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
@@ -145,6 +146,7 @@ impl RouteHandles {
             org_policy: handle.org_policy(),
             workspace_org_policy: handle.workspace_org_policy(),
             workspace_prompt_bootstrap_config: handle.workspace_prompt_bootstrap_config(),
+            workspace_execution_config: handle.workspace_execution_config(),
             workspace_provider_model_preferences: handle.workspace_provider_model_preferences(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
@@ -204,6 +206,7 @@ impl_route_state_extractors! {
     OrgPolicyHandle, org_policy;
     WorkspaceOrgPolicyHandle, workspace_org_policy;
     WorkspacePromptBootstrapConfigHandle, workspace_prompt_bootstrap_config;
+    WorkspaceExecutionConfigHandle, workspace_execution_config;
     WorkspaceProviderModelPreferenceHandle, workspace_provider_model_preferences;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;

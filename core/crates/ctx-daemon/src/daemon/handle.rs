@@ -127,6 +127,14 @@ impl DaemonHandle {
         WorkspacePromptBootstrapConfigHandle::new(self.protected_workspace_store_lookup())
     }
 
+    pub fn workspace_execution_config(&self) -> WorkspaceExecutionConfigHandle {
+        WorkspaceExecutionConfigHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            self.state.core.data_root.clone(),
+        )
+    }
+
     pub fn workspace_provider_model_preferences(&self) -> WorkspaceProviderModelPreferenceHandle {
         WorkspaceProviderModelPreferenceHandle::new(self.provider_workspace_launch_runtime())
     }
@@ -1343,6 +1351,44 @@ pub struct WorkspacePromptBootstrapConfigHandle {
 impl WorkspacePromptBootstrapConfigHandle {
     pub(in crate::daemon) fn new(workspace_stores: ProtectedWorkspaceStoreLookup) -> Self {
         Self { workspace_stores }
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceExecutionConfigHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    data_root: PathBuf,
+}
+
+impl WorkspaceExecutionConfigHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        data_root: PathBuf,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            data_root,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
     }
 
     pub(in crate::daemon) async fn existing_workspace_store(

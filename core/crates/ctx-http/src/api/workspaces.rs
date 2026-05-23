@@ -1,5 +1,6 @@
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
@@ -23,7 +24,7 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
-    WorkspaceActiveHandle, WorkspacePromptBootstrapConfigHandle,
+    WorkspaceActiveHandle, WorkspaceExecutionConfigHandle, WorkspacePromptBootstrapConfigHandle,
     WorkspaceProviderModelPreferenceHandle, WorkspacesHandle,
 };
 use ctx_observability::logs;
@@ -65,4 +66,23 @@ fn workspace_route_status(error: &WorkspaceRouteError) -> StatusCode {
         WorkspaceRouteErrorKind::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
         WorkspaceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+async fn parse_json_request<T: serde::de::DeserializeOwned>(
+    request: Request,
+) -> Result<T, (StatusCode, Json<ApiErrorResp>)> {
+    let Json(parsed) = Json::<T>::from_request(request, &())
+        .await
+        .map_err(json_rejection_api_error)?;
+    Ok(parsed)
+}
+
+fn json_rejection_api_error(rejection: JsonRejection) -> (StatusCode, Json<ApiErrorResp>) {
+    let body_text = rejection.body_text();
+    (
+        rejection.status(),
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(&body_text),
+        }),
+    )
 }
