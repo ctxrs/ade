@@ -35,7 +35,7 @@ pub(super) async fn resolve_loaded_session_model(
     } = request;
 
     let catalog = match handles
-        .sessions
+        .admission
         .load_provider_model_catalog_for_execution_environment(
             workspace,
             provider_id,

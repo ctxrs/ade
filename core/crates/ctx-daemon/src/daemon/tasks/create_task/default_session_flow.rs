@@ -24,8 +24,8 @@ pub(super) async fn ensure_default_session_for_task(
                 primary_session_id,
             ));
             handles
-                .tasks
-                .create_session_for_loaded_task(
+                .session_admission
+                .create_session_for_loaded_task_locked(
                     store.clone(),
                     task.clone(),
                     workspace.clone(),
@@ -40,8 +40,8 @@ pub(super) async fn ensure_default_session_for_task(
 
     let default_session_result = if let Some(default_session_input) = requested_default_session {
         handles
-            .tasks
-            .create_session_for_loaded_task(
+            .session_admission
+            .create_session_for_loaded_task_locked(
                 store.clone(),
                 task.clone(),
                 workspace.clone(),
@@ -68,8 +68,8 @@ pub(super) async fn ensure_default_session_for_task(
                 }
             };
         handles
-            .tasks
-            .create_session_for_loaded_task(
+            .session_admission
+            .create_session_for_loaded_task_locked(
                 store.clone(),
                 task.clone(),
                 workspace.clone(),

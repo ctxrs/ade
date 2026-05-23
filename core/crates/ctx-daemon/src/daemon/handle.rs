@@ -1,9 +1,12 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context;
-use ctx_core::ids::{SessionId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::models::{ExecutionEnvironment, SandboxBinding, Session, Task, Workspace, Worktree};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
 use ctx_merge_queue::MergeQueueRuntime;
@@ -17,6 +20,8 @@ use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_session_runtime::runtime::SessionRuntime;
+use ctx_session_tools::model_resolution::ModelCatalog;
+use ctx_settings_model::ExecutionSettings;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::manager::WorkspaceStoreAccessOutcome;
 use ctx_store::{Store, StoreManager};
@@ -24,7 +29,7 @@ use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_runtime::HarnessRuntimeManager;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use super::{
     blobs::BlobHandle,
@@ -150,6 +155,219 @@ impl DaemonHandle {
 
     pub fn tasks(&self) -> TasksHandle {
         TasksHandle::new(Arc::clone(&self.state))
+    }
+
+    fn task_session_admission_workspace_runtime(&self) -> Arc<TaskAdmissionWorkspaceRuntime> {
+        let state = Arc::clone(&self.state);
+        let resolve_existing_worktree_execution = Arc::new({
+            let state = Arc::clone(&state);
+            move |store: Store, workspace: Workspace, worktree_id: WorktreeId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::resolve_existing_worktree_execution(
+                        &state,
+                        &store,
+                        &workspace,
+                        worktree_id,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        let provision_worktree_for_execution = Arc::new({
+            let state = Arc::clone(&state);
+            move |workspace: Workspace,
+                  worktree_id: WorktreeId,
+                  base_commit_sha: String,
+                  branch_name: String,
+                  effective: ExecutionSettings| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::provision_worktree_for_execution(
+                        &state,
+                        &workspace,
+                        worktree_id,
+                        &base_commit_sha,
+                        &branch_name,
+                        &effective,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        let persist_provisioned_worktree = Arc::new({
+            let state = Arc::clone(&state);
+            move |store: Store,
+                  workspace: Workspace,
+                  worktree: Worktree,
+                  sandbox_binding: Option<SandboxBinding>| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::persist_provisioned_worktree(
+                        &state,
+                        &store,
+                        &workspace,
+                        worktree,
+                        sandbox_binding,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        let cleanup_task_worktrees = Arc::new({
+            let state = Arc::clone(&state);
+            move |workspace: Workspace,
+                  task_id: TaskId,
+                  targets: Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
+                  mode: crate::daemon::workspaces::BranchCleanupErrorMode| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::cleanup_task_worktrees(
+                        state.as_ref(),
+                        &workspace,
+                        task_id,
+                        &targets,
+                        mode,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        let ensure_task_commit_hook = Arc::new({
+            let state = Arc::clone(&state);
+            move |workspace: Workspace, worktree: Worktree, task_id: TaskId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::workspaces::vcs_hooks::ensure_task_commit_hook(
+                        state.as_ref(),
+                        &workspace,
+                        &worktree,
+                        task_id,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        let emit_workspace_task_upsert = Arc::new({
+            let state = Arc::clone(&state);
+            move |task_id: TaskId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
+                    as TaskAdmissionFuture<_>
+            }
+        });
+        TaskAdmissionWorkspaceRuntime::new(
+            self.state.core.data_root.clone(),
+            resolve_existing_worktree_execution,
+            provision_worktree_for_execution,
+            persist_provisioned_worktree,
+            cleanup_task_worktrees,
+            ensure_task_commit_hook,
+            emit_workspace_task_upsert,
+        )
+    }
+
+    fn task_session_admission_effects(&self) -> Arc<TaskAdmissionSessionEffects> {
+        let state = Arc::clone(&self.state);
+        let publish_event = Arc::new({
+            let state = Arc::clone(&state);
+            move |event| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.publish_event(event).await }) as TaskAdmissionFuture<_>
+            }
+        });
+        let ensure_scheduler = Arc::new({
+            let state = Arc::clone(&state);
+            move |session: Session| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.ensure_scheduler(session).await })
+                    as TaskAdmissionFuture<_>
+            }
+        });
+        let schedule_title_generation = Arc::new({
+            let state = Arc::clone(&state);
+            move |session: Session, prompt: String, force: bool| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::sessions::title_generation::schedule_session_title_generation(
+                        state, session, prompt, force,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            }
+        });
+        TaskAdmissionSessionEffects::new(publish_event, ensure_scheduler, schedule_title_generation)
+    }
+
+    fn task_session_admission_provider_status(&self) -> ProviderStatusHandle {
+        ProviderStatusHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    fn task_session_admission_model_catalog_loader(&self) -> TaskAdmissionModelCatalogLoader {
+        let state = Arc::clone(&self.state);
+        Arc::new(
+            move |workspace: Workspace,
+                  provider_id: String,
+                  execution_environment: ExecutionEnvironment| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment(
+                        &state,
+                        &workspace,
+                        &provider_id,
+                        execution_environment,
+                    )
+                    .await
+                }) as TaskAdmissionFuture<_>
+            },
+        )
+    }
+
+    pub fn task_session_admission(&self) -> TaskSessionAdmissionHandle {
+        TaskSessionAdmissionHandle::new(
+            self.state.global_store().clone(),
+            ProtectedWorkspaceStoreLookup::new(
+                self.state.core.stores.clone(),
+                Arc::clone(&self.state.sessions),
+                Arc::clone(&self.state.transport.merge_queue),
+            ),
+            Arc::clone(&self.state.sessions),
+            Arc::clone(&self.state.providers),
+            self.task_session_admission_provider_status(),
+            self.task_session_admission_workspace_runtime(),
+            self.task_session_admission_effects(),
+            self.task_session_admission_model_catalog_loader(),
+            self.state.telemetry.telemetry.clone(),
+            self.state.telemetry.ops_events.clone(),
+            self.state.telemetry.perf_telemetry.clone(),
+        )
+    }
+
+    pub fn task_creation(&self) -> TaskCreationHandle {
+        let state = Arc::clone(&self.state);
+        let delete_loaded_task_with_cleanup =
+            Arc::new(move |store: Store, workspace: Workspace, task: Task| {
+                let tasks = TasksHandle::new(Arc::clone(&state));
+                Box::pin(async move {
+                    tasks
+                        .delete_loaded_task_with_cleanup(&store, &workspace, &task)
+                        .await
+                }) as TaskAdmissionFuture<_>
+            });
+        TaskCreationHandle::new(
+            self.state.global_store().clone(),
+            ProtectedWorkspaceStoreLookup::new(
+                self.state.core.stores.clone(),
+                Arc::clone(&self.state.sessions),
+                Arc::clone(&self.state.transport.merge_queue),
+            ),
+            self.task_session_admission(),
+            delete_loaded_task_with_cleanup,
+        )
     }
 
     pub fn workspaces(&self) -> WorkspacesHandle {
@@ -882,6 +1100,455 @@ impl ProtectedWorkspaceStoreLookup {
         }
         active_workspaces.extend(self.merge_queue.running_workspaces().await);
         active_workspaces
+    }
+}
+
+type TaskAdmissionFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type TaskAdmissionModelCatalogLoader = Arc<
+    dyn Fn(
+            Workspace,
+            String,
+            ExecutionEnvironment,
+        ) -> TaskAdmissionFuture<Result<Option<ModelCatalog>, String>>
+        + Send
+        + Sync,
+>;
+
+#[derive(Clone)]
+pub struct TaskCreationHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    session_admission: TaskSessionAdmissionHandle,
+    delete_loaded_task_with_cleanup: Arc<
+        dyn Fn(
+                Store,
+                Workspace,
+                Task,
+            )
+                -> TaskAdmissionFuture<Result<(), crate::daemon::tasks::TaskLifecycleError>>
+            + Send
+            + Sync,
+    >,
+}
+
+impl TaskCreationHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        session_admission: TaskSessionAdmissionHandle,
+        delete_loaded_task_with_cleanup: Arc<
+            dyn Fn(
+                    Store,
+                    Workspace,
+                    Task,
+                )
+                    -> TaskAdmissionFuture<Result<(), crate::daemon::tasks::TaskLifecycleError>>
+                + Send
+                + Sync,
+        >,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            session_admission,
+            delete_loaded_task_with_cleanup,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn session_admission(&self) -> &TaskSessionAdmissionHandle {
+        &self.session_admission
+    }
+
+    pub(in crate::daemon) async fn delete_loaded_task_with_cleanup(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        task: &Task,
+    ) -> Result<(), crate::daemon::tasks::TaskLifecycleError> {
+        (self.delete_loaded_task_with_cleanup)(store.clone(), workspace.clone(), task.clone()).await
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskSessionAdmissionHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    providers: Arc<ProviderRuntime>,
+    provider_status: ProviderStatusHandle,
+    workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+    effects: Arc<TaskAdmissionSessionEffects>,
+    model_catalog_loader: TaskAdmissionModelCatalogLoader,
+    telemetry: Telemetry,
+    ops_events: OpsEvents,
+    perf_telemetry: PerfTelemetry,
+}
+
+impl TaskSessionAdmissionHandle {
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+        providers: Arc<ProviderRuntime>,
+        provider_status: ProviderStatusHandle,
+        workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+        effects: Arc<TaskAdmissionSessionEffects>,
+        model_catalog_loader: TaskAdmissionModelCatalogLoader,
+        telemetry: Telemetry,
+        ops_events: OpsEvents,
+        perf_telemetry: PerfTelemetry,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            sessions,
+            providers,
+            provider_status,
+            workspace,
+            effects,
+            model_catalog_loader,
+            telemetry,
+            ops_events,
+            perf_telemetry,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn sessions(
+        &self,
+    ) -> &SessionRuntime<crate::daemon::scheduler::SchedulerCommand> {
+        self.sessions.as_ref()
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn provider_status(&self) -> &ProviderStatusHandle {
+        &self.provider_status
+    }
+
+    pub(in crate::daemon) fn workspace(&self) -> &TaskAdmissionWorkspaceRuntime {
+        self.workspace.as_ref()
+    }
+
+    pub(in crate::daemon) fn effects(&self) -> &TaskAdmissionSessionEffects {
+        self.effects.as_ref()
+    }
+
+    pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
+        &self.telemetry
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn load_provider_model_catalog_for_execution_environment(
+        &self,
+        workspace: &Workspace,
+        provider_id: &str,
+        execution_environment: ExecutionEnvironment,
+    ) -> Result<Option<ModelCatalog>, String> {
+        (self.model_catalog_loader)(
+            workspace.clone(),
+            provider_id.to_string(),
+            execution_environment,
+        )
+        .await
+    }
+}
+
+pub(in crate::daemon) struct TaskAdmissionWorkspaceRuntime {
+    data_root: PathBuf,
+    resolve_existing_worktree_execution: Arc<
+        dyn Fn(
+                Store,
+                Workspace,
+                WorktreeId,
+            ) -> TaskAdmissionFuture<
+                anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution>,
+            > + Send
+            + Sync,
+    >,
+    provision_worktree_for_execution: Arc<
+        dyn Fn(
+                Workspace,
+                WorktreeId,
+                String,
+                String,
+                ExecutionSettings,
+            )
+                -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
+            + Send
+            + Sync,
+    >,
+    persist_provisioned_worktree: Arc<
+        dyn Fn(
+                Store,
+                Workspace,
+                Worktree,
+                Option<SandboxBinding>,
+            ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
+            + Send
+            + Sync,
+    >,
+    cleanup_task_worktrees: Arc<
+        dyn Fn(
+                Workspace,
+                TaskId,
+                Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
+                crate::daemon::workspaces::BranchCleanupErrorMode,
+            ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
+            + Send
+            + Sync,
+    >,
+    ensure_task_commit_hook: Arc<
+        dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>>
+            + Send
+            + Sync,
+    >,
+    emit_workspace_task_upsert:
+        Arc<dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync>,
+}
+
+impl TaskAdmissionWorkspaceRuntime {
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        resolve_existing_worktree_execution: Arc<
+            dyn Fn(
+                    Store,
+                    Workspace,
+                    WorktreeId,
+                ) -> TaskAdmissionFuture<
+                    anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution>,
+                > + Send
+                + Sync,
+        >,
+        provision_worktree_for_execution: Arc<
+            dyn Fn(
+                    Workspace,
+                    WorktreeId,
+                    String,
+                    String,
+                    ExecutionSettings,
+                )
+                    -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
+                + Send
+                + Sync,
+        >,
+        persist_provisioned_worktree: Arc<
+            dyn Fn(
+                    Store,
+                    Workspace,
+                    Worktree,
+                    Option<SandboxBinding>,
+                ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
+                + Send
+                + Sync,
+        >,
+        cleanup_task_worktrees: Arc<
+            dyn Fn(
+                    Workspace,
+                    TaskId,
+                    Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
+                    crate::daemon::workspaces::BranchCleanupErrorMode,
+                ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
+                + Send
+                + Sync,
+        >,
+        ensure_task_commit_hook: Arc<
+            dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>>
+                + Send
+                + Sync,
+        >,
+        emit_workspace_task_upsert: Arc<
+            dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync,
+        >,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            data_root,
+            resolve_existing_worktree_execution,
+            provision_worktree_for_execution,
+            persist_provisioned_worktree,
+            cleanup_task_worktrees,
+            ensure_task_commit_hook,
+            emit_workspace_task_upsert,
+        })
+    }
+
+    pub(in crate::daemon) fn managed_worktree_root(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+    ) -> Option<PathBuf> {
+        ctx_worktree_vcs_service::matching_managed_worktree_path(
+            &self.data_root,
+            workspace.id,
+            worktree.id,
+            PathBuf::from(&worktree.root_path),
+        )
+    }
+
+    pub(in crate::daemon) async fn resolve_existing_worktree_execution(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution> {
+        (self.resolve_existing_worktree_execution)(store.clone(), workspace.clone(), worktree_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn provision_worktree_for_execution(
+        &self,
+        workspace: &Workspace,
+        worktree_id: WorktreeId,
+        base_commit_sha: &str,
+        branch_name: &str,
+        effective: &ExecutionSettings,
+    ) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
+        (self.provision_worktree_for_execution)(
+            workspace.clone(),
+            worktree_id,
+            base_commit_sha.to_string(),
+            branch_name.to_string(),
+            effective.clone(),
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn persist_provisioned_worktree(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        worktree: Worktree,
+        sandbox_binding: Option<SandboxBinding>,
+    ) -> anyhow::Result<Worktree> {
+        (self.persist_provisioned_worktree)(
+            store.clone(),
+            workspace.clone(),
+            worktree,
+            sandbox_binding,
+        )
+        .await
+    }
+
+    pub(in crate::daemon) async fn cleanup_task_worktrees(
+        &self,
+        workspace: &Workspace,
+        task_id: TaskId,
+        targets: &[crate::daemon::workspaces::TaskWorktreeCleanupTarget],
+        mode: crate::daemon::workspaces::BranchCleanupErrorMode,
+    ) -> Vec<anyhow::Error> {
+        (self.cleanup_task_worktrees)(workspace.clone(), task_id, targets.to_vec(), mode).await
+    }
+
+    pub(in crate::daemon) async fn ensure_task_commit_hook(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        task_id: TaskId,
+    ) -> anyhow::Result<()> {
+        (self.ensure_task_commit_hook)(workspace.clone(), worktree.clone(), task_id).await
+    }
+
+    pub(in crate::daemon) async fn emit_workspace_task_upsert(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<()> {
+        (self.emit_workspace_task_upsert)(task_id).await
+    }
+}
+
+pub(in crate::daemon) struct TaskAdmissionSessionEffects {
+    publish_event:
+        Arc<dyn Fn(ctx_core::models::SessionEvent) -> TaskAdmissionFuture<()> + Send + Sync>,
+    ensure_scheduler: Arc<
+        dyn Fn(
+                Session,
+            )
+                -> TaskAdmissionFuture<mpsc::Sender<crate::daemon::scheduler::SchedulerCommand>>
+            + Send
+            + Sync,
+    >,
+    schedule_title_generation:
+        Arc<dyn Fn(Session, String, bool) -> TaskAdmissionFuture<bool> + Send + Sync>,
+}
+
+impl TaskAdmissionSessionEffects {
+    pub(in crate::daemon) fn new(
+        publish_event: Arc<
+            dyn Fn(ctx_core::models::SessionEvent) -> TaskAdmissionFuture<()> + Send + Sync,
+        >,
+        ensure_scheduler: Arc<
+            dyn Fn(
+                    Session,
+                )
+                    -> TaskAdmissionFuture<mpsc::Sender<crate::daemon::scheduler::SchedulerCommand>>
+                + Send
+                + Sync,
+        >,
+        schedule_title_generation: Arc<
+            dyn Fn(Session, String, bool) -> TaskAdmissionFuture<bool> + Send + Sync,
+        >,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            publish_event,
+            ensure_scheduler,
+            schedule_title_generation,
+        })
+    }
+
+    pub(in crate::daemon) async fn publish_event(&self, event: ctx_core::models::SessionEvent) {
+        (self.publish_event)(event).await;
+    }
+
+    pub(in crate::daemon) async fn ensure_scheduler(
+        &self,
+        session: Session,
+    ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
+        (self.ensure_scheduler)(session).await
+    }
+
+    pub(in crate::daemon) async fn schedule_title_generation(
+        &self,
+        session: Session,
+        prompt: String,
+        force: bool,
+    ) -> bool {
+        (self.schedule_title_generation)(session, prompt, force).await
     }
 }
 

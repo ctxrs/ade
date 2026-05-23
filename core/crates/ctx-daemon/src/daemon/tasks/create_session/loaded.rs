@@ -56,7 +56,7 @@ pub(super) async fn create_session_for_loaded_task_inner(
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
         if let Err(e) = handles
-            .workspaces
+            .admission
             .ensure_task_commit_hook(&workspace, &worktree, task.id)
             .await
         {
@@ -101,7 +101,7 @@ pub(super) async fn create_session_for_loaded_task_inner(
 
     if input.remember_model_preference {
         if let Err(error) = handles
-            .sessions
+            .admission
             .update_workspace_provider_preferred_model_id(
                 task.workspace_id,
                 &provider_id,

@@ -30,7 +30,7 @@ pub(super) async fn resolve_existing_requested_session(
         return Ok(None);
     };
     let existing_ws = handles
-        .sessions
+        .admission
         .get_workspace_id_for_session(session_id)
         .await
         .map_err(TaskSessionCreateError::Internal)?;
@@ -57,10 +57,10 @@ pub(super) async fn resolve_existing_requested_session(
         return Err(TaskSessionCreateError::Conflict);
     }
 
-    handles.sessions.remember_session_meta(&existing).await;
+    handles.admission.remember_session_meta(&existing).await;
     if remember_model_preference {
         if let Err(error) = handles
-            .sessions
+            .admission
             .update_workspace_provider_preferred_model_id(
                 task.workspace_id,
                 identity.provider_id,

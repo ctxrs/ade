@@ -208,6 +208,19 @@ const taskCreationPlaceholderExtractorApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_task.rs",
 ];
 
+const taskAdmissionHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/tasks/creation_task.rs",
+  "core/crates/ctx-http/src/api/tasks/creation_session/create.rs",
+]);
+
+const taskAdmissionDaemonImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/tasks/route_contract/creation.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/create_task.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/create_task/",
+  "core/crates/ctx-daemon/src/daemon/tasks/create_session.rs",
+  "core/crates/ctx-daemon/src/daemon/tasks/create_session/",
+];
+
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
   "core/crates/ctx-http/src/api/run_archive/",
@@ -1070,14 +1083,6 @@ const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
   {
     path: "core/crates/ctx-daemon/src/daemon/runtime.rs",
     regex: /\blet\s+handle\s*=\s*DaemonHandle::new\s*\(\s*state\.clone\s*\(\s*\)\s*\)\s*;/,
-  },
-  {
-    path: "core/crates/ctx-daemon/src/daemon/tasks/create_task.rs",
-    regex: /\blet\s+daemon\s*=\s*DaemonHandle::new\s*\(\s*tasks\.state\.clone\s*\(\s*\)\s*\)\s*;/,
-  },
-  {
-    path: "core/crates/ctx-daemon/src/daemon/tasks/create_session.rs",
-    regex: /\blet\s+daemon\s*=\s*DaemonHandle::new\s*\(\s*handle\.state\.clone\s*\(\s*\)\s*\)\s*;/,
   },
 ];
 
@@ -7298,6 +7303,114 @@ function scanProviderLoginDaemonImplementationRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanTaskAdmissionHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (taskAdmissionHandleApiPaths.has(filePath)) {
+    const tasksHandleRegex = /\bTasksHandle\b|State\s*<\s*TasksHandle\s*>/gu;
+    for (
+      let match = tasksHandleRegex.exec(contents);
+      match;
+      match = tasksHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task admission route extracts broad tasks handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\btask_(?:creation|session_admission)\s*:\s*handle\.tasks\s*\(\s*\)/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task admission route handle wired from broad tasks handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTaskAdmissionDaemonImplementationRatchet({ filePath, contents }) {
+  if (!taskAdmissionDaemonImplementationRoots.some((root) => filePath.startsWith(root))) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "task admission daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "task admission daemon implementation uses broad task/session/provider/workspace handle",
+      regex: /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle)\b/gu,
+    },
+    {
+      name: "task admission daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTaskAdmissionHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  for (const handleName of ["TaskCreationHandle", "TaskSessionAdmissionHandle"]) {
+    const structRegex = new RegExp(
+      `pub\\s+struct\\s+${handleName}\\s*\\{[\\s\\S]*?\\n\\s*\\}`,
+      "u",
+    );
+    const match = structRegex.exec(contents);
+    if (!match) {
+      continue;
+    }
+    const broadFieldRegex =
+      /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(match[0]);
+      broad;
+      broad = broadFieldRegex.exec(match[0])
+    ) {
+      const offset = match.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task admission capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -7365,6 +7478,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTaskAdmissionHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -7399,6 +7516,10 @@ function scanRepo() {
         patterns: HANDLE_BACKDOOR_PATTERNS,
       }),
       ...scanAppStateRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskAdmissionHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7457,6 +7578,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderLoginDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskAdmissionDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8067,6 +8192,9 @@ module.exports = {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanTaskAdmissionDaemonImplementationRatchet,
+  scanTaskAdmissionHandleFieldRatchet,
+  scanTaskAdmissionHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

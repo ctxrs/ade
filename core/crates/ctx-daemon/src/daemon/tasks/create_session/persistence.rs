@@ -84,10 +84,10 @@ pub(super) async fn persist_created_session(
         }
     }
 
-    handles.sessions.remember_session_meta(&session).await;
+    handles.admission.remember_session_meta(&session).await;
     if let Err(e) = retry_global_index_write(|| async {
         handles
-            .sessions
+            .admission
             .upsert_workspace_session_index(session.id, task.workspace_id)
             .await
     })

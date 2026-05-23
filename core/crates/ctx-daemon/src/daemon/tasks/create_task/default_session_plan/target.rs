@@ -11,24 +11,24 @@ pub(super) async fn resolve_default_session_target(
     execution_environment: ExecutionEnvironment,
 ) -> Result<(String, String, Option<String>), TaskCreateError> {
     let install_target = handles
-        .providers
+        .session_admission
         .install_target_for_workspace(workspace.id)
         .await
         .map_err(TaskCreateError::internal)?;
     let mut statuses = handles
-        .providers
+        .session_admission
         .providers_statuses_response(install_target, true)
         .await;
     let provider_id = match select_default_provider_id(&statuses) {
         Some(provider_id) => provider_id,
         None if install_target == InstallTarget::Host => {
             handles
-                .providers
+                .session_admission
                 .refresh_provider_statuses()
                 .await
                 .map_err(TaskCreateError::internal)?;
             statuses = handles
-                .providers
+                .session_admission
                 .providers_statuses_response(install_target, true)
                 .await;
             select_default_provider_id(&statuses).ok_or_else(|| {
@@ -49,7 +49,7 @@ pub(super) async fn resolve_default_session_target(
             .await
             .map_err(TaskCreateError::internal)?;
     let catalog = handles
-        .sessions
+        .session_admission
         .load_provider_model_catalog_for_execution_environment(
             workspace,
             &provider_id,

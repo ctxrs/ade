@@ -108,7 +108,7 @@ struct TaskSessionInitialPromptSideEffects<'a> {
 #[async_trait::async_trait]
 impl InitialPromptDaemonSideEffects for TaskSessionInitialPromptSideEffects<'_> {
     async fn publish_event(&self, event: ctx_core::models::SessionEvent) {
-        self.handles.sessions.publish_event(event).await;
+        self.handles.admission.publish_event(event).await;
     }
 
     async fn enqueue_initial_prompt(
@@ -119,7 +119,7 @@ impl InitialPromptDaemonSideEffects for TaskSessionInitialPromptSideEffects<'_> 
     ) {
         let tx = self
             .handles
-            .sessions
+            .admission
             .ensure_scheduler(session.clone())
             .await;
         let queued = crate::daemon::scheduler::QueuedMessage {
@@ -133,7 +133,7 @@ impl InitialPromptDaemonSideEffects for TaskSessionInitialPromptSideEffects<'_> 
     async fn schedule_title_generation(&self, session: &Session, prompt: String) {
         let _ = self
             .handles
-            .sessions
+            .admission
             .schedule_session_title_generation(session.clone(), prompt, false)
             .await;
     }
@@ -147,7 +147,7 @@ impl InitialPromptOrderSeqSource for TaskSessionInitialPromptSideEffects<'_> {
         session_id: SessionId,
     ) -> Arc<Mutex<OrderSeqState>> {
         self.handles
-            .sessions
+            .admission
             .session_order_seq_state(store, session_id)
             .await
     }

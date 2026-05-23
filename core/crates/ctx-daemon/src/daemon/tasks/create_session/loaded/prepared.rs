@@ -32,7 +32,7 @@ pub(super) async fn prepare_loaded_session_request(
 ) -> Result<PreparedLoadedSessionRequest, TaskSessionCreateError> {
     let provider_id = input.provider_id.trim().to_string();
     let provider_can_create_loaded_session = handles
-        .providers
+        .admission
         .can_create_loaded_session_for_provider(&provider_id)
         .await;
     let session_request = match prepare_loaded_session_request_policy(LoadedSessionRequestInput {
@@ -51,7 +51,7 @@ pub(super) async fn prepare_loaded_session_request(
         Err(error) => {
             if let Some(issue) = error.compat_issue() {
                 handles
-                    .sessions
+                    .admission
                     .emit_compat_payload_reject_counter("tasks.create_session", issue, None)
                     .await;
             }
@@ -155,7 +155,7 @@ mod tests {
 
         let error = daemon
             .handle()
-            .tasks()
+            .task_session_admission()
             .create_session_for_task(
                 task.id,
                 CreateTaskSessionInput {

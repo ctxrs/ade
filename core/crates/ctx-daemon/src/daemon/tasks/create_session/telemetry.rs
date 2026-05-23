@@ -6,7 +6,7 @@ pub(super) async fn emit_session_started_observability(
     task: &Task,
 ) {
     handles
-        .sessions
+        .admission
         .emit_session_started_observability_for_task(session, task)
         .await;
 }

@@ -361,6 +361,7 @@ macro_rules! impl_managed_install_host_for_provider_runtime_handle {
 
 impl_managed_install_host_for_provider_runtime_handle!(ProviderAdminHandle);
 impl_managed_install_host_for_provider_runtime_handle!(ProviderInstallHandle);
+impl_managed_install_host_for_provider_runtime_handle!(ProviderStatusHandle);
 
 #[async_trait]
 impl ctx_provider_runtime::provider_launch::install::ProviderInstallHost for ProviderInstallHandle {

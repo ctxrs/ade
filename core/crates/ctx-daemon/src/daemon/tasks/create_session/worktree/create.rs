@@ -20,7 +20,7 @@ pub(super) async fn create_session_execution_worktree(
     let worktree_id = WorktreeId::new();
     let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
     let (wt_path, sandbox_binding) = handles
-        .workspaces
+        .admission
         .provision_worktree_for_execution(
             workspace,
             worktree_id,
@@ -60,7 +60,7 @@ pub(super) async fn create_session_execution_worktree(
         bootstrap_script_path: None,
     };
     handles
-        .workspaces
+        .admission
         .persist_provisioned_worktree(store, workspace, worktree, sandbox_binding)
         .await
         .map_err(TaskSessionCreateError::Internal)?;

@@ -32,14 +32,14 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
     };
     let cleanup_targets = [TaskWorktreeCleanupTarget {
         managed_root: handles
-            .workspaces
+            .admission
             .managed_worktree_root(workspace, &worktree),
         sandbox_binding,
         worktree: worktree.clone(),
         destroy_worktree_on_cleanup: true,
     }];
     let cleanup_errors = handles
-        .workspaces
+        .admission
         .cleanup_task_worktrees(
             workspace,
             task_id,
@@ -76,7 +76,7 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
         return;
     }
     if let Err(err) = handles
-        .sessions
+        .admission
         .delete_workspace_worktree_index(worktree_id)
         .await
     {

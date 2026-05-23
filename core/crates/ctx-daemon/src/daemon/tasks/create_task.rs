@@ -1,5 +1,6 @@
 use std::path::Path as StdPath;
 
+use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Task, Workspace};
 use ctx_observability::logs;
@@ -7,9 +8,8 @@ use ctx_session_service::session_creation::should_preflight_default_session;
 use ctx_store::Store;
 use ctx_task_service::creation::TaskRecordCreateError;
 
-use crate::daemon::handle::TasksHandle;
+use crate::daemon::handle::{TaskCreationHandle, TaskSessionAdmissionHandle};
 use crate::daemon::workspaces::execution_environment_from_settings;
-use crate::daemon::{DaemonHandle, ProvidersHandle, SessionsHandle, WorkspacesHandle};
 
 #[path = "create_task/default_session_flow.rs"]
 mod default_session_flow;
@@ -31,6 +31,11 @@ use workspace::load_create_task_workspace;
 use super::CreateTaskSessionInput;
 
 type CreateTaskApiError = TaskCreateError;
+
+struct CreateTaskWorkspaceContext {
+    workspace: Workspace,
+    store: Store,
+}
 
 #[derive(Debug, Clone)]
 pub struct CreateTaskInput {
@@ -68,25 +73,41 @@ impl From<TaskRecordCreateError> for TaskCreateError {
 
 #[derive(Clone)]
 struct TaskCreationHandles {
-    tasks: TasksHandle,
-    sessions: SessionsHandle,
-    providers: ProvidersHandle,
-    workspaces: WorkspacesHandle,
+    creation: TaskCreationHandle,
+    session_admission: TaskSessionAdmissionHandle,
 }
 
 impl TaskCreationHandles {
-    fn new(tasks: &TasksHandle) -> Self {
-        let daemon = DaemonHandle::new(tasks.state.clone());
+    fn new(creation: &TaskCreationHandle) -> Self {
         Self {
-            tasks: tasks.clone(),
-            sessions: daemon.sessions(),
-            providers: daemon.providers(),
-            workspaces: daemon.workspaces(),
+            creation: creation.clone(),
+            session_admission: creation.session_admission().clone(),
         }
     }
 }
 
-impl TasksHandle {
+impl TaskCreationHandle {
+    async fn upsert_workspace_task_index(
+        &self,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        self.global_store()
+            .upsert_workspace_task_index(task_id, workspace_id)
+            .await
+    }
+
+    async fn load_workspace_context(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<CreateTaskWorkspaceContext>> {
+        let Some(workspace) = self.global_store().get_workspace(workspace_id).await? else {
+            return Ok(None);
+        };
+        let store = self.store_for_workspace(workspace_id).await?;
+        Ok(Some(CreateTaskWorkspaceContext { workspace, store }))
+    }
+
     pub async fn create_task_for_workspace(
         &self,
         workspace_id: WorkspaceId,
@@ -106,7 +127,7 @@ impl TasksHandle {
         upsert_workspace_task_index(&handles, persisted_task.task.id, workspace_id).await;
 
         let default_session_lock = handles
-            .sessions
+            .session_admission
             .task_session_creation_lock(persisted_task.task.id)
             .await;
         let _default_session_guard = default_session_lock.lock().await;

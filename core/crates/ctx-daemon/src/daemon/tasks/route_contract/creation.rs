@@ -3,7 +3,7 @@ use ctx_route_contracts::tasks::{
     CreateTaskSessionRouteSpec, ListWorkspaceTasksRouteParams,
 };
 
-use crate::daemon::TasksHandle;
+use crate::daemon::{TaskCreationHandle, TaskSessionAdmissionHandle};
 
 use super::super::{CreateTaskInput, CreateTaskSessionInput};
 use super::common::{
@@ -12,7 +12,7 @@ use super::common::{
 };
 use super::responses::{SessionRouteResponse, TaskRouteResponse};
 
-impl TasksHandle {
+impl TaskCreationHandle {
     pub async fn create_task_for_route(
         &self,
         raw_workspace_id: &str,
@@ -26,7 +26,9 @@ impl TasksHandle {
             .map(TaskRouteResponse::from)
             .map_err(task_route_error_from_task_create)
     }
+}
 
+impl TaskSessionAdmissionHandle {
     pub async fn create_session_for_task_route(
         &self,
         params: TaskRouteParams,

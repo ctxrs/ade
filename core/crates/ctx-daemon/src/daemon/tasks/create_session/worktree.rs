@@ -19,7 +19,7 @@ pub(super) async fn resolve_session_worktree_for_task(
     requested_execution_environment: Option<ExecutionEnvironment>,
 ) -> Result<SessionWorktreeResolution, TaskSessionCreateError> {
     let workspace_effective = handles
-        .workspaces
+        .admission
         .effective_execution_settings(workspace.id)
         .await
         .map_err(TaskSessionCreateError::Internal)?;
@@ -30,7 +30,7 @@ pub(super) async fn resolve_session_worktree_for_task(
         );
         existing_worktree = Some(
             handles
-                .workspaces
+                .admission
                 .resolve_existing_worktree_execution(store, workspace, worktree_id)
                 .await
                 .map_err(|_| TaskSessionCreateError::NotFound)?,
@@ -39,7 +39,7 @@ pub(super) async fn resolve_session_worktree_for_task(
     } else if let Some(primary) = task.primary_worktree_id {
         existing_worktree = Some(
             handles
-                .workspaces
+                .admission
                 .resolve_existing_worktree_execution(store, workspace, primary)
                 .await
                 .map_err(TaskSessionCreateError::Internal)?,

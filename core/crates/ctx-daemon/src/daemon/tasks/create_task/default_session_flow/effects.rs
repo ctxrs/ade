@@ -22,7 +22,7 @@ pub(super) async fn rollback_new_task_after_default_session_failure(
         }
     };
     match handles
-        .tasks
+        .creation
         .delete_loaded_task_with_cleanup(store, workspace, &task)
         .await
     {
@@ -38,7 +38,11 @@ pub(super) async fn rollback_new_task_after_default_session_failure(
 }
 
 pub(super) async fn emit_task_upsert(handles: &TaskCreationHandles, task_id: TaskId) {
-    if let Err(e) = handles.workspaces.emit_workspace_task_upsert(task_id).await {
+    if let Err(e) = handles
+        .session_admission
+        .emit_workspace_task_upsert(task_id)
+        .await
+    {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
 }

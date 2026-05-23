@@ -205,6 +205,9 @@ const {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanTaskAdmissionDaemonImplementationRatchet,
+  scanTaskAdmissionHandleFieldRatchet,
+  scanTaskAdmissionHandleRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -369,7 +372,7 @@ test("appstate route handle ratchet rejects direct full-state route handles", ()
 });
 
 test("appstate daemon handle construction ratchet rejects new production reconstructions", () => {
-  assert.equal(APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.length, 3);
+  assert.equal(APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.length, 1);
   const violations = scanDaemonHandleConstructionRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/tasks/other.rs",
     contents: `
@@ -420,8 +423,8 @@ test("appstate daemon handle construction ratchet rejects From and into escape h
 
 test("appstate daemon handle construction ratchet preserves known baseline reconstructions", () => {
   const violations = scanDaemonHandleConstructionRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/tasks/create_task.rs",
-    contents: "let daemon = DaemonHandle::new(tasks.state.clone());",
+    filePath: "core/crates/ctx-daemon/src/daemon/runtime.rs",
+    contents: "let handle = DaemonHandle::new(state.clone());",
   });
 
   assert.deepEqual(violations, []);
@@ -1063,6 +1066,55 @@ test("appstate guard rejects task creation placeholder extractors", () => {
       "task creation placeholder transport extractor",
     ],
   );
+});
+
+test("appstate guard rejects task admission broad route handles", () => {
+  const violations = scanTaskAdmissionHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/tasks/creation_session/create.rs",
+    contents: `
+      async fn create_session_for_task(
+        State(tasks): State<TasksHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, ["task admission route extracts broad tasks handle"]);
+});
+
+test("appstate guard rejects task admission broad daemon seams", () => {
+  const daemonViolations = scanTaskAdmissionDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/create_session.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, TasksHandle, SessionsHandle, ProvidersHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+      fn rebuild(handle: &TasksHandle, state: Arc<DaemonState>) {
+        let daemon = DaemonHandle::new(handle.state.clone());
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "task admission daemon implementation uses broad daemon handle",
+    "task admission daemon implementation uses broad task/session/provider/workspace handle",
+    "task admission daemon implementation accepts daemon state",
+  ]));
+
+  const fieldViolations = scanTaskAdmissionHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct TaskCreationHandle {
+        tasks: TasksHandle,
+      }
+      pub struct TaskSessionAdmissionHandle {
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "task admission capability stores broad handle or daemon state",
+    "task admission capability stores broad handle or daemon state",
+  ]);
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {

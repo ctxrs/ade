@@ -12,9 +12,9 @@ use ctx_daemon::daemon::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
-    SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle, TransportHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
-    WorkspacesHandle,
+    SessionsHandle, SettingsHandle, TaskCreationHandle, TaskSessionAdmissionHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -93,6 +93,8 @@ pub struct RouteHandles {
     pub(in crate::api) mobile_secure_proxy: MobileSecureProxyHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
+    pub(in crate::api) task_creation: TaskCreationHandle,
+    pub(in crate::api) task_session_admission: TaskSessionAdmissionHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
@@ -132,6 +134,8 @@ impl RouteHandles {
             mobile_secure_proxy: handle.mobile_secure_proxy(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
+            task_creation: handle.task_creation(),
+            task_session_admission: handle.task_session_admission(),
             workspaces: handle.workspaces(),
             workspace_stream: handle.workspace_stream(),
             provider_accounts: handle.provider_accounts(),
@@ -176,6 +180,8 @@ impl_route_state_extractors! {
     MobileSecureProxyHandle, mobile_secure_proxy;
     SessionsHandle, sessions;
     TasksHandle, tasks;
+    TaskCreationHandle, task_creation;
+    TaskSessionAdmissionHandle, task_session_admission;
     WorkspacesHandle, workspaces;
     WorkspaceStreamHandle, workspace_stream;
     ProviderAccountsHandle, provider_accounts;

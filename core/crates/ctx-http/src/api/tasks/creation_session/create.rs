@@ -1,7 +1,7 @@
 use super::*;
 
 async fn create_session_for_task_inner(
-    tasks: &TasksHandle,
+    tasks: &TaskSessionAdmissionHandle,
     task_id: String,
     headers: HeaderMap,
     req: CreateTaskSessionRouteRequest,
@@ -18,7 +18,7 @@ async fn create_session_for_task_inner(
 }
 
 pub(in crate::api) async fn create_session_for_task(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskSessionAdmissionHandle>,
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<CreateTaskSessionRouteRequest>,

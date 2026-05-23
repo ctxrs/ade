@@ -23,7 +23,7 @@ pub(super) async fn upsert_workspace_task_index(
     ws_id: WorkspaceId,
 ) {
     if let Err(e) = handles
-        .tasks
+        .creation
         .upsert_workspace_task_index(task_id, ws_id)
         .await
     {
@@ -52,7 +52,7 @@ pub(super) async fn load_existing_task_for_request(
     let request = task_record_input(request);
     let indexed_workspace_id = match request.task_id {
         Some(task_id) => handles
-            .sessions
+            .session_admission
             .get_workspace_id_for_task(task_id)
             .await
             .map_err(TaskCreateError::internal)?,

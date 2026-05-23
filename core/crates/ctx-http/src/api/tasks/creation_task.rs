@@ -3,7 +3,7 @@ use super::*;
 type CreateTaskApiError = (StatusCode, Json<ApiErrorResp>);
 
 pub(in crate::api) async fn create_task(
-    State(tasks): State<TasksHandle>,
+    State(tasks): State<TaskCreationHandle>,
     Path(id): Path<String>,
     Json(req): Json<CreateTaskRouteRequest>,
 ) -> Result<Json<TaskRouteResponse>, CreateTaskApiError> {

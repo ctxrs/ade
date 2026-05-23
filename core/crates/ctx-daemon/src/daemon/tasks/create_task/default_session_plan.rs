@@ -21,7 +21,7 @@ pub(super) async fn preflight_default_session_creation(
 ) -> Result<DefaultSessionPlan, TaskCreateError> {
     validate_workspace_root_is_repo(workspace).await?;
     let effective = handles
-        .workspaces
+        .session_admission
         .effective_execution_settings(workspace.id)
         .await
         .map_err(TaskCreateError::internal)?;
