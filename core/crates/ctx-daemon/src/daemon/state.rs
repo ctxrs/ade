@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch, Mutex};
-use tokio::task::JoinHandle;
 
 use crate::daemon::scheduler::SchedulerCommand;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
@@ -43,11 +41,11 @@ use runtime_adapters::{
 
 pub use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
 pub(crate) use types::WorkspaceFileCompletionsCache;
+pub use types::WorktreeBootstrapGate;
 pub use types::{
     AppRuntimeFlags, CoreState, DaemonState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,
 };
-pub use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 
 #[cfg(test)]
 mod tests;

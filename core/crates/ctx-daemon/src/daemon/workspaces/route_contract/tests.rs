@@ -20,12 +20,12 @@ use ctx_core::models::{
     WorkspaceAttachmentKind, WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
 use ctx_route_contracts::workspaces::{
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery,
-    WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind, WorkspaceRouteParams,
-    WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateAgentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
+    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
+    WorkspaceFileCompletionsRouteQuery, WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 use ctx_store::WorktreeBootstrapResultUpdate;
 
@@ -667,7 +667,7 @@ async fn attachment_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.handle().workspaces();
+    let handle = daemon.handle().workspace_attachments();
     let error = handle
         .create_and_sync_workspace_attachment_for_route_params(
             WorkspaceRouteParams::new("not-a-workspace"),
@@ -682,6 +682,53 @@ async fn attachment_route_params_reject_invalid_workspace_id() {
         .unwrap_err();
     assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn attachment_routes_treat_deleting_workspace_as_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace(&daemon, "deleting-attachments").await;
+    daemon.stores().begin_workspace_delete(workspace.id).await;
+    let handle = daemon.handle().workspace_attachments();
+    let params = || WorkspaceRouteParams::new(workspace.id.0.to_string());
+
+    let list_error = handle
+        .list_workspace_attachments_for_route_params(params())
+        .await
+        .unwrap_err();
+    assert_eq!(list_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(list_error.message(), "workspace not found");
+
+    let sync_error = handle
+        .sync_workspace_attachments_for_route_params(
+            params(),
+            serde_json::from_value::<SyncWorkspaceAttachmentsRouteRequest>(serde_json::json!({}))
+                .expect("sync request"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(sync_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(sync_error.message(), "workspace not found");
+
+    let create_error = handle
+        .create_and_sync_workspace_attachment_for_route_params(
+            params(),
+            serde_json::from_value(serde_json::json!({
+                "kind": "reference_repo",
+                "name": "ref",
+                "source": "/tmp/ref"
+            }))
+            .expect("attachment request"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(create_error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(create_error.message(), "workspace not found");
+    daemon.stores().finish_workspace_delete(workspace.id).await;
 }
 
 #[tokio::test]

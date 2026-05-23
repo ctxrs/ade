@@ -1,13 +1,10 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::{SandboxBinding, VcsKind, Workspace, WorkspaceAttachment, Worktree};
+use ctx_core::models::{SandboxBinding, VcsKind, Workspace, Worktree};
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::Store;
-use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_container::WorkspaceContainerStatus;
+use std::path::PathBuf;
 
 use super::handle::WorkspacesHandle;
 use crate::daemon::{settings, WorkspaceStoreAccessError};
@@ -107,17 +104,6 @@ impl WorkspacesHandle {
             .global_store()
             .create_workspace(name, root_path, vcs_kind)
             .await
-    }
-
-    pub async fn list_workspace_attachments(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Vec<WorkspaceAttachment>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        store
-            .list_workspace_attachments(workspace_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
     }
 
     pub(in crate::daemon) async fn existing_workspace_store(
@@ -235,43 +221,6 @@ impl WorkspacesHandle {
             branch_cleanup_error_mode,
         )
         .await
-    }
-
-    pub async fn upsert_workspace_attachment(
-        &self,
-        workspace_id: WorkspaceId,
-        cfg: AttachmentConfig,
-    ) -> anyhow::Result<WorkspaceAttachment> {
-        attachments::upsert_workspace_attachment(self.state.as_ref(), workspace_id, cfg).await
-    }
-
-    pub async fn delete_workspace_attachment(
-        &self,
-        workspace_id: WorkspaceId,
-        kind: ctx_core::models::WorkspaceAttachmentKind,
-        name: &str,
-    ) -> anyhow::Result<bool> {
-        attachments::delete_workspace_attachment(self.state.as_ref(), workspace_id, kind, name)
-            .await
-    }
-
-    pub async fn sync_workspace_attachments(
-        &self,
-        workspace: &Workspace,
-        refresh: bool,
-    ) -> anyhow::Result<Vec<WorkspaceAttachment>> {
-        let attachments =
-            attachments::sync_workspace_attachments(Arc::clone(&self.state), workspace, refresh)
-                .await?;
-        let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
-            self.state.as_ref(),
-            workspace,
-            &attachments,
-            false,
-            false,
-        )
-        .await;
-        Ok(attachments)
     }
 
     pub async fn ensure_task_commit_hook(

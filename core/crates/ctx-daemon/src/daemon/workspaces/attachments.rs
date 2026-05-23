@@ -1,63 +1,49 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{Workspace, WorkspaceAttachment, WorkspaceAttachmentKind};
-use ctx_workspace_attachments as workspace_attachments;
+use ctx_core::models::{Workspace, WorkspaceAttachment, Worktree, WorktreeAttachmentMount};
 
+use crate::daemon::handle::ProtectedWorkspaceStoreLookup;
 use crate::daemon::DaemonState;
 
 mod hosts;
 mod materialization;
 mod mounts;
+mod runtime;
 
-pub use mounts::{
-    ensure_workspace_attachments_for_worktrees_with_attachments,
-    ensure_worktree_attachment_mounts_if_materialized,
-};
+pub(crate) use runtime::{WorkspaceAttachmentMaterializationRuntime, WorkspaceAttachmentsRuntime};
 
-use self::materialization::{cancel_attachment_materialization, spawn_attachment_materialization};
+pub(crate) fn runtime_from_state(state: &Arc<DaemonState>) -> Arc<WorkspaceAttachmentsRuntime> {
+    Arc::new(WorkspaceAttachmentsRuntime::new(
+        state.core.data_root.clone(),
+        state.core.daemon_url.clone(),
+        state.global_store().clone(),
+        ProtectedWorkspaceStoreLookup::new(
+            state.core.stores.clone(),
+            Arc::clone(&state.sessions),
+            Arc::clone(&state.transport.merge_queue),
+        ),
+        Arc::clone(&state.execution.harness),
+        Arc::clone(&state.workspaces.attachment_materialization),
+    ))
+}
 
 pub async fn sync_workspace_attachments(
     state: Arc<DaemonState>,
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
-    let result =
-        workspace_attachments::sync_workspace_attachments(state.as_ref(), workspace, refresh)
-            .await?;
-    for plan in result.plans {
-        spawn_attachment_materialization(
-            Arc::clone(&state),
-            workspace.clone(),
-            plan.id,
-            plan.refresh,
-        )
-        .await;
-    }
-    Ok(result.attachments)
+    runtime_from_state(&state)
+        .sync_workspace_attachments(workspace, refresh)
+        .await
 }
 
-pub async fn upsert_workspace_attachment(
-    state: &DaemonState,
-    workspace_id: WorkspaceId,
-    cfg: ctx_workspace_attachments::AttachmentConfig,
-) -> Result<WorkspaceAttachment> {
-    workspace_attachments::upsert_workspace_attachment(state, workspace_id, cfg).await
-}
-
-pub async fn delete_workspace_attachment(
-    state: &DaemonState,
-    workspace_id: WorkspaceId,
-    kind: WorkspaceAttachmentKind,
-    name: &str,
-) -> Result<bool> {
-    let Some(target) =
-        workspace_attachments::find_workspace_attachment(state, workspace_id, kind, name).await?
-    else {
-        return Ok(false);
-    };
-    cancel_attachment_materialization(state, target.id).await;
-    workspace_attachments::delete_workspace_attachment(state, &target).await?;
-    Ok(true)
+pub async fn ensure_worktree_attachment_mounts_if_materialized(
+    state: &Arc<DaemonState>,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<Vec<WorktreeAttachmentMount>> {
+    runtime_from_state(state)
+        .ensure_worktree_attachment_mounts_if_materialized(workspace, worktree)
+        .await
 }

@@ -5,14 +5,13 @@ use ctx_core::models::{Workspace, WorkspaceAttachment, WorkspaceAttachmentStatus
 use ctx_workspace_attachments as workspace_attachments;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use super::ensure_workspace_attachments_for_worktrees_with_attachments;
-use crate::daemon::execution_effective;
-use crate::daemon::DaemonState;
+use super::mounts::ensure_workspace_attachments_for_worktrees_with_attachments;
+use super::runtime::WorkspaceAttachmentsRuntime;
 
 #[async_trait::async_trait]
-impl workspace_attachments::WorkspaceAttachmentsHost for DaemonState {
+impl workspace_attachments::WorkspaceAttachmentsHost for WorkspaceAttachmentsRuntime {
     fn data_root(&self) -> &std::path::Path {
-        &self.core.data_root
+        self.data_root()
     }
 
     async fn list_workspace_attachments(
@@ -88,13 +87,13 @@ impl workspace_attachments::WorkspaceAttachmentsHost for DaemonState {
 }
 
 #[async_trait::async_trait]
-impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for DaemonState {
+impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for WorkspaceAttachmentsRuntime {
     fn data_root(&self) -> &std::path::Path {
-        &self.core.data_root
+        self.data_root()
     }
 
     fn daemon_url(&self) -> &str {
-        &self.core.daemon_url
+        self.daemon_url()
     }
 
     async fn get_worktree(
@@ -120,7 +119,9 @@ impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for DaemonState {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<ctx_settings_model::ExecutionSettings> {
-        execution_effective::effective_execution_settings(self, workspace_id).await
+        let workspace_store = self.store_for_workspace(workspace_id).await?;
+        ctx_settings_service::effective_execution_settings(self.global_store(), &workspace_store)
+            .await
     }
 
     async fn ensure_workspace_container_for_worktree(
@@ -129,14 +130,24 @@ impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for DaemonState {
         worktree: &Worktree,
         settings: &ctx_settings_model::ExecutionSettings,
     ) -> Result<()> {
-        self.execution
-            .harness
+        self.harness()
             .ensure_workspace_container_for_worktree(
                 workspace,
                 worktree,
                 settings,
-                &self.core.daemon_url,
+                self.daemon_url(),
             )
             .await
+    }
+}
+
+#[async_trait::async_trait]
+impl ctx_worktree_data_plane::WorktreeDataPlaneHost for WorkspaceAttachmentsRuntime {
+    async fn get_workspace(state: &Self, workspace_id: WorkspaceId) -> Result<Option<Workspace>> {
+        state.global_store().get_workspace(workspace_id).await
+    }
+
+    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<ctx_store::Store> {
+        state.store_for_workspace(workspace_id).await
     }
 }

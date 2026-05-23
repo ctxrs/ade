@@ -13,6 +13,8 @@ use ctx_worktree_vcs_service::{
     WorktreeVcsSnapshotCacheEntry,
 };
 
+use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
+
 pub(crate) type WorkspaceFileCompletionsCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>>;
 
@@ -58,9 +60,7 @@ pub struct WorkspaceRuntime {
         Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
     pub(crate) worktree_bootstrap_gates:
         Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
-    pub(crate) attachment_materializations:
-        Mutex<HashMap<WorkspaceAttachmentId, AttachmentMaterializationTask>>,
-    pub(crate) attachment_materialization_generation: AtomicU64,
+    pub(crate) attachment_materialization: Arc<WorkspaceAttachmentMaterializationRuntime>,
 }
 
 pub type ProviderRuntime = ctx_provider_runtime::ProviderRuntime;
@@ -107,11 +107,6 @@ pub enum StoreLookup {
 pub struct WorktreeBootstrapGate {
     pub wait_for_completion: bool,
     pub done_tx: watch::Sender<bool>,
-}
-
-pub struct AttachmentMaterializationTask {
-    pub generation: u64,
-    pub handle: JoinHandle<()>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

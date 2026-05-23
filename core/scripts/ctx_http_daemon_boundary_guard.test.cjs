@@ -235,6 +235,9 @@ const {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceAttachmentsDaemonImplementationRatchet,
+  scanWorkspaceAttachmentsHandleFieldRatchet,
+  scanWorkspaceAttachmentsRouteExtractorRatchet,
   scanWorkspaceMergeQueueConfigDaemonImplementationRatchet,
   scanWorkspaceMergeQueueConfigHandleFieldRatchet,
   scanWorkspaceMergeQueueConfigRouteExtractorRatchet,
@@ -3357,6 +3360,171 @@ test("appstate guard rejects workspace merge queue config broad handle fields", 
       }
     `,
   });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace attachments extraction outside attachment routes", () => {
+  const violations = scanWorkspaceAttachmentsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      async fn handler(
+        State(state): State<WorkspaceAttachmentsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace attachments route extracts WorkspaceAttachmentsHandle outside attachment routes",
+  ]);
+});
+
+test("appstate guard rejects workspace attachments broad route and router composition", () => {
+  const routeViolations = scanWorkspaceAttachmentsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      pub(in crate::api) async fn list_workspace_attachments(
+        State(workspaces): State<WorkspacesHandle>,
+      ) {}
+      pub(in crate::api) async fn sync_workspace_attachments(
+        State(attachments): State<WorkspaceAttachmentsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes("workspace attachments route uses broad workspace handle"),
+  );
+
+  const routerViolations = scanWorkspaceAttachmentsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_attachments: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace attachments router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace attachments daemon facade broad seams", () => {
+  const violations = scanWorkspaceAttachmentsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/attachments.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, DaemonState, WorkspacesHandle};
+      impl WorkspaceAttachmentsHandle {
+        pub async fn bad(&self, daemon: DaemonHandle, state: Arc<DaemonState>, workspaces: WorkspacesHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace attachments daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace attachments daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace attachments daemon facade uses broad workspace handle"),
+  );
+});
+
+test("appstate guard rejects legacy workspace attachment facades on broad handle", () => {
+  const violations = scanWorkspaceAttachmentsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn list_workspace_attachments(&self) {}
+        pub async fn upsert_workspace_attachment(&self) {}
+        pub async fn delete_workspace_attachment(&self) {}
+        pub async fn sync_workspace_attachments(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.equal(
+    violations.filter(
+      (name) => name === "workspace attachment facade remains on broad workspace handle",
+    ).length,
+    4,
+  );
+});
+
+test("appstate guard rejects workspace attachments broad handle and runtime fields", () => {
+  const fieldViolations = scanWorkspaceAttachmentsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceAttachmentsHandle {
+        state: Arc<DaemonState>,
+        workspaces: WorkspacesHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace attachments capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace attachments capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const runtimeViolations = scanWorkspaceAttachmentsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/attachments/runtime.rs",
+    contents: `
+      pub(crate) struct WorkspaceAttachmentsRuntime {
+        daemon: DaemonHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    runtimeViolations.includes(
+      "workspace attachments runtime stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    runtimeViolations.includes(
+      "workspace attachments runtime exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = [
+    ...scanWorkspaceAttachmentsHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        pub struct WorkspaceAttachmentsHandle {
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          runtime: Arc<WorkspaceAttachmentsRuntime>,
+        }
+      `,
+    }),
+    ...scanWorkspaceAttachmentsHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/attachments/runtime.rs",
+      contents: `
+        pub(crate) struct WorkspaceAttachmentsRuntime {
+          data_root: PathBuf,
+          daemon_url: String,
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          harness: Arc<HarnessRuntimeManager>,
+          materialization: Arc<WorkspaceAttachmentMaterializationRuntime>,
+        }
+      `,
+    }),
+  ];
 
   assert.deepEqual(narrowViolations, []);
 });

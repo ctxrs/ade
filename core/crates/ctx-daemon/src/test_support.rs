@@ -3673,24 +3673,22 @@ impl TestDaemon {
         worktree: &Worktree,
         configs: impl IntoIterator<Item = ctx_workspace_attachments::AttachmentConfig>,
     ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
+        let attachment_runtime = daemon::workspaces::attachments::runtime_from_state(&self.state);
         for config in configs {
-            ctx_workspace_attachments::upsert_workspace_attachment(
-                self.state.as_ref(),
-                workspace.id,
-                config,
-            )
-            .await?;
+            attachment_runtime
+                .upsert_workspace_attachment(workspace.id, config)
+                .await?;
         }
 
         let sync = ctx_workspace_attachments::sync_workspace_attachments(
-            self.state.as_ref(),
+            attachment_runtime.as_ref(),
             workspace,
             false,
         )
         .await?;
         for plan in sync.plans {
             ctx_workspace_attachments::run_attachment_materialization(
-                self.state.as_ref(),
+                attachment_runtime.as_ref(),
                 workspace,
                 plan.id,
                 plan.refresh,
@@ -3699,7 +3697,7 @@ impl TestDaemon {
         }
 
         daemon::workspaces::ensure_worktree_attachment_mounts_if_materialized(
-            self.state.as_ref(),
+            &self.state,
             workspace,
             worktree,
         )

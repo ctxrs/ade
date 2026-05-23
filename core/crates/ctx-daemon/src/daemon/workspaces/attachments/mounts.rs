@@ -7,35 +7,34 @@ use ctx_core::models::{
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use crate::daemon::execution_effective;
-use crate::daemon::DaemonState;
+use super::runtime::WorkspaceAttachmentsRuntime;
 
 pub async fn ensure_worktree_attachment_mounts_if_materialized(
-    state: &DaemonState,
+    runtime: &WorkspaceAttachmentsRuntime,
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<Vec<WorktreeAttachmentMount>> {
-    let store = state.store_for_workspace(workspace.id).await?;
+    let store = runtime.store_for_workspace(workspace.id).await?;
     let attachments = store.list_workspace_attachments(workspace.id).await?;
     let ready = attachments
         .into_iter()
         .filter(|attachment| attachment.status == WorkspaceAttachmentStatus::Ready)
         .filter(|attachment| {
             ctx_workspace_attachments::materialized_path_for_attachment(
-                &state.core.data_root,
+                runtime.data_root(),
                 attachment,
             )
             .exists()
         })
         .collect::<Vec<_>>();
     ensure_worktree_attachment_mounts_for_attachments(
-        state, workspace, worktree, &ready, false, false,
+        runtime, workspace, worktree, &ready, false, false,
     )
     .await
 }
 
 pub async fn ensure_worktree_attachment_mounts_for_attachments(
-    state: &DaemonState,
+    runtime: &WorkspaceAttachmentsRuntime,
     workspace: &Workspace,
     worktree: &Worktree,
     attachments: &[WorkspaceAttachment],
@@ -46,18 +45,23 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
         return Ok(vec![]);
     }
 
-    let store = state.store_for_workspace(workspace.id).await?;
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let store = runtime.store_for_workspace(workspace.id).await?;
+    let data_plane = resolve_worktree_data_plane(runtime, worktree).await?;
+    let workspace_store = runtime.store_for_workspace(workspace.id).await?;
+    let effective = ctx_settings_service::effective_execution_settings(
+        runtime.global_store(),
+        &workspace_store,
+    )
+    .await?;
     let _effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
     let worktree_root = data_plane.live_worktree_root;
-    ctx_workspace_attachments::ensure_git_exclude(state, workspace, worktree.id, &worktree_root)
+    ctx_workspace_attachments::ensure_git_exclude(runtime, workspace, worktree.id, &worktree_root)
         .await?;
 
     let mut mounts = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         match ctx_workspace_attachments::ensure_attachment_mount(
-            state,
+            runtime,
             workspace,
             worktree.id,
             &worktree_root,
@@ -94,17 +98,17 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
 }
 
 pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
-    state: &DaemonState,
+    runtime: &WorkspaceAttachmentsRuntime,
     workspace: &Workspace,
     attachments: &[WorkspaceAttachment],
     refresh: bool,
     materialize: bool,
 ) -> Result<()> {
-    let store = state.store_for_workspace(workspace.id).await?;
+    let store = runtime.store_for_workspace(workspace.id).await?;
     let worktrees = store.list_worktrees(workspace.id).await?;
     for worktree in worktrees {
         let _ = ensure_worktree_attachment_mounts_for_attachments(
-            state,
+            runtime,
             workspace,
             &worktree,
             attachments,

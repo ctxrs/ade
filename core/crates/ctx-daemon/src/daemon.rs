@@ -84,7 +84,7 @@ pub use handle::{
     TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
-    WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
+    WorkspaceAttachmentsHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
     WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
     WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
@@ -106,8 +106,7 @@ pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
-    AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
-    TimedEntry, WorkspaceStoreAccessError,
+    CacheSweepConfig, SessionStoreAccessError, StoreLookup, TimedEntry, WorkspaceStoreAccessError,
 };
 pub use workspaces::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 

@@ -1,5 +1,3 @@
-use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Workspace;
 use ctx_observability::logs;
 use ctx_settings_service::EffectiveExecutionSettingsError;
 
@@ -7,7 +5,7 @@ use crate::daemon::RouteFileDownloadError;
 
 use super::super::{
     FileCompletionsError, FileCompletionsErrorKind, WorkspaceDeleteError,
-    WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle,
+    WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError,
 };
 
 pub(super) fn workspace_hydration_route_error(
@@ -105,15 +103,4 @@ pub(in crate::daemon::workspaces) fn file_completions_route_error(
             WorkspaceRouteError::internal(error.message())
         }
     }
-}
-
-pub(super) async fn require_workspace_for_route(
-    handle: &WorkspacesHandle,
-    workspace_id: WorkspaceId,
-) -> Result<Workspace, WorkspaceRouteError> {
-    handle
-        .get_workspace(workspace_id)
-        .await
-        .map_err(WorkspaceRouteError::internal)?
-        .ok_or_else(|| WorkspaceRouteError::not_found("workspace not found"))
 }

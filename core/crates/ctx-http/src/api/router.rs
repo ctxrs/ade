@@ -16,11 +16,12 @@ use ctx_daemon::daemon::{
     SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
     TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceExecutionConfigHandle,
-    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle,
-    WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
-    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
+    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
+    WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
+    WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
+    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
+    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
+    WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -100,6 +101,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_worktree: WorkspaceWorktreeHandle,
     pub(in crate::api) workspace_registry: WorkspaceRegistryHandle,
     pub(in crate::api) workspace_merge_queue_config: WorkspaceMergeQueueConfigHandle,
+    pub(in crate::api) workspace_attachments: WorkspaceAttachmentsHandle,
     pub(in crate::api) workspace_primary_branch: WorkspacePrimaryBranchHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
@@ -161,6 +163,7 @@ impl RouteHandles {
             workspace_worktree: handle.workspace_worktree(),
             workspace_registry: handle.workspace_registry(),
             workspace_merge_queue_config: handle.workspace_merge_queue_config(),
+            workspace_attachments: handle.workspace_attachments(),
             workspace_primary_branch: handle.workspace_primary_branch(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
@@ -227,6 +230,7 @@ impl_route_state_extractors! {
     WorkspaceWorktreeHandle, workspace_worktree;
     WorkspaceRegistryHandle, workspace_registry;
     WorkspaceMergeQueueConfigHandle, workspace_merge_queue_config;
+    WorkspaceAttachmentsHandle, workspace_attachments;
     WorkspacePrimaryBranchHandle, workspace_primary_branch;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;

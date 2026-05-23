@@ -3,14 +3,10 @@ mod common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
-    WorkspaceAttachmentStatus,
-};
+use ctx_core::models::{WorkspaceAttachment, WorkspaceAttachmentKind, WorkspaceAttachmentStatus};
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings,
 };
-use ctx_workspace_attachments::AttachmentConfig;
 use serde_json::json;
 
 #[tokio::test]
@@ -118,24 +114,21 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
     let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let attachment = state
-        .handle()
-        .workspaces()
-        .upsert_workspace_attachment(
-            workspace.id,
-            AttachmentConfig {
-                kind: WorkspaceAttachmentKind::ReferenceRepo,
-                name: "ref-fixture".to_string(),
-                source: repo.path().to_string_lossy().to_string(),
-                revision: None,
-                subpath: None,
-                mount_relpath: None,
-                mode: Some(AttachmentMode::Ro),
-                update_policy: Some(AttachmentUpdatePolicy::Manual),
-            },
-        )
-        .await
-        .unwrap();
+    let (create_status, created): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        Some(json!({
+            "kind": "reference_repo",
+            "name": "ref-fixture",
+            "source": repo.path().to_string_lossy(),
+            "mode": "ro",
+            "update_policy": "manual"
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    let attachment = created.into_iter().next().expect("created attachment");
 
     let materialized = fixture
         .data_dir

@@ -131,6 +131,14 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_attachments(&self) -> WorkspaceAttachmentsHandle {
+        WorkspaceAttachmentsHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            crate::daemon::workspaces::attachments::runtime_from_state(&self.state),
+        )
+    }
+
     pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
         let refresh_vcs_snapshot = Arc::new({
             let state = Arc::clone(&self.state);
@@ -474,9 +482,7 @@ impl DaemonHandle {
                 let state = Arc::clone(&state);
                 Box::pin(async move {
                     crate::daemon::workspaces::ensure_worktree_attachment_mounts_if_materialized(
-                        state.as_ref(),
-                        &workspace,
-                        &worktree,
+                        &state, &workspace, &worktree,
                     )
                     .await
                     .map(|_| ())
@@ -1558,6 +1564,46 @@ impl WorkspaceMergeQueueConfigHandle {
             workspace_id,
         )
         .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceAttachmentsHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    runtime: Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime>,
+}
+
+impl WorkspaceAttachmentsHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        runtime: Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime>,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            runtime,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn runtime(
+        &self,
+    ) -> &Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime> {
+        &self.runtime
     }
 }
 

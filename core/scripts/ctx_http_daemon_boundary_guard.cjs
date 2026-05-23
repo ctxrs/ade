@@ -285,6 +285,19 @@ const workspaceMergeQueueConfigDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/merge_queue_config.rs",
 ]);
 
+const workspaceAttachmentsRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+]);
+
+const workspaceAttachmentsDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/attachments.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments/hosts.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments/materialization.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments/mounts.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments/runtime.rs",
+]);
+
 const workspacePrimaryBranchRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
 ]);
@@ -10336,6 +10349,188 @@ function scanWorkspaceMergeQueueConfigHandleFieldRatchet({ filePath, contents })
   return violations;
 }
 
+function scanWorkspaceAttachmentsRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const extractorRegex =
+    /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceAttachmentsHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceAttachmentsHandle\s*>)/gu;
+
+  if (!workspaceAttachmentsRouteExtractorAllowedPaths.has(filePath)) {
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace attachments route extracts WorkspaceAttachmentsHandle outside attachment routes",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspaceAttachmentsRouteExtractorAllowedPaths.has(filePath)) {
+    const broadWorkspaceRegex = /\bState\s*(?:\([^)]*\))?\s*:\s*State\s*<\s*WorkspacesHandle\s*>|\bWorkspacesHandle\b/gu;
+    for (
+      let match = broadWorkspaceRegex.exec(contents);
+      match;
+      match = broadWorkspaceRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace attachments route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_attachments\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace attachments router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceAttachmentsDaemonImplementationRatchet({
+  filePath,
+  contents,
+}) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/workspaces.rs" ||
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/management_route_params.rs"
+  ) {
+    const legacyFacadeRegex =
+      /\bpub\s+(?:async\s+)?fn\s+(?:list_workspace_attachments|upsert_workspace_attachment|delete_workspace_attachment|sync_workspace_attachments|list_workspace_attachments_for_route_params|sync_workspace_attachments_for_route_params|create_and_sync_workspace_attachment_for_route_params|delete_and_sync_workspace_attachment_for_route_params)\b/gu;
+    for (
+      let match = legacyFacadeRegex.exec(contents);
+      match;
+      match = legacyFacadeRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace attachment facade remains on broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (!workspaceAttachmentsDaemonImplementationPaths.has(filePath)) {
+    return violations;
+  }
+
+  const checks = [
+    {
+      name: "workspace attachments daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace attachments daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace attachments daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceAttachmentsHandleFieldRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|WorkspaceExecutionConfigHandle|WorkspaceFileCompletionsHandle|WorkspaceHarnessContainerHandle|WorkspaceWorktreeHandle|WorkspaceRegistryHandle|WorkspaceMergeQueueConfigHandle|WorkspacePrimaryBranchHandle|WorkspaceProviderModelPreferenceHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const scanStruct = (typeName, capabilityName) => {
+    const block = rustStructBlockForType({ contents, typeName });
+    if (!block) {
+      return;
+    }
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(block.text);
+      broad;
+      broad = broadFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: `${capabilityName} stores broad handle or daemon state`,
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    genericEscapeFieldRegex.lastIndex = 0;
+    for (
+      let escape = genericEscapeFieldRegex.exec(block.text);
+      escape;
+      escape = genericEscapeFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: `${capabilityName} exposes generic full-state escape hatch`,
+        text: lines[line - 1]?.trim() ?? escape[0],
+      });
+    }
+  };
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    scanStruct("WorkspaceAttachmentsHandle", "workspace attachments capability");
+  }
+  if (
+    filePath ===
+    "core/crates/ctx-daemon/src/daemon/workspaces/attachments/runtime.rs"
+  ) {
+    scanStruct("WorkspaceAttachmentsRuntime", "workspace attachments runtime");
+  }
+
+  return violations;
+}
+
 function scanWorkspacePrimaryBranchRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -10913,6 +11108,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceAttachmentsRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspacePrimaryBranchRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -11031,6 +11230,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceMergeQueueConfigHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceAttachmentsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -11169,6 +11372,14 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceAttachmentsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceAttachmentsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -11817,6 +12028,9 @@ module.exports = {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceAttachmentsDaemonImplementationRatchet,
+  scanWorkspaceAttachmentsHandleFieldRatchet,
+  scanWorkspaceAttachmentsRouteExtractorRatchet,
   scanWorkspaceMergeQueueConfigDaemonImplementationRatchet,
   scanWorkspaceMergeQueueConfigHandleFieldRatchet,
   scanWorkspaceMergeQueueConfigRouteExtractorRatchet,

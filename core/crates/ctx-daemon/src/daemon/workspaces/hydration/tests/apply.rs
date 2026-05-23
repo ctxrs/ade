@@ -1,6 +1,7 @@
 use super::super::{apply_workspace_snapshot_hydration_payload, WorkspaceSnapshotHydrationPayload};
 use super::fixtures::{test_head, test_session_metadata, test_task};
 use crate::daemon::state::WorkspaceRuntime;
+use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -10,7 +11,6 @@ use ctx_core::models::{
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_worktree_vcs_service::WorktreeVcsSchedulerRuntime;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -90,7 +90,6 @@ fn test_workspace_runtime() -> WorkspaceRuntime {
         workspace_active_snapshot_cache: AsyncMutex::new(HashMap::new()),
         workspace_active_heads_cache: AsyncMutex::new(HashMap::new()),
         worktree_bootstrap_gates: AsyncMutex::new(HashMap::new()),
-        attachment_materializations: AsyncMutex::new(HashMap::new()),
-        attachment_materialization_generation: AtomicU64::new(0),
+        attachment_materialization: Arc::new(WorkspaceAttachmentMaterializationRuntime::new()),
     }
 }

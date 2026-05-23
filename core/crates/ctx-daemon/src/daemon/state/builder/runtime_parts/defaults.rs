@@ -1,4 +1,5 @@
 use super::super::super::*;
+use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
 use ctx_worktree_vcs_service::{
     worktree_vcs_scheduler_concurrency_from_env, WorktreeVcsSchedulerRuntime,
 };
@@ -27,8 +28,7 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
         workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
         workspace_active_heads_cache: Mutex::new(HashMap::new()),
         worktree_bootstrap_gates: Mutex::new(HashMap::new()),
-        attachment_materializations: Mutex::new(HashMap::new()),
-        attachment_materialization_generation: AtomicU64::new(0),
+        attachment_materialization: Arc::new(WorkspaceAttachmentMaterializationRuntime::new()),
     }
 }
 

@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn list_workspace_attachments(
-    State(workspaces): State<WorkspacesHandle>,
+    State(attachments): State<WorkspaceAttachmentsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<WorkspaceAttachmentRouteResponse>>, StatusCode> {
-    workspaces
+    attachments
         .list_workspace_attachments_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map(Json)
@@ -12,11 +12,11 @@ pub(in crate::api) async fn list_workspace_attachments(
 }
 
 pub(in crate::api) async fn sync_workspace_attachments(
-    State(workspaces): State<WorkspacesHandle>,
+    State(attachments): State<WorkspaceAttachmentsHandle>,
     Path(id): Path<String>,
     Json(req): Json<SyncWorkspaceAttachmentsRouteRequest>,
 ) -> Result<Json<Vec<WorkspaceAttachmentRouteResponse>>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    attachments
         .sync_workspace_attachments_for_route_params(WorkspaceRouteParams::new(id), req)
         .await
         .map(Json)
