@@ -2,9 +2,8 @@ use crate::daemon::workspaces::WorkspacesHandle;
 use ctx_route_contracts::workspaces::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, WorkspaceAttachmentRouteResponse,
-    WorkspaceConfigUpdateResult, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteParams,
+    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspaceRouteError, WorkspaceRouteParams,
 };
 
 impl WorkspacesHandle {
@@ -63,25 +62,6 @@ impl WorkspacesHandle {
     ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
         self.update_workspace_merge_queue_config_for_route(workspace_id, request)
-            .await
-    }
-
-    pub async fn workspace_primary_branch_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-    ) -> Result<WorkspacePrimaryBranchSnapshot, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.workspace_primary_branch_for_request(workspace_id)
-            .await
-    }
-
-    pub async fn update_workspace_primary_branch_for_route_params(
-        &self,
-        params: WorkspaceRouteParams,
-        request: UpdateWorkspacePrimaryBranchRequest,
-    ) -> Result<WorkspacePrimaryBranchSnapshot, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.update_workspace_primary_branch_for_request(workspace_id, request)
             .await
     }
 }

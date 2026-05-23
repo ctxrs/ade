@@ -165,6 +165,32 @@ async fn create_workspace_route_persists_detected_primary_branch() {
 }
 
 #[tokio::test]
+async fn invalid_workspace_primary_branch_routes_return_bad_request() {
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/workspaces/not-a-workspace/primary_branch")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/workspaces/not-a-workspace/primary_branch")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"primary_branch": "main"}).to_string()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    daemon.request_shutdown();
+}
+
+#[tokio::test]
 async fn invalid_worktree_routes_return_bad_request() {
     let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
     let daemon = fixture.daemon();

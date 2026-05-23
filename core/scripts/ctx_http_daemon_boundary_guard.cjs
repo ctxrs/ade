@@ -277,6 +277,14 @@ const workspaceRegistryDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
 ]);
 
+const workspacePrimaryBranchRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+]);
+
+const workspacePrimaryBranchDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/primary_branch.rs",
+]);
+
 const workspaceProviderModelPreferenceRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
 ]);
@@ -7950,7 +7958,10 @@ function rustStructBlockForType({ contents, typeName }) {
 }
 
 function rustFunctionBlockForName({ contents, fnName }) {
-  const regex = new RegExp(`\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?fn\\s+${fnName}\\s*\\(`, "gu");
+  const regex = new RegExp(
+    `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${fnName}\\s*\\(`,
+    "gu",
+  );
   const match = regex.exec(contents);
   if (!match) {
     return null;
@@ -10105,6 +10116,215 @@ function scanWorkspaceRegistryHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspacePrimaryBranchRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const extractorRegex =
+    /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspacePrimaryBranchHandle\s*>/gu;
+
+  if (!workspacePrimaryBranchRouteExtractorAllowedPaths.has(filePath)) {
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace primary branch route extracts WorkspacePrimaryBranchHandle outside management primary-branch route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/workspaces/management.rs") {
+    const primaryBranchBlocks = [
+      "get_workspace_primary_branch",
+      "update_workspace_primary_branch",
+    ]
+      .map((fnName) => rustFunctionBlockForName({ contents, fnName }))
+      .filter(Boolean);
+
+    const isInPrimaryBranchBlock = (index) =>
+      primaryBranchBlocks.some(
+        (block) => index >= block.index && index < block.index + block.text.length,
+      );
+
+    extractorRegex.lastIndex = 0;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      if (!isInPrimaryBranchBlock(match.index)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "workspace primary branch handle used outside primary-branch route",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    for (const primaryBranchBlock of primaryBranchBlocks) {
+      if (/\bWorkspacesHandle\b/u.test(primaryBranchBlock.text)) {
+        const line = contents.slice(0, primaryBranchBlock.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "workspace primary branch route uses broad workspace handle",
+          text: lines[line - 1]?.trim() ?? "workspace primary branch route",
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_primary_branch\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace primary branch router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspacePrimaryBranchDaemonImplementationRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/workspaces/management.rs" ||
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/management_route_params.rs"
+  ) {
+    const legacyFacadeRegex =
+      /\bpub\s+(?:async\s+)?fn\s+(?:update_workspace_primary_branch|load_workspace_primary_branch_config|update_workspace_primary_branch_config|workspace_primary_branch_for_request|update_workspace_primary_branch_for_request|workspace_primary_branch_for_route_params|update_workspace_primary_branch_for_route_params|refresh_worktree_vcs_snapshot)\b/gu;
+    for (
+      let match = legacyFacadeRegex.exec(contents);
+      match;
+      match = legacyFacadeRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace primary branch facade remains on broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (!workspacePrimaryBranchDaemonImplementationPaths.has(filePath)) {
+    return violations;
+  }
+
+  const checks = [
+    {
+      name: "workspace primary branch daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace primary branch daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace primary branch daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace primary branch daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+    {
+      name: "workspace primary branch daemon facade exposes refresh force flag",
+      regex: /\bforce_emit\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspacePrimaryBranchHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|WorkspaceExecutionConfigHandle|WorkspaceFileCompletionsHandle|WorkspaceHarnessContainerHandle|WorkspaceWorktreeHandle|WorkspaceRegistryHandle|WorkspaceProviderModelPreferenceHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspacePrimaryBranchHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace primary branch capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace primary branch capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -10469,6 +10689,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspacePrimaryBranchRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -10579,6 +10803,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceRegistryHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspacePrimaryBranchHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10709,6 +10937,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceRegistryDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspacePrimaryBranchDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -11353,6 +11585,9 @@ module.exports = {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspacePrimaryBranchDaemonImplementationRatchet,
+  scanWorkspacePrimaryBranchHandleFieldRatchet,
+  scanWorkspacePrimaryBranchRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,

@@ -18,8 +18,9 @@ use ctx_daemon::daemon::{
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceExecutionConfigHandle,
     WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle,
-    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
-    WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
+    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
+    WorkspaceWorktreeHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -98,6 +99,7 @@ pub struct RouteHandles {
     pub(in crate::api) workspace_provider_model_preferences: WorkspaceProviderModelPreferenceHandle,
     pub(in crate::api) workspace_worktree: WorkspaceWorktreeHandle,
     pub(in crate::api) workspace_registry: WorkspaceRegistryHandle,
+    pub(in crate::api) workspace_primary_branch: WorkspacePrimaryBranchHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
     pub(in crate::api) update_activity: UpdateActivityHandle,
@@ -157,6 +159,7 @@ impl RouteHandles {
             workspace_provider_model_preferences: handle.workspace_provider_model_preferences(),
             workspace_worktree: handle.workspace_worktree(),
             workspace_registry: handle.workspace_registry(),
+            workspace_primary_branch: handle.workspace_primary_branch(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
             update_activity: handle.update_activity(),
@@ -221,6 +224,7 @@ impl_route_state_extractors! {
     WorkspaceProviderModelPreferenceHandle, workspace_provider_model_preferences;
     WorkspaceWorktreeHandle, workspace_worktree;
     WorkspaceRegistryHandle, workspace_registry;
+    WorkspacePrimaryBranchHandle, workspace_primary_branch;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;
     UpdateActivityHandle, update_activity;

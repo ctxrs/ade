@@ -235,6 +235,9 @@ const {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspacePrimaryBranchDaemonImplementationRatchet,
+  scanWorkspacePrimaryBranchHandleFieldRatchet,
+  scanWorkspacePrimaryBranchRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -3195,6 +3198,163 @@ test("appstate guard rejects workspace registry broad handle fields", () => {
         global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
         telemetry: Telemetry,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace primary branch extraction outside allowed route", () => {
+  const violations = scanWorkspacePrimaryBranchRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      async fn handler(
+        State(state): State<WorkspacePrimaryBranchHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace primary branch route extracts WorkspacePrimaryBranchHandle outside management primary-branch route",
+  ]);
+});
+
+test("appstate guard rejects workspace primary branch broad route and router composition", () => {
+  const routeViolations = scanWorkspacePrimaryBranchRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      pub(in crate::api) async fn get_workspace_primary_branch(
+        State(workspaces): State<WorkspacesHandle>,
+      ) {}
+      pub(in crate::api) async fn update_workspace_primary_branch(
+        State(primary_branch): State<WorkspacePrimaryBranchHandle>,
+      ) {}
+      pub(in crate::api) async fn get_merge_queue_config(
+        State(primary_branch): State<WorkspacePrimaryBranchHandle>,
+      ) {}
+      pub(in crate::api) async fn get_execution_config(
+        State(primary_branch): State<WorkspacePrimaryBranchHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes("workspace primary branch route uses broad workspace handle"),
+  );
+  assert(
+    routeViolations.filter(
+      (name) => name === "workspace primary branch handle used outside primary-branch route",
+    ).length === 2,
+  );
+
+  const routerViolations = scanWorkspacePrimaryBranchRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_primary_branch: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace primary branch router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace primary branch daemon facade broad seams", () => {
+  const violations = scanWorkspacePrimaryBranchDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/primary_branch.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = daemon;
+          let force_emit = true;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace primary branch daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace primary branch daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace primary branch daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace primary branch daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+  assert(
+    violations.includes("workspace primary branch daemon facade exposes refresh force flag"),
+  );
+});
+
+test("appstate guard rejects legacy workspace primary branch facades on broad handle", () => {
+  const violations = scanWorkspacePrimaryBranchDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn update_workspace_primary_branch(&self) {}
+        pub async fn load_workspace_primary_branch_config(&self) {}
+        pub async fn update_workspace_primary_branch_config(&self) {}
+        pub async fn workspace_primary_branch_for_request(&self) {}
+        pub async fn update_workspace_primary_branch_for_request(&self) {}
+        pub async fn refresh_worktree_vcs_snapshot(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.equal(
+    violations.filter(
+      (name) => name === "workspace primary branch facade remains on broad workspace handle",
+    ).length,
+    6,
+  );
+});
+
+test("appstate guard rejects workspace primary branch broad handle fields", () => {
+  const fieldViolations = scanWorkspacePrimaryBranchHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspacePrimaryBranchHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace primary branch capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace primary branch capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspacePrimaryBranchHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspacePrimaryBranchHandle {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
       }
     `,
   });

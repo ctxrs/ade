@@ -85,7 +85,7 @@ pub use handle::{
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
     WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
-    WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle,
+    WorkspaceHarnessContainerHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
     WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
     WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
 };

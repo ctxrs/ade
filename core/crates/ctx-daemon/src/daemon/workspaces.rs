@@ -25,6 +25,7 @@ mod harness_container;
 mod hydration;
 mod management;
 mod model_preferences;
+mod primary_branch;
 mod prompt_bootstrap_config;
 mod provider_model_preferences_route;
 mod retry;
@@ -116,13 +117,6 @@ impl WorkspacesHandle {
             .list_workspace_attachments(workspace_id)
             .await
             .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub(in crate::daemon) async fn store_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<Store> {
-        self.state.store_for_workspace(workspace_id).await
     }
 
     pub(in crate::daemon) async fn existing_workspace_store(

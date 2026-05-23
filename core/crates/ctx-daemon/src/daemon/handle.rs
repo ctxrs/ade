@@ -124,6 +124,38 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
+        let refresh_vcs_snapshot = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+                        &state, &worktree, true,
+                    )
+                    .await
+                }) as WorkspacePrimaryBranchRefreshFuture
+            }
+        });
+        WorkspacePrimaryBranchHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            refresh_vcs_snapshot,
+        )
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn workspace_primary_branch_with_refresh_effect(
+        &self,
+        refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
+    ) -> WorkspacePrimaryBranchHandle {
+        WorkspacePrimaryBranchHandle::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            refresh_vcs_snapshot,
+        )
+    }
+
     pub fn workspace_org_policy(&self) -> WorkspaceOrgPolicyHandle {
         WorkspaceOrgPolicyHandle::new(
             self.state.global_store().clone(),
@@ -1466,6 +1498,52 @@ impl WorkspaceRegistryHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+pub(in crate::daemon) type WorkspacePrimaryBranchRefreshFuture =
+    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+pub(in crate::daemon) type WorkspacePrimaryBranchRefreshEffect =
+    Arc<dyn Fn(Worktree) -> WorkspacePrimaryBranchRefreshFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct WorkspacePrimaryBranchHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
+}
+
+impl WorkspacePrimaryBranchHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            refresh_vcs_snapshot,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn refresh_vcs_snapshot(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        (self.refresh_vcs_snapshot)(worktree).await
     }
 }
 

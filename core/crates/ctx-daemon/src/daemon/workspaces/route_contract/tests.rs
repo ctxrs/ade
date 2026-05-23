@@ -1,5 +1,10 @@
+use std::path::Path;
+use std::process::Command;
+use std::sync::Arc;
+
 use chrono::Utc;
 use serde::Serialize;
+use tokio::sync::Mutex;
 
 use super::common::{
     file_completions_route_error, route_file_download_error, workspace_delete_route_error,
@@ -15,11 +20,11 @@ use ctx_core::models::{
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
 use ctx_route_contracts::workspaces::{
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery,
-    WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind, WorkspaceRouteParams,
-    WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
+    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
+    WorkspaceFileCompletionsRouteQuery, WorkspacePromptConfigRouteParams, WorkspaceRouteErrorKind,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 use ctx_store::WorktreeBootstrapResultUpdate;
 
@@ -53,6 +58,31 @@ async fn create_route_contract_workspace_with_store(daemon: &TestDaemon, name: &
         .seed_workspace_for_test(name, &root, VcsKind::Git)
         .await
         .expect("seed workspace")
+}
+
+fn run_git_for_primary_branch_route_test(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn init_git_repo_for_primary_branch_route_test(root: &Path) {
+    std::fs::create_dir_all(root).expect("create repo root");
+    run_git_for_primary_branch_route_test(root, &["init"]);
+    run_git_for_primary_branch_route_test(root, &["checkout", "-b", "main"]);
+    run_git_for_primary_branch_route_test(root, &["config", "user.email", "test@example.com"]);
+    run_git_for_primary_branch_route_test(root, &["config", "user.name", "Test"]);
+    std::fs::write(root.join("file.txt"), "hello\n").expect("write fixture file");
+    run_git_for_primary_branch_route_test(root, &["add", "."]);
+    run_git_for_primary_branch_route_test(root, &["commit", "-m", "init"]);
 }
 
 async fn create_route_contract_worktree(
@@ -105,6 +135,118 @@ async fn create_route_contract_worktree(
         .await
         .expect("load worktree")
         .expect("worktree exists")
+}
+
+#[tokio::test]
+async fn primary_branch_route_params_reject_invalid_workspace_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_primary_branch();
+    let error = handle
+        .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn primary_branch_route_maps_missing_store_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace_id = WorkspaceId::new();
+    let handle = daemon.handle().workspace_primary_branch();
+    let error = handle
+        .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(
+            workspace_id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(error.message(), "workspace not found");
+}
+
+#[tokio::test]
+async fn primary_branch_route_maps_unset_config_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace_with_store(&daemon, "unset-primary").await;
+    let handle = daemon.handle().workspace_primary_branch();
+    let error = handle
+        .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(
+            workspace.id.0.to_string(),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(
+        error.message(),
+        "workspace primary branch is not configured"
+    );
+}
+
+#[tokio::test]
+async fn primary_branch_update_refreshes_all_worktrees_best_effort() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let repo_root = daemon.data_root().join("primary-branch-repo");
+    init_git_repo_for_primary_branch_route_test(&repo_root);
+    let workspace = daemon
+        .seed_workspace_for_test("primary", &repo_root, VcsKind::Git)
+        .await
+        .expect("seed workspace");
+    let first = create_route_contract_worktree(&daemon, &workspace, "primary-wt-a", None).await;
+    let second = create_route_contract_worktree(&daemon, &workspace, "primary-wt-b", None).await;
+
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let refresh_attempts = Arc::clone(&attempts);
+    let refresh = Arc::new(move |worktree: Worktree| {
+        let refresh_attempts = Arc::clone(&refresh_attempts);
+        Box::pin(async move {
+            refresh_attempts.lock().await.push(worktree.id);
+            Err(anyhow::anyhow!("synthetic refresh failure"))
+        })
+            as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
+    });
+    let handle = daemon
+        .handle()
+        .workspace_primary_branch_with_refresh_effect(refresh);
+
+    let response = handle
+        .update_workspace_primary_branch_for_route_params(
+            WorkspaceRouteParams::new(workspace.id.0.to_string()),
+            UpdateWorkspacePrimaryBranchRequest {
+                primary_branch: "main".to_string(),
+            },
+        )
+        .await
+        .expect("update primary branch");
+    assert_eq!(response.primary_branch, "main");
+    assert_eq!(
+        daemon
+            .workspace_primary_branch_for_test(workspace.id)
+            .await
+            .expect("load persisted primary branch")
+            .as_deref(),
+        Some("main")
+    );
+
+    let attempts = attempts.lock().await.clone();
+    assert_eq!(attempts.len(), 2);
+    assert!(attempts.contains(&first.id));
+    assert!(attempts.contains(&second.id));
 }
 
 #[tokio::test]

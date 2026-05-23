@@ -40,10 +40,10 @@ pub(in crate::api) async fn get_merge_queue_config(
 }
 
 pub(in crate::api) async fn get_workspace_primary_branch(
-    State(workspaces): State<WorkspacesHandle>,
+    State(primary_branch): State<WorkspacePrimaryBranchHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspacePrimaryBranchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    primary_branch
         .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(id))
         .await
         .map_err(workspace_route_api_error)
@@ -51,11 +51,11 @@ pub(in crate::api) async fn get_workspace_primary_branch(
 }
 
 pub(in crate::api) async fn update_workspace_primary_branch(
-    State(workspaces): State<WorkspacesHandle>,
+    State(primary_branch): State<WorkspacePrimaryBranchHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkspacePrimaryBranchRequest>,
 ) -> Result<Json<WorkspacePrimaryBranchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    primary_branch
         .update_workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(id), req)
         .await
         .map_err(workspace_route_api_error)
