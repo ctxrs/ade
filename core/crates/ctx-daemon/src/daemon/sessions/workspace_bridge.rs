@@ -5,8 +5,7 @@ use ctx_store::Store;
 
 use crate::daemon::handle::SessionsHandle;
 use crate::daemon::workspaces::{
-    complete_files_for_session, resolve_existing_worktree_execution,
-    update_workspace_provider_preferred_model_id, FileCompletionsError,
+    complete_files_for_session, resolve_existing_worktree_execution, FileCompletionsError,
     ResolvedExistingWorktreeExecution,
 };
 
@@ -35,13 +34,20 @@ impl SessionsHandle {
         provider_id: &str,
         preferred_model_id: Option<String>,
     ) -> anyhow::Result<()> {
-        update_workspace_provider_preferred_model_id(
-            &self.state,
-            workspace_id,
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::update_preferred_new_session_model_id(
+            &store,
             provider_id,
             preferred_model_id,
         )
-        .await
+        .await?;
+        ctx_provider_runtime::provider_cache::invalidate_workspace_provider_options_cache(
+            &self.state.providers,
+            workspace_id,
+            provider_id,
+        )
+        .await;
+        Ok(())
     }
 
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> anyhow::Result<()> {

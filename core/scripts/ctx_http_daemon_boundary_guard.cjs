@@ -244,6 +244,15 @@ const workspacePromptBootstrapConfigRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
 ]);
 
+const workspaceProviderModelPreferenceRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+]);
+
+const workspaceProviderModelPreferenceDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/model_preferences.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/provider_model_preferences_route.rs",
+]);
+
 const workspaceStreamActiveDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/access.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/cursor_acceptance.rs",
@@ -9211,6 +9220,165 @@ function scanWorkspacePromptBootstrapConfigHandleFieldRatchet({ filePath, conten
   return violations;
 }
 
+function scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (!workspaceProviderModelPreferenceRouteExtractorAllowedPaths.has(filePath)) {
+    const extractorRegex =
+      /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceProviderModelPreferenceHandle\s*>/gu;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace provider model preference route extracts WorkspaceProviderModelPreferenceHandle outside provider preference route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspaceProviderModelPreferenceRouteExtractorAllowedPaths.has(filePath)) {
+    const broadRegex = /\bWorkspacesHandle\b/gu;
+    for (let match = broadRegex.exec(contents); match; match = broadRegex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace provider model preference route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_provider_model_preferences\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace provider model preference router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet({
+  filePath,
+  contents,
+}) {
+  if (!workspaceProviderModelPreferenceDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace provider model preference daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace provider model preference daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace provider model preference daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace provider model preference daemon facade reuses full-state effective preference helper",
+      regex: /\bproviders::effective_preferred_model_id_for_workspace\s*\(|\beffective_preferred_model_id_for_workspace\s*\(/gu,
+    },
+    {
+      name: "workspace provider model preference daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceProviderModelPreferenceHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspaceProviderModelPreferenceHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace provider model preference capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace provider model preference capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -9396,6 +9564,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -9482,6 +9654,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceProviderModelPreferenceHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -9588,6 +9764,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10213,6 +10393,9 @@ module.exports = {
   scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
   scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
   scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
+  scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
+  scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
+  scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,

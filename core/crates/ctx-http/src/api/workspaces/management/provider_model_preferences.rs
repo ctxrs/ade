@@ -1,10 +1,10 @@
 use super::*;
 
 pub(in crate::api) async fn get_workspace_provider_model_preference(
-    State(workspaces): State<WorkspacesHandle>,
+    State(preferences): State<WorkspaceProviderModelPreferenceHandle>,
     Path((id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    preferences
         .workspace_provider_model_preference_for_route(
             WorkspaceProviderModelPreferenceRouteParams::new(id, provider_id),
         )
@@ -14,11 +14,11 @@ pub(in crate::api) async fn get_workspace_provider_model_preference(
 }
 
 pub(in crate::api) async fn update_workspace_provider_model_preference(
-    State(workspaces): State<WorkspacesHandle>,
+    State(preferences): State<WorkspaceProviderModelPreferenceHandle>,
     Path((id, provider_id)): Path<(String, String)>,
     Json(req): Json<UpdateWorkspaceProviderModelPreferenceRouteRequest>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    workspaces
+    preferences
         .update_workspace_provider_model_preference_for_route(
             WorkspaceProviderModelPreferenceRouteParams::new(id, provider_id),
             req,

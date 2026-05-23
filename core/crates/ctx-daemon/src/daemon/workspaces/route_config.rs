@@ -14,9 +14,7 @@ pub use ctx_route_contracts::workspaces::{
 };
 pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
     UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspaceProviderModelPreferenceRouteRequest, WorkspaceExecutionConfigRouteSnapshot,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse,
+    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
 };
 pub(in crate::daemon::workspaces) use management_config::{
     merge_queue_config_route_response, merge_queue_config_update,

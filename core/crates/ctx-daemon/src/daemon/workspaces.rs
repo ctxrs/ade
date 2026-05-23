@@ -27,6 +27,7 @@ mod hydration;
 mod management;
 mod model_preferences;
 mod prompt_bootstrap_config;
+mod provider_model_preferences_route;
 mod retry;
 mod route_config;
 mod route_contract;
@@ -58,9 +59,7 @@ pub use harness_container::{
 };
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 pub use model_preferences::{
-    get_workspace_provider_model_preference, set_workspace_provider_model_preference,
-    update_workspace_provider_preferred_model_id, WorkspaceProviderModelPreference,
-    WorkspaceProviderModelPreferenceError,
+    WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
 };
 pub use retry::retry_global_index_write;
 pub(in crate::daemon::workspaces) use route_config::workspace_store_route_error;

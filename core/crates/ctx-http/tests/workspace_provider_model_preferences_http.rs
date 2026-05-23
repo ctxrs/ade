@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::{Method, StatusCode};
+use ctx_core::ids::WorkspaceId;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -38,6 +39,54 @@ async fn fake_codex_fixture() -> common::FakeDaemonFixture {
         .upsert_provider_status("codex".into(), status)
         .await;
     fixture
+}
+
+#[tokio::test]
+async fn workspace_provider_model_preference_preserves_id_error_statuses() {
+    let fixture = fake_codex_fixture().await;
+    let app = fixture.router();
+
+    for method in [Method::GET, Method::POST] {
+        let (status, body): (StatusCode, Value) = common::json_request(
+            &app,
+            method.clone(),
+            "/api/workspaces/not-a-workspace/provider_model_preferences/codex",
+            if method == Method::POST {
+                Some(serde_json::json!({"preferred_model_id": "gpt-5.4/xhigh"}))
+            } else {
+                None
+            },
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body.get("error").and_then(Value::as_str),
+            Some("invalid workspace id")
+        );
+    }
+
+    let missing_workspace_id = WorkspaceId::new();
+    for method in [Method::GET, Method::POST] {
+        let (status, body): (StatusCode, Value) = common::json_request(
+            &app,
+            method.clone(),
+            format!(
+                "/api/workspaces/{}/provider_model_preferences/codex",
+                missing_workspace_id.0
+            ),
+            if method == Method::POST {
+                Some(serde_json::json!({"preferred_model_id": "gpt-5.4/xhigh"}))
+            } else {
+                None
+            },
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.get("error").and_then(Value::as_str),
+            Some("workspace not found")
+        );
+    }
 }
 
 #[tokio::test]

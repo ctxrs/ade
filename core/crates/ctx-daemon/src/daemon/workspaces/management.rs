@@ -7,20 +7,13 @@ use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_store::Store;
 use ctx_workspace_config as workspace_config;
 
-use super::model_preferences::{
-    get_workspace_provider_model_preference, set_workspace_provider_model_preference,
-    WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
-};
 use super::route_config::{
-    merge_queue_config_route_response, merge_queue_config_update, provider_model_preference_error,
-    provider_model_preference_route_response, request_or_policy_route_error,
+    merge_queue_config_route_response, merge_queue_config_update, request_or_policy_route_error,
     workspace_execution_config_route_snapshot, workspace_store_route_error,
     UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorkspaceProviderModelPreferenceRouteRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigRouteSnapshot,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
-    WorkspaceRouteError,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
 };
 use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
@@ -294,56 +287,6 @@ impl WorkspacesHandle {
                 .map_err(request_or_policy_route_error)?;
         }
         Ok(WorkspaceConfigUpdateResult { ok: true })
-    }
-
-    pub async fn workspace_provider_model_preference_for_route(
-        &self,
-        params: WorkspaceProviderModelPreferenceRouteParams,
-    ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.get_workspace_provider_model_preference(workspace_id, params.provider_id())
-            .await
-            .map(provider_model_preference_route_response)
-            .map_err(provider_model_preference_error)
-    }
-
-    pub async fn update_workspace_provider_model_preference_for_route(
-        &self,
-        params: WorkspaceProviderModelPreferenceRouteParams,
-        req: UpdateWorkspaceProviderModelPreferenceRouteRequest,
-    ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        self.set_workspace_provider_model_preference(
-            workspace_id,
-            params.provider_id(),
-            req.preferred_model_id,
-        )
-        .await
-        .map(provider_model_preference_route_response)
-        .map_err(provider_model_preference_error)
-    }
-
-    pub async fn get_workspace_provider_model_preference(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
-        get_workspace_provider_model_preference(&self.state, workspace_id, provider_id).await
-    }
-
-    pub async fn set_workspace_provider_model_preference(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-        preferred_model_id: Option<String>,
-    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
-        set_workspace_provider_model_preference(
-            &self.state,
-            workspace_id,
-            provider_id,
-            preferred_model_id,
-        )
-        .await
     }
 
     #[cfg(target_os = "macos")]

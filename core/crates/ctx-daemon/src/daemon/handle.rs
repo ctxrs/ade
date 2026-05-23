@@ -127,6 +127,10 @@ impl DaemonHandle {
         WorkspacePromptBootstrapConfigHandle::new(self.protected_workspace_store_lookup())
     }
 
+    pub fn workspace_provider_model_preferences(&self) -> WorkspaceProviderModelPreferenceHandle {
+        WorkspaceProviderModelPreferenceHandle::new(self.provider_workspace_launch_runtime())
+    }
+
     pub fn dictation(&self) -> DictationHandle {
         DictationHandle::new(self.state.global_store().clone())
     }
@@ -1348,6 +1352,21 @@ impl WorkspacePromptBootstrapConfigHandle {
         self.workspace_stores
             .existing_workspace_store(workspace_id)
             .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceProviderModelPreferenceHandle {
+    launch: Arc<ProviderWorkspaceLaunchRuntime>,
+}
+
+impl WorkspaceProviderModelPreferenceHandle {
+    pub(in crate::daemon) fn new(launch: Arc<ProviderWorkspaceLaunchRuntime>) -> Self {
+        Self { launch }
+    }
+
+    pub(in crate::daemon) fn launch(&self) -> &ProviderWorkspaceLaunchRuntime {
+        self.launch.as_ref()
     }
 }
 

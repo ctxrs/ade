@@ -220,6 +220,9 @@ const {
   scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet,
   scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
   scanWorkspacePromptBootstrapConfigRouteExtractorRatchet,
+  scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
+  scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
+  scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
@@ -2441,6 +2444,155 @@ test("appstate guard rejects workspace prompt/bootstrap broad handle fields", ()
     contents: `
       pub struct WorkspacePromptBootstrapConfigHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace provider model preference extraction outside allowed route", () => {
+  const violations = scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceProviderModelPreferenceHandle;
+      async fn handler(
+        State(state): State<WorkspaceProviderModelPreferenceHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace provider model preference route extracts WorkspaceProviderModelPreferenceHandle outside provider preference route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
+      filePath:
+        "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+      contents: `
+        async fn handler(
+          State(state): State<WorkspaceProviderModelPreferenceHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace provider model preference broad route and router composition", () => {
+  const routeViolations = scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
+    filePath:
+      "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes(
+      "workspace provider model preference route uses broad workspace handle",
+    ),
+  );
+
+  const routerViolations = scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_provider_model_preferences: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace provider model preference router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace provider model preference daemon facade broad seams", () => {
+  for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/workspaces/model_preferences.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/provider_model_preferences_route.rs",
+  ]) {
+    const violations = scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet({
+      filePath,
+      contents: `
+        use crate::daemon::{DaemonHandle, WorkspacesHandle};
+        use crate::daemon::DaemonState;
+
+        impl WorkspacesHandle {
+          async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+            let _ = self.state.global_store();
+            let _ = providers::effective_preferred_model_id_for_workspace();
+            let _ = effective_preferred_model_id_for_workspace();
+            let _ = daemon;
+          }
+        }
+      `,
+    }).map((violation) => violation.name);
+
+    assert(
+      violations.includes(
+        "workspace provider model preference daemon facade uses broad daemon state",
+      ),
+    );
+    assert(
+      violations.includes(
+        "workspace provider model preference daemon facade uses broad daemon handle",
+      ),
+    );
+    assert(
+      violations.includes(
+        "workspace provider model preference daemon facade uses broad workspace handle",
+      ),
+    );
+    assert(
+      violations.includes(
+        "workspace provider model preference daemon facade reuses full-state effective preference helper",
+      ),
+    );
+    assert(
+      violations.includes(
+        "workspace provider model preference daemon facade exposes generic state/daemon escape hatch",
+      ),
+    );
+  }
+});
+
+test("appstate guard rejects workspace provider model preference broad handle fields", () => {
+  const fieldViolations = scanWorkspaceProviderModelPreferenceHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceProviderModelPreferenceHandle {
+        workspaces: WorkspacesHandle,
+        provider_options: ProviderOptionsHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace provider model preference capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace provider model preference capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceProviderModelPreferenceHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceProviderModelPreferenceHandle {
+        launch: Arc<ProviderWorkspaceLaunchRuntime>,
       }
     `,
   });
