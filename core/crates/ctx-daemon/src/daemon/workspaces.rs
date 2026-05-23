@@ -2,10 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::{
-    SandboxBinding, VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorkspaceAttachment, Worktree,
-};
+use ctx_core::models::{SandboxBinding, VcsKind, Workspace, WorkspaceAttachment, Worktree};
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_settings_model::ExecutionSettings;
@@ -227,44 +224,6 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
     ) -> Result<(), WorkspaceDeleteError> {
         delete_workspace(&self.state, workspace_id).await
-    }
-
-    pub async fn load_workspace_active_snapshot(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceActiveSnapshot, WorkspaceHydrationError> {
-        self.state
-            .ensure_workspace_active_snapshot_hydrated(workspace_id)
-            .await?;
-        crate::daemon::merge_queue::activate_workspace_merge_queue(&self.state, workspace_id).await;
-        let snapshot = self
-            .state
-            .workspaces
-            .workspace_active_snapshot
-            .active_snapshot(workspace_id, i64::MAX)
-            .await;
-        self.state
-            .cache_workspace_active_snapshot(snapshot.clone())
-            .await;
-        Ok(snapshot)
-    }
-
-    pub async fn load_workspace_active_heads(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceActiveHeadBatch, WorkspaceHydrationError> {
-        self.state
-            .ensure_workspace_active_snapshot_hydrated(workspace_id)
-            .await?;
-        crate::daemon::merge_queue::activate_workspace_merge_queue(&self.state, workspace_id).await;
-        let heads = self
-            .state
-            .workspaces
-            .workspace_active_snapshot
-            .active_heads(workspace_id)
-            .await;
-        self.state.cache_workspace_active_heads(heads.clone()).await;
-        Ok(heads)
     }
 
     pub async fn effective_execution_settings(

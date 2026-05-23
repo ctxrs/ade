@@ -15,8 +15,8 @@ use ctx_daemon::daemon::{
     SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
     TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceStreamHandle,
-    WorkspacesHandle,
+    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
+    WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -104,6 +104,7 @@ pub struct RouteHandles {
     pub(in crate::api) task_session_listing: TaskSessionListingHandle,
     pub(in crate::api) task_title: TaskTitleHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
+    pub(in crate::api) workspace_active: WorkspaceActiveHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) provider_accounts: ProviderAccountsHandle,
     pub(in crate::api) provider_auth_import: ProviderAuthImportHandle,
@@ -151,6 +152,7 @@ impl RouteHandles {
             task_session_listing: handle.task_session_listing(),
             task_title: handle.task_title(),
             workspaces: handle.workspaces(),
+            workspace_active: handle.workspace_active(),
             workspace_stream: handle.workspace_stream(),
             provider_accounts: handle.provider_accounts(),
             provider_auth_import: handle.provider_auth_import(),
@@ -203,6 +205,7 @@ impl_route_state_extractors! {
     TaskSessionListingHandle, task_session_listing;
     TaskTitleHandle, task_title;
     WorkspacesHandle, workspaces;
+    WorkspaceActiveHandle, workspace_active;
     WorkspaceStreamHandle, workspace_stream;
     ProviderAccountsHandle, provider_accounts;
     ProviderAuthImportHandle, provider_auth_import;

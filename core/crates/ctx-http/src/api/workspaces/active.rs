@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn get_workspace_active_snapshot(
-    State(workspaces): State<WorkspacesHandle>,
+    State(workspaces): State<WorkspaceActiveHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceActiveSnapshotRouteResponse>, StatusCode> {
     let snapshot = workspaces
@@ -12,7 +12,7 @@ pub(in crate::api) async fn get_workspace_active_snapshot(
 }
 
 pub(in crate::api) async fn get_workspace_active_heads(
-    State(workspaces): State<WorkspacesHandle>,
+    State(workspaces): State<WorkspaceActiveHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceActiveHeadBatchRouteResponse>, StatusCode> {
     let heads = workspaces

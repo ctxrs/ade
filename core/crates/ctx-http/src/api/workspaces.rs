@@ -22,7 +22,7 @@ pub(super) use registry::{create_workspace, delete_workspace, get_workspace, lis
 pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::{WorkspaceActiveHandle, WorkspacesHandle};
 use ctx_observability::logs;
 use ctx_route_contracts::workspaces::{
     AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,

@@ -83,7 +83,7 @@ pub use handle::{
     TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
     TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle,
     TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

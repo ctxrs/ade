@@ -8,7 +8,7 @@ use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SandboxBinding, Session, SessionEvent, Task, TaskDeltaKind, Workspace,
-    Worktree, WorktreeVcsSnapshot,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
@@ -777,6 +777,60 @@ impl DaemonHandle {
 
     pub fn workspaces(&self) -> WorkspacesHandle {
         WorkspacesHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+        let ensure_workspace_active_snapshot_hydrated = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id: WorkspaceId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state
+                        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+                        .await
+                }) as WorkspaceActiveFuture<_>
+            }
+        });
+        let activate_workspace_merge_queue = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id: WorkspaceId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::merge_queue::activate_workspace_merge_queue(
+                        &state,
+                        workspace_id,
+                    )
+                    .await;
+                }) as WorkspaceActiveFuture<_>
+            }
+        });
+        let cache_workspace_active_snapshot = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |snapshot: WorkspaceActiveSnapshot| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state.cache_workspace_active_snapshot(snapshot).await;
+                }) as WorkspaceActiveFuture<_>
+            }
+        });
+        let cache_workspace_active_heads = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |heads: WorkspaceActiveHeadBatch| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state.cache_workspace_active_heads(heads).await;
+                }) as WorkspaceActiveFuture<_>
+            }
+        });
+        WorkspaceActiveHandle::new(WorkspaceActiveHandleParts {
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            effects: WorkspaceActiveEffects::new(WorkspaceActiveEffectsParts {
+                ensure_workspace_active_snapshot_hydrated,
+                activate_workspace_merge_queue,
+                cache_workspace_active_snapshot,
+                cache_workspace_active_heads,
+            }),
+        })
     }
 
     pub fn workspace_stream(&self) -> WorkspaceStreamHandle {
@@ -3544,6 +3598,249 @@ macro_rules! domain_handle_with_accessor {
             }
         }
     };
+}
+
+type WorkspaceActiveFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type WorkspaceActiveHydrationEffect = Arc<
+    dyn Fn(
+            WorkspaceId,
+        )
+            -> WorkspaceActiveFuture<Result<(), crate::daemon::workspaces::WorkspaceHydrationError>>
+        + Send
+        + Sync,
+>;
+type WorkspaceActiveUnitEffect =
+    Arc<dyn Fn(WorkspaceId) -> WorkspaceActiveFuture<()> + Send + Sync>;
+type WorkspaceActiveSnapshotCacheEffect =
+    Arc<dyn Fn(WorkspaceActiveSnapshot) -> WorkspaceActiveFuture<()> + Send + Sync>;
+type WorkspaceActiveHeadsCacheEffect =
+    Arc<dyn Fn(WorkspaceActiveHeadBatch) -> WorkspaceActiveFuture<()> + Send + Sync>;
+
+pub(in crate::daemon) struct WorkspaceActiveEffectsParts {
+    ensure_workspace_active_snapshot_hydrated: WorkspaceActiveHydrationEffect,
+    activate_workspace_merge_queue: WorkspaceActiveUnitEffect,
+    cache_workspace_active_snapshot: WorkspaceActiveSnapshotCacheEffect,
+    cache_workspace_active_heads: WorkspaceActiveHeadsCacheEffect,
+}
+
+pub(in crate::daemon) struct WorkspaceActiveEffects {
+    ensure_workspace_active_snapshot_hydrated: WorkspaceActiveHydrationEffect,
+    activate_workspace_merge_queue: WorkspaceActiveUnitEffect,
+    cache_workspace_active_snapshot: WorkspaceActiveSnapshotCacheEffect,
+    cache_workspace_active_heads: WorkspaceActiveHeadsCacheEffect,
+}
+
+impl WorkspaceActiveEffects {
+    pub(in crate::daemon) fn new(parts: WorkspaceActiveEffectsParts) -> Arc<Self> {
+        Arc::new(Self {
+            ensure_workspace_active_snapshot_hydrated: parts
+                .ensure_workspace_active_snapshot_hydrated,
+            activate_workspace_merge_queue: parts.activate_workspace_merge_queue,
+            cache_workspace_active_snapshot: parts.cache_workspace_active_snapshot,
+            cache_workspace_active_heads: parts.cache_workspace_active_heads,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceActiveHandle {
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    effects: Arc<WorkspaceActiveEffects>,
+}
+
+pub(in crate::daemon) struct WorkspaceActiveHandleParts {
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    effects: Arc<WorkspaceActiveEffects>,
+}
+
+impl WorkspaceActiveHandle {
+    pub(in crate::daemon) fn new(parts: WorkspaceActiveHandleParts) -> Self {
+        Self {
+            active_snapshot: parts.active_snapshot,
+            effects: parts.effects,
+        }
+    }
+
+    pub(in crate::daemon) async fn load_workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceActiveSnapshot, crate::daemon::workspaces::WorkspaceHydrationError> {
+        (self.effects.ensure_workspace_active_snapshot_hydrated)(workspace_id).await?;
+        (self.effects.activate_workspace_merge_queue)(workspace_id).await;
+        let snapshot = self
+            .active_snapshot
+            .active_snapshot(workspace_id, i64::MAX)
+            .await;
+        (self.effects.cache_workspace_active_snapshot)(snapshot.clone()).await;
+        Ok(snapshot)
+    }
+
+    pub(in crate::daemon) async fn load_workspace_active_heads(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceActiveHeadBatch, crate::daemon::workspaces::WorkspaceHydrationError> {
+        (self.effects.ensure_workspace_active_snapshot_hydrated)(workspace_id).await?;
+        (self.effects.activate_workspace_merge_queue)(workspace_id).await;
+        let heads = self.active_snapshot.active_heads(workspace_id).await;
+        (self.effects.cache_workspace_active_heads)(heads.clone()).await;
+        Ok(heads)
+    }
+}
+
+#[cfg(test)]
+mod workspace_active_tests {
+    use super::*;
+    use ctx_route_contracts::workspaces::{WorkspaceRouteErrorKind, WorkspaceRouteParams};
+
+    fn workspace_active_test_handle(
+        events: Arc<Mutex<Vec<&'static str>>>,
+        hydrate_succeeds: bool,
+    ) -> WorkspaceActiveHandle {
+        let ensure_workspace_active_snapshot_hydrated = Arc::new({
+            let events = Arc::clone(&events);
+            move |_workspace_id: WorkspaceId| {
+                let events = Arc::clone(&events);
+                Box::pin(async move {
+                    events.lock().await.push("hydrate");
+                    if hydrate_succeeds {
+                        Ok(())
+                    } else {
+                        Err(crate::daemon::workspaces::WorkspaceHydrationError::NotFound)
+                    }
+                }) as WorkspaceActiveFuture<_>
+            }
+        })
+            as WorkspaceActiveHydrationEffect;
+        let activate_workspace_merge_queue = Arc::new({
+            let events = Arc::clone(&events);
+            move |_workspace_id: WorkspaceId| {
+                let events = Arc::clone(&events);
+                Box::pin(async move {
+                    events.lock().await.push("activate_merge_queue");
+                }) as WorkspaceActiveFuture<_>
+            }
+        }) as WorkspaceActiveUnitEffect;
+        let cache_workspace_active_snapshot = Arc::new({
+            let events = Arc::clone(&events);
+            move |_snapshot: WorkspaceActiveSnapshot| {
+                let events = Arc::clone(&events);
+                Box::pin(async move {
+                    events.lock().await.push("cache_snapshot");
+                }) as WorkspaceActiveFuture<_>
+            }
+        }) as WorkspaceActiveSnapshotCacheEffect;
+        let cache_workspace_active_heads = Arc::new({
+            let events = Arc::clone(&events);
+            move |_heads: WorkspaceActiveHeadBatch| {
+                let events = Arc::clone(&events);
+                Box::pin(async move {
+                    events.lock().await.push("cache_heads");
+                }) as WorkspaceActiveFuture<_>
+            }
+        }) as WorkspaceActiveHeadsCacheEffect;
+
+        WorkspaceActiveHandle::new(WorkspaceActiveHandleParts {
+            active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
+            effects: WorkspaceActiveEffects::new(WorkspaceActiveEffectsParts {
+                ensure_workspace_active_snapshot_hydrated,
+                activate_workspace_merge_queue,
+                cache_workspace_active_snapshot,
+                cache_workspace_active_heads,
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn workspace_active_snapshot_for_route_rejects_invalid_workspace_id() {
+        let handle = workspace_active_test_handle(Arc::new(Mutex::new(Vec::new())), true);
+        let error = handle
+            .workspace_active_snapshot_for_route(WorkspaceRouteParams::new("not-a-workspace"))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+    }
+
+    #[tokio::test]
+    async fn workspace_active_heads_for_route_rejects_invalid_workspace_id() {
+        let handle = workspace_active_test_handle(Arc::new(Mutex::new(Vec::new())), true);
+        let error = handle
+            .workspace_active_heads_for_route(WorkspaceRouteParams::new("not-a-workspace"))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+    }
+
+    #[tokio::test]
+    async fn workspace_active_snapshot_handle_preserves_effect_order() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let handle = workspace_active_test_handle(Arc::clone(&events), true);
+        let workspace_id = WorkspaceId::new();
+
+        let snapshot = handle
+            .load_workspace_active_snapshot(workspace_id)
+            .await
+            .expect("active snapshot");
+
+        assert_eq!(snapshot.workspace_id, workspace_id);
+        assert_eq!(
+            *events.lock().await,
+            ["hydrate", "activate_merge_queue", "cache_snapshot"]
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_active_heads_handle_preserves_effect_order() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let handle = workspace_active_test_handle(Arc::clone(&events), true);
+        let workspace_id = WorkspaceId::new();
+
+        let heads = handle
+            .load_workspace_active_heads(workspace_id)
+            .await
+            .expect("active heads");
+
+        assert_eq!(heads.workspace_id, workspace_id);
+        assert_eq!(
+            *events.lock().await,
+            ["hydrate", "activate_merge_queue", "cache_heads"]
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_active_snapshot_handle_short_circuits_after_hydration_failure() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let handle = workspace_active_test_handle(Arc::clone(&events), false);
+        let error = handle
+            .load_workspace_active_snapshot(WorkspaceId::new())
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::daemon::workspaces::WorkspaceHydrationErrorKind::NotFound
+        );
+        assert_eq!(*events.lock().await, ["hydrate"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_active_heads_handle_short_circuits_after_hydration_failure() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let handle = workspace_active_test_handle(Arc::clone(&events), false);
+        let error = handle
+            .load_workspace_active_heads(WorkspaceId::new())
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            crate::daemon::workspaces::WorkspaceHydrationErrorKind::NotFound
+        );
+        assert_eq!(*events.lock().await, ["hydrate"]);
+    }
 }
 
 type WorkspaceStreamFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;

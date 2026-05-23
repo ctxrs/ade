@@ -220,6 +220,10 @@ const {
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
+  scanWorkspaceActiveAssemblyRatchet,
+  scanWorkspaceActiveDaemonImplementationRatchet,
+  scanWorkspaceActiveHandleFieldRatchet,
+  scanWorkspaceActiveRouteExtractorRatchet,
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
@@ -1681,6 +1685,171 @@ test("appstate guard rejects workspace stream broad handle and generic effects f
   });
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace active route extraction outside active route", () => {
+  const violations = scanWorkspaceActiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceActiveHandle;
+      async fn handler(
+        State(state): State<WorkspaceActiveHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace active route extracts WorkspaceActiveHandle outside active route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceActiveRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/active.rs",
+      contents: `
+        async fn handler(
+          State(state): State<WorkspaceActiveHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace active broad route and router composition", () => {
+  const routeViolations = scanWorkspaceActiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/active.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(routeViolations.includes("workspace active route uses broad workspace handle"));
+
+  const routerViolations = scanWorkspaceActiveRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_active: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace active router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace active daemon facade broad seams", () => {
+  const violations = scanWorkspaceActiveDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/active.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace active daemon facade uses broad daemon state"));
+  assert(violations.includes("workspace active daemon facade uses broad daemon handle"));
+  assert(violations.includes("workspace active daemon facade uses broad workspace handle"));
+});
+
+test("appstate guard rejects workspace active broad handle fields and escape hatches", () => {
+  const fieldViolations = scanWorkspaceActiveHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceActiveHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveHandleParts {
+        with_state: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveEffectsParts {
+        with_state: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveEffects {
+        with_state: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(fieldViolations.includes("workspace active capability stores broad handle or daemon state"));
+  assert(
+    fieldViolations.includes(
+      "workspace active capability exposes generic full-state escape hatch",
+    ),
+  );
+  assert(fieldViolations.includes("workspace active effects stores broad handle or daemon state"));
+  assert(
+    fieldViolations.includes(
+      "workspace active effects exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceActiveHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceActiveHandle {
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        effects: Arc<WorkspaceActiveEffects>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveHandleParts {
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        effects: Arc<WorkspaceActiveEffects>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveEffectsParts {
+        ensure_workspace_active_snapshot_hydrated: WorkspaceActiveHydrationEffect,
+      }
+
+      pub(in crate::daemon) struct WorkspaceActiveEffects {
+        ensure_workspace_active_snapshot_hydrated: WorkspaceActiveHydrationEffect,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace active assembly through broad active loader", () => {
+  const violations = scanWorkspaceActiveAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+          let workspaces = self.workspaces();
+          let load = workspaces.load_workspace_active_snapshot(workspace_id);
+          WorkspaceActiveHandle::new(parts)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace active assembly uses broad workspace handle"));
+  assert(violations.includes("workspace active assembly uses old broad active loader"));
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {
