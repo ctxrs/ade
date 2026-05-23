@@ -87,7 +87,7 @@ pub struct ExecutionRuntime {
 
 pub struct DaemonState {
     pub(crate) core: CoreState,
-    pub(crate) sessions: SessionRuntime,
+    pub(crate) sessions: Arc<SessionRuntime>,
     pub(crate) workspaces: WorkspaceRuntime,
     pub(crate) providers: Arc<ProviderRuntime>,
     pub(crate) telemetry: TelemetryRuntime,

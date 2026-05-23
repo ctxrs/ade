@@ -6,7 +6,7 @@ use ctx_provider_runtime::{
 };
 
 pub(crate) async fn get_workspace_providers_bootstrap(
-    State(providers): State<ProvidersHandle>,
+    State(providers): State<ProviderBootstrapHandle>,
     Path(workspace_id): Path<String>,
 ) -> Result<Json<ProvidersBootstrapResponse>, (StatusCode, Json<serde_json::Value>)> {
     providers

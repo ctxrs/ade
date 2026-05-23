@@ -79,7 +79,7 @@ impl DaemonState {
                 shutdown_tx: runtime_parts.shutdown_tx,
                 update_drain: Arc::new(ctx_update_service::UpdateDrainCoordinator::new()),
             },
-            sessions: SessionRuntime::new_from_env(),
+            sessions: Arc::new(SessionRuntime::new_from_env()),
             workspaces: build_workspace_runtime(
                 worktree_vcs_enabled,
                 runtime_parts.workspace_active_snapshot,

@@ -19,24 +19,6 @@ pub struct PreparedCodexLoginStart {
     pub codex_bin: String,
 }
 
-pub async fn load_codex_account_registry(
-    state: &Arc<DaemonState>,
-) -> anyhow::Result<provider_accounts::CodexAccountRegistry> {
-    provider_accounts::load_codex_registry(&state.core.data_root).await
-}
-
-pub async fn load_codex_accounts_snapshot(
-    state: &Arc<DaemonState>,
-) -> anyhow::Result<CodexAccountsSnapshot> {
-    let registry = load_codex_account_registry(state).await?;
-    let logins = crate::daemon::providers::codex_login_statuses(state).await;
-    Ok(CodexAccountsSnapshot {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-        logins,
-    })
-}
-
 pub async fn probe_host_codex_auth_candidate() -> provider_accounts::CodexHostImportProbe {
     provider_accounts::probe_host_codex_auth_candidate().await
 }

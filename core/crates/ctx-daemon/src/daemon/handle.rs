@@ -1,15 +1,22 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context;
+use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
+use ctx_merge_queue::MergeQueueRuntime;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
+use ctx_session_runtime::runtime::SessionRuntime;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
+use ctx_store::manager::WorkspaceStoreAccessOutcome;
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
@@ -159,6 +166,19 @@ impl DaemonHandle {
         ProviderAccountsHandle::new(
             self.state.core.data_root.clone(),
             Arc::clone(&self.state.providers),
+        )
+    }
+
+    pub fn provider_bootstrap(&self) -> ProviderBootstrapHandle {
+        ProviderBootstrapHandle::new(
+            self.state.core.data_root.clone(),
+            ProtectedWorkspaceStoreLookup::new(
+                self.state.core.stores.clone(),
+                Arc::clone(&self.state.sessions),
+                Arc::clone(&self.state.transport.merge_queue),
+            ),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
         )
     }
 
@@ -716,6 +736,164 @@ impl ProviderAccountsHandle {
 
     pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
         self.providers.as_ref()
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct ProtectedWorkspaceStoreLookup {
+    stores: StoreManager,
+    sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    merge_queue: Arc<MergeQueueRuntime>,
+}
+
+impl ProtectedWorkspaceStoreLookup {
+    pub(in crate::daemon) fn new(
+        stores: StoreManager,
+        sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+        merge_queue: Arc<MergeQueueRuntime>,
+    ) -> Self {
+        Self {
+            stores,
+            sessions,
+            merge_queue,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        self.stores.global()
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        match self.stores.workspace_access_outcome(workspace_id).await {
+            Ok(WorkspaceStoreAccessOutcome::Access(access)) => {
+                if access.kind.triggers_open_side_effects() {
+                    let mut protected = self.protected_workspace_store_ids().await;
+                    protected.insert(workspace_id);
+                    self.stores.evict_workspaces_to_cap(&protected).await;
+                }
+                Ok(access.store)
+            }
+            Ok(WorkspaceStoreAccessOutcome::Missing | WorkspaceStoreAccessOutcome::Deleting) => {
+                anyhow::bail!("workspace {} not found", workspace_id.0)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn protected_workspace_store_ids(&self) -> HashSet<WorkspaceId> {
+        let mut active_sessions: HashSet<SessionId> = HashSet::new();
+        {
+            let set = self.sessions.running_sessions.lock().await;
+            active_sessions.extend(set.iter().copied());
+        }
+        {
+            let map = self.sessions.schedulers.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.broadcasters.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.session_event_heads.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+
+        let mut active_workspaces: HashSet<WorkspaceId> = HashSet::new();
+        let mut missing = Vec::new();
+        {
+            let cache = self.sessions.session_meta_cache.lock().await;
+            for session_id in &active_sessions {
+                if let Some(entry) = cache.get(session_id) {
+                    active_workspaces.insert(entry.value.workspace_id);
+                } else {
+                    missing.push(*session_id);
+                }
+            }
+        }
+        for session_id in missing {
+            if let Ok(Some(workspace_id)) = self
+                .stores
+                .global()
+                .get_workspace_id_for_session(session_id)
+                .await
+            {
+                active_workspaces.insert(workspace_id);
+            }
+        }
+        active_workspaces.extend(self.merge_queue.running_workspaces().await);
+        active_workspaces
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderBootstrapHandle {
+    data_root: PathBuf,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    providers: Arc<ProviderRuntime>,
+    ops_events: OpsEvents,
+}
+
+impl ProviderBootstrapHandle {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        providers: Arc<ProviderRuntime>,
+        ops_events: OpsEvents,
+    ) -> Self {
+        Self {
+            data_root,
+            workspace_stores,
+            providers,
+            ops_events,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn ops_events(&self) -> &OpsEvents {
+        &self.ops_events
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        self.workspace_stores.global_store()
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn install_target_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<InstallTarget> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        let effective =
+            ctx_settings_service::effective_execution_settings(self.global_store(), &store)
+                .await
+                .with_context(|| {
+                    format!(
+                        "loading execution settings for workspace {}",
+                        workspace_id.0
+                    )
+                })?;
+        Ok(ctx_settings_service::install_target_for_settings(
+            &effective,
+        ))
     }
 }
 

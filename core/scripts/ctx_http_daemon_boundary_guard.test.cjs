@@ -191,6 +191,8 @@ const {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderBootstrapDaemonFacadeRatchet,
+  scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,
   scanProviderHarnessConfigHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
@@ -632,6 +634,71 @@ test("appstate provider harness config daemon facade ratchet rejects full-state 
     [
       "provider harness config daemon facade accepts daemon state",
       "provider harness config daemon facade accepts daemon state",
+    ],
+  );
+});
+
+test("appstate provider bootstrap route ratchet rejects broad providers handle", () => {
+  const violations = scanProviderBootstrapHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+    contents: `
+      use ctx_daemon::daemon::ProvidersHandle;
+      async fn route(State(providers): State<ProvidersHandle>) {
+        providers.workspace_providers_bootstrap_for_route(req).await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider bootstrap route extracts broad providers handle",
+      "provider bootstrap route extracts broad providers handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanProviderBootstrapHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+      contents: `
+        use ctx_daemon::daemon::ProviderBootstrapHandle;
+        async fn route(State(providers): State<ProviderBootstrapHandle>) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate provider bootstrap daemon facade ratchet rejects full-state route seam", () => {
+  const broadHandleViolations = scanProviderBootstrapDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/bootstrap.rs",
+    contents: `
+      use crate::daemon::ProvidersHandle;
+      impl ProvidersHandle {
+        pub async fn workspace_providers_bootstrap_for_route(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    broadHandleViolations,
+    [
+      "provider bootstrap daemon facade implemented on broad providers handle",
+      "provider bootstrap daemon facade implemented on broad providers handle",
+    ],
+  );
+
+  const daemonStateViolations = scanProviderBootstrapDaemonFacadeRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/providers/bootstrap.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      async fn bootstrap(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(
+    daemonStateViolations,
+    [
+      "provider bootstrap daemon facade accepts daemon state",
+      "provider bootstrap daemon facade accepts daemon state",
     ],
   );
 });

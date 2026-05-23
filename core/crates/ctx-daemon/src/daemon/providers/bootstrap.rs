@@ -1,23 +1,20 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_observability::logs;
 use ctx_provider_accounts::{
-    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
-    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
-    QwenAccountsResponse,
+    self as provider_accounts, AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse,
+    CopilotAccountsResponse, CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse,
+    MistralAccountsResponse, QwenAccountsResponse,
 };
-use ctx_provider_runtime::provider_bootstrap;
+use ctx_provider_runtime::{provider_bootstrap, provider_status_service as status_service};
 use ctx_provider_runtime::{
     ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteRequest,
 };
 use ctx_providers::adapters::ProviderStatus;
 use futures::StreamExt;
 
-use crate::daemon::{DaemonState, ProvidersHandle};
-
-use super::{accounts, status};
+use crate::daemon::ProviderBootstrapHandle;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ProvidersBootstrapErrorKind {
@@ -55,13 +52,13 @@ impl ProvidersBootstrapError {
     }
 }
 
-impl ProvidersHandle {
+impl ProviderBootstrapHandle {
     pub async fn workspace_providers_bootstrap_for_route(
         &self,
         request: ProvidersBootstrapRouteRequest,
     ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapRouteError> {
         let workspace_id = parse_bootstrap_workspace_id(request.workspace_id())?;
-        workspace_providers_bootstrap(&self.state, workspace_id)
+        workspace_providers_bootstrap(self, workspace_id)
             .await
             .map_err(bootstrap_route_error)
     }
@@ -87,11 +84,12 @@ fn bootstrap_route_error(error: ProvidersBootstrapError) -> ProvidersBootstrapRo
 }
 
 async fn workspace_providers_bootstrap(
-    state: &Arc<DaemonState>,
+    handle: &ProviderBootstrapHandle,
     ws_id: WorkspaceId,
 ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapError> {
-    load_bootstrap_workspace(state, ws_id).await?;
-    let install_target = status::install_target_for_workspace(state, ws_id)
+    load_bootstrap_workspace(handle, ws_id).await?;
+    let install_target = handle
+        .install_target_for_workspace(ws_id)
         .await
         .map_err(|error| {
             ProvidersBootstrapError::internal(format!(
@@ -99,9 +97,10 @@ async fn workspace_providers_bootstrap(
             ))
         })?;
     let preferred_model_by_provider =
-        Arc::new(load_preferred_model_by_provider(state, ws_id).await?);
+        std::sync::Arc::new(load_preferred_model_by_provider(handle, ws_id).await?);
 
-    let provider_statuses = status::providers_statuses_response(state, install_target, true).await;
+    let provider_statuses =
+        status_service::providers_statuses_response(handle, install_target, true).await;
     let visible_providers = provider_statuses
         .iter()
         .filter(|provider| provider_bootstrap::should_build_bootstrap_options(provider))
@@ -110,13 +109,12 @@ async fn workspace_providers_bootstrap(
 
     let per_provider =
         futures::stream::iter(visible_providers.into_iter().map(|provider_status| {
-            let state = Arc::clone(state);
-            let preferred_model_by_provider = Arc::clone(&preferred_model_by_provider);
+            let preferred_model_by_provider = std::sync::Arc::clone(&preferred_model_by_provider);
             async move {
                 let preferred_model_id = preferred_model_by_provider
                     .get(&provider_status.provider_id)
                     .cloned();
-                build_bootstrap_options(&state, ws_id, provider_status, preferred_model_id).await
+                build_bootstrap_options(handle, ws_id, provider_status, preferred_model_id).await
             }
         }))
         .buffer_unordered(provider_bootstrap::visible_provider_count_hint(
@@ -134,7 +132,7 @@ async fn workspace_providers_bootstrap(
         }
     }
 
-    let accounts = load_bootstrap_accounts(state).await?;
+    let accounts = load_bootstrap_accounts(handle).await?;
 
     Ok(ProvidersBootstrapResponse::new(
         provider_statuses,
@@ -190,10 +188,10 @@ mod route_tests {
 }
 
 async fn load_bootstrap_workspace(
-    state: &Arc<DaemonState>,
+    handle: &ProviderBootstrapHandle,
     ws_id: WorkspaceId,
 ) -> Result<(), ProvidersBootstrapError> {
-    let exists = state
+    let exists = handle
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -207,10 +205,10 @@ async fn load_bootstrap_workspace(
 }
 
 async fn load_preferred_model_by_provider(
-    state: &Arc<DaemonState>,
+    handle: &ProviderBootstrapHandle,
     ws_id: WorkspaceId,
 ) -> Result<HashMap<String, String>, ProvidersBootstrapError> {
-    let store = state.store_for_workspace(ws_id).await.map_err(|error| {
+    let store = handle.store_for_workspace(ws_id).await.map_err(|error| {
         ProvidersBootstrapError::internal(format!(
             "failed to load workspace provider model preferences: {}",
             logs::redact_sensitive(&error.to_string())
@@ -246,42 +244,38 @@ fn bootstrap_accounts_error(provider_id: &str, err: anyhow::Error) -> ProvidersB
 }
 
 async fn load_bootstrap_accounts(
-    state: &Arc<DaemonState>,
+    handle: &ProviderBootstrapHandle,
 ) -> Result<BootstrapAccounts, ProvidersBootstrapError> {
-    let codex_snapshot = accounts::load_codex_accounts_snapshot(state)
+    let codex_accounts = load_bootstrap_codex_accounts(handle)
         .await
         .map_err(|err| bootstrap_accounts_error("codex", err))?;
-    let claude_registry = accounts::load_claude_account_registry(state)
+    let claude_registry = provider_accounts::load_claude_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("claude-crp", err))?;
-    let gemini_registry = accounts::load_gemini_account_registry(state)
+    let gemini_registry = provider_accounts::load_gemini_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("gemini", err))?;
-    let qwen_registry = accounts::load_qwen_account_registry(state)
+    let qwen_registry = provider_accounts::load_qwen_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("qwen", err))?;
-    let kimi_registry = accounts::load_kimi_account_registry(state)
+    let kimi_registry = provider_accounts::load_kimi_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("kimi", err))?;
-    let mistral_registry = accounts::load_mistral_account_registry(state)
+    let mistral_registry = provider_accounts::load_mistral_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("mistral", err))?;
-    let copilot_registry = accounts::load_copilot_account_registry(state)
+    let copilot_registry = provider_accounts::load_copilot_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("copilot", err))?;
-    let cursor_registry = accounts::load_cursor_account_registry(state)
+    let cursor_registry = provider_accounts::load_cursor_registry(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("cursor", err))?;
-    let amp_registry = accounts::ensure_amp_account_registry_from_runtime_auth(state)
+    let amp_registry = provider_accounts::ensure_amp_registry_from_runtime_auth(handle.data_root())
         .await
         .map_err(|err| bootstrap_accounts_error("amp", err))?;
 
     Ok(BootstrapAccounts {
-        codex_accounts: CodexAccountsResponse::new(
-            codex_snapshot.active_account_id,
-            codex_snapshot.accounts,
-            codex_snapshot.logins,
-        ),
+        codex_accounts,
         claude_accounts: ClaudeAccountsResponse::from(claude_registry),
         gemini_accounts: GeminiAccountsResponse::from(gemini_registry),
         qwen_accounts: QwenAccountsResponse::from(qwen_registry),
@@ -293,8 +287,23 @@ async fn load_bootstrap_accounts(
     })
 }
 
+async fn load_bootstrap_codex_accounts(
+    handle: &ProviderBootstrapHandle,
+) -> anyhow::Result<CodexAccountsResponse> {
+    let registry = provider_accounts::load_codex_registry(handle.data_root()).await?;
+    let logins = handle
+        .providers()
+        .with_codex_login_sessions(|map| map.values().cloned().collect())
+        .await;
+    Ok(CodexAccountsResponse::new(
+        registry.active_account_id,
+        registry.accounts,
+        logins,
+    ))
+}
+
 async fn build_bootstrap_options(
-    state: &Arc<DaemonState>,
+    handle: &ProviderBootstrapHandle,
     ws_id: WorkspaceId,
     provider_status: ProviderStatus,
     preferred_model_id: Option<String>,
@@ -304,7 +313,7 @@ async fn build_bootstrap_options(
     Option<ctx_harness_sources::HarnessProviderSourceConfig>,
 ) {
     let options = provider_bootstrap::build_provider_bootstrap_options(
-        &state.core.data_root,
+        handle.data_root(),
         ws_id,
         provider_status,
         preferred_model_id,

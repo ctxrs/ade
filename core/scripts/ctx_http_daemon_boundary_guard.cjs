@@ -368,6 +368,14 @@ const providerHarnessConfigDaemonFacadePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/harness_config/routes.rs",
 ]);
 
+const providerBootstrapHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+]);
+
+const providerBootstrapDaemonFacadePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/providers/bootstrap.rs",
+]);
+
 const providerUsageApiRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status/usage.rs",
@@ -6944,6 +6952,59 @@ function scanProviderHarnessConfigDaemonFacadeRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanProviderBootstrapHandleRatchet({ filePath, contents }) {
+  if (!providerBootstrapHandleApiPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const providersHandleRegex = /\bProvidersHandle\b|State\s*<\s*ProvidersHandle\s*>/gu;
+  const lines = contents.split(/\r?\n/u);
+  for (
+    let match = providersHandleRegex.exec(contents);
+    match;
+    match = providersHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "provider bootstrap route extracts broad providers handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function scanProviderBootstrapDaemonFacadeRatchet({ filePath, contents }) {
+  if (!providerBootstrapDaemonFacadePaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "provider bootstrap daemon facade implemented on broad providers handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
+      name: "provider bootstrap daemon facade accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -6988,6 +7049,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderHarnessConfigHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderBootstrapHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7063,6 +7128,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderHarnessConfigDaemonFacadeRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanProviderBootstrapDaemonFacadeRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -7659,6 +7728,8 @@ module.exports = {
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
+  scanProviderBootstrapDaemonFacadeRatchet,
+  scanProviderBootstrapHandleRatchet,
   scanProviderHarnessConfigDaemonFacadeRatchet,
   scanProviderHarnessConfigHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
