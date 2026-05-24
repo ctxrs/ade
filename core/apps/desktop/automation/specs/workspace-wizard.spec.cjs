@@ -76,6 +76,19 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
 ];
 const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
 const FIRST_RUN_REPORT_PATH = String(process.env.CTX_AUTOMATION_FIRST_RUN_REPORT_PATH || "").trim();
+const LOCAL_CODEX_RUN_FIRST_TURN = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_LOCAL_CODEX_RUN_FIRST_TURN,
+  true,
+  "CTX_AUTOMATION_LOCAL_CODEX_RUN_FIRST_TURN",
+);
+const LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS,
+  LOCAL_CODEX_RUN_FIRST_TURN,
+  "CTX_AUTOMATION_LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS",
+);
+if (LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS && !LOCAL_CODEX_RUN_FIRST_TURN) {
+  throw new Error("CTX_AUTOMATION_LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS=1 requires CTX_AUTOMATION_LOCAL_CODEX_RUN_FIRST_TURN=1");
+}
 const ACP_BRIDGE_INVALID_PATTERNS = [
   /ACP bridge runtime is not configured or invalid/i,
   /runtime command is not configured for provider 'acp-crp-bridge'/i,
@@ -2179,11 +2192,22 @@ describe("launcher workspace wizard (e2e)", () => {
       allowInstall: true,
       installTimeoutMs: 10 * 60_000,
     });
-    await runCodexFirstTurnApiSmoke(id, {
-      providerId: provider.providerId,
-      modelId: provider.modelId,
-      prompt: "hello",
-    }, 240000);
+    if (LOCAL_CODEX_RUN_FIRST_TURN) {
+      try {
+        await runCodexFirstTurnApiSmoke(id, {
+          providerId: provider.providerId,
+          modelId: provider.modelId,
+          prompt: "hello",
+        }, 240000);
+      } catch (error) {
+        if (LOCAL_CODEX_REQUIRE_FIRST_TURN_SUCCESS) {
+          throw error;
+        }
+        console.error(`[workspace-wizard] advisory local Codex first turn failed: ${error?.stack || error}`);
+      }
+    } else {
+      console.error("[workspace-wizard] advisory local Codex first turn skipped");
+    }
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
