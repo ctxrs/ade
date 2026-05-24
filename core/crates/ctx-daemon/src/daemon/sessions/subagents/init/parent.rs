@@ -40,40 +40,32 @@ pub(super) async fn validate_parent_spawn_capacity(
     Ok(())
 }
 
-pub(super) async fn load_parent_worktree_context(
-    state: &Arc<DaemonState>,
-    store: &Store,
-    parent: &Session,
-) -> ApiResult<ParentWorktreeContext> {
-    let workspace = state
-        .global_store()
-        .get_workspace(parent.workspace_id)
-        .await
-        .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
+impl SubagentSpawnHost {
+    pub(super) async fn load_parent_worktree_context(
+        &self,
+        store: &Store,
+        parent: &Session,
+    ) -> ApiResult<ParentWorktreeContext> {
+        let workspace = self.load_workspace(parent.workspace_id).await?;
 
-    let parent_worktree_execution = crate::daemon::workspaces::resolve_existing_worktree_execution(
-        state,
-        store,
-        &workspace,
-        parent.worktree_id,
-    )
-    .await
-    .map_err(internal_api_error)?;
-    let execution_environment = parent_worktree_execution.execution_environment();
-    if parent.execution_environment != execution_environment {
-        tracing::warn!(
-            session_id = %parent.id.0,
-            stored = parent.execution_environment.as_str(),
-            resolved = execution_environment.as_str(),
-            "parent session execution_environment drifted from resolved worktree identity"
-        );
+        let parent_worktree_execution = self
+            .resolve_existing_worktree_execution(store, &workspace, parent.worktree_id)
+            .await?;
+        let execution_environment = parent_worktree_execution.execution_environment();
+        if parent.execution_environment != execution_environment {
+            tracing::warn!(
+                session_id = %parent.id.0,
+                stored = parent.execution_environment.as_str(),
+                resolved = execution_environment.as_str(),
+                "parent session execution_environment drifted from resolved worktree identity"
+            );
+        }
+
+        Ok(ParentWorktreeContext {
+            workspace,
+            worktree: parent_worktree_execution.worktree,
+            effective: parent_worktree_execution.effective,
+            execution_environment,
+        })
     }
-
-    Ok(ParentWorktreeContext {
-        workspace,
-        worktree: parent_worktree_execution.worktree,
-        effective: parent_worktree_execution.effective,
-        execution_environment,
-    })
 }

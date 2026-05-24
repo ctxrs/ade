@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use ctx_core::models::{SandboxBinding, Session, Workspace, Worktree};
-
-use crate::daemon::DaemonState;
+use ctx_store::Store;
 
 pub(super) struct ArchivedWorktreeCleanupContext {
     pub(super) worktree: Worktree,
@@ -12,7 +9,7 @@ pub(super) struct ArchivedWorktreeCleanupContext {
 }
 
 pub(super) async fn load_archived_worktree_cleanup_context(
-    state: &Arc<DaemonState>,
+    global_store: &Store,
     store: &ctx_store::Store,
     parent: &Session,
     child: &Session,
@@ -38,7 +35,7 @@ pub(super) async fn load_archived_worktree_cleanup_context(
             return None;
         }
     };
-    let workspace = match state.global_store().get_workspace(child.workspace_id).await {
+    let workspace = match global_store.get_workspace(child.workspace_id).await {
         Ok(Some(workspace)) => workspace,
         Ok(None) => {
             tracing::warn!(

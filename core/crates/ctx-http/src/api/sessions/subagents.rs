@@ -122,7 +122,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_subagent_routes_preserve_json_invalid_id_errors() {
         let fixture = sessions_fixture().await;
-        let handle = fixture.daemon().handle().sessions();
+        let handle = fixture.daemon().handle().session_subagent_mcp_control();
         let mcp_read_handle = fixture.daemon().handle().session_subagent_mcp_read();
 
         let err = mcp_spawn_agent(

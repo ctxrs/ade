@@ -1,4 +1,4 @@
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 use std::time::Instant;
 
 use ctx_core::ids::{RunId, SessionId};
@@ -63,18 +63,6 @@ pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
             }
         }
     }
-}
-
-pub(in crate::daemon::sessions::subagents) async fn wait_for_run_assistant_message(
-    state: &Arc<DaemonState>,
-    session_id: SessionId,
-    run_id: RunId,
-) -> Result<Option<String>, String> {
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
-    wait_for_run_assistant_message_in_store(&store, session_id, run_id).await
 }
 
 pub(in crate::daemon) async fn wait_for_run_assistant_message_in_store(

@@ -15,8 +15,8 @@ use ctx_subagent_service::route_contract::{
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
 use crate::daemon::{
-    ScopedMcpSessionAccessError, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
-    SessionsHandle,
+    ScopedMcpSessionAccessError, SessionSubagentMcpControlHandle, SessionSubagentMcpReadHandle,
+    SessionSubagentReadHandle,
 };
 
 impl SessionSubagentReadHandle {
@@ -63,7 +63,7 @@ impl SessionSubagentReadHandle {
     }
 }
 
-impl SessionsHandle {
+impl SessionSubagentMcpControlHandle {
     pub async fn spawn_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,

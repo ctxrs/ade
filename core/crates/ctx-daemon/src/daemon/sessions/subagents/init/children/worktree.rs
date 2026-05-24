@@ -2,7 +2,6 @@ use ctx_subagent_service::SubagentWorktreeSelection;
 
 use super::SubagentChildInit;
 use crate::daemon::sessions::subagents::errors::{api_error, ApiResult, SubagentErrorKind};
-use crate::daemon::sessions::subagents::worktrees::create_subagent_worktree;
 
 pub(super) async fn resolve_child_worktree(
     init: &SubagentChildInit,
@@ -15,16 +14,17 @@ pub(super) async fn resolve_child_worktree(
                 .worktree_plan
                 .clone()
                 .ok_or_else(|| api_error(SubagentErrorKind::Internal, "worktree plan missing"))?;
-            let worktree = create_subagent_worktree(
-                &init.state,
-                store,
-                &init.workspace,
-                init.parent.task_id,
-                &base_commit_sha,
-                vcs_kind,
-                &init.parent_effective,
-            )
-            .await?;
+            let worktree = init
+                .host
+                .create_subagent_worktree(
+                    store,
+                    &init.workspace,
+                    init.parent.task_id,
+                    &base_commit_sha,
+                    vcs_kind,
+                    &init.parent_effective,
+                )
+                .await?;
             Ok((worktree.id, Some(worktree.root_path)))
         }
     }

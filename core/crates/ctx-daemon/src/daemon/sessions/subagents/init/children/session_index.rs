@@ -9,8 +9,7 @@ pub(super) async fn index_child_session(
     label: &str,
 ) {
     if let Err(error) = init
-        .state
-        .global_store()
+        .host
         .upsert_workspace_session_index(session.id, init.parent.workspace_id)
         .await
     {

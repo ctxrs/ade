@@ -50,6 +50,13 @@ use ctx_worktree_vcs_service::{
 };
 use tokio::sync::{broadcast, mpsc, Mutex};
 
+use crate::daemon::sessions::subagents::{
+    SessionSubagentMcpControlFuture, SessionSubagentMcpControlHandle,
+    SessionSubagentMcpControlHandleParts, SessionSubagentMcpControlLifecycleHost,
+    SessionSubagentMcpControlPublicationHost, SessionSubagentMcpControlSchedulerSpawner,
+    SubagentSpawnHost,
+};
+
 use super::{
     blobs::BlobHandle,
     state::{
@@ -494,6 +501,86 @@ impl DaemonHandle {
             provider_inactivity_timeout,
             emit_legacy_context_window_key_reject,
         )
+    }
+
+    pub fn session_subagent_mcp_control(&self) -> SessionSubagentMcpControlHandle {
+        let provider_inactivity_timeout = Arc::new({
+            let sessions = Arc::clone(&self.state.sessions);
+            move || {
+                let sessions = Arc::clone(&sessions);
+                Box::pin(async move { sessions.provider_inactivity_timeout().await })
+                    as SessionSubagentMcpControlFuture<_>
+            }
+        });
+        let emit_legacy_context_window_key_reject = Arc::new({
+            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+            move |legacy_key: String| {
+                let perf_telemetry = perf_telemetry.clone();
+                Box::pin(async move {
+                    let mut labels = HashMap::new();
+                    labels.insert("source".to_string(), "daemon".to_string());
+                    labels.insert(
+                        "surface".to_string(),
+                        "sessions.context_window_summary".to_string(),
+                    );
+                    labels.insert("issue".to_string(), "legacy_context_window_key".to_string());
+                    labels.insert("legacy_key".to_string(), legacy_key);
+                    perf_telemetry
+                        .record_metric(
+                            PerfMetric {
+                                name: "compat.payload_reject_count".to_string(),
+                                kind: PerfMetricKind::Counter,
+                                unit: "count".to_string(),
+                                value: 1.0,
+                                labels,
+                            },
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
+                }) as SessionSubagentMcpControlFuture<_>
+            }
+        });
+        let spawn_host = Arc::new(SubagentSpawnHost::new(
+            Arc::clone(&self.state),
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.providers),
+            self.state.core.data_root.clone(),
+        ));
+        let archive_worktree_cleanup = Arc::new(
+            crate::daemon::sessions::subagents::SubagentArchiveWorktreeCleanupHost::new(
+                self.state.core.data_root.clone(),
+                self.state.global_store().clone(),
+                crate::daemon::workspaces::vcs_hooks::WorkspaceDeletionVcsHookHost::new(
+                    self.state.core.data_root.clone(),
+                    self.state.core.daemon_url.clone(),
+                    self.state.global_store().clone(),
+                    self.state.core.stores.clone(),
+                    Arc::clone(&self.state.execution.harness),
+                ),
+            ),
+        );
+        SessionSubagentMcpControlHandle::new(SessionSubagentMcpControlHandleParts::new(
+            self.session_store_lookup(),
+            Arc::clone(&self.state.sessions),
+            SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(&self.state)),
+            SessionSubagentMcpControlPublicationHost::new(
+                self.session_store_lookup(),
+                self.protected_workspace_store_lookup(),
+                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            ),
+            SessionSubagentMcpControlLifecycleHost::new(
+                self.state.global_store().clone(),
+                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+                Arc::clone(&self.state.providers),
+            ),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            spawn_host,
+            archive_worktree_cleanup,
+            provider_inactivity_timeout,
+            emit_legacy_context_window_key_reject,
+        ))
     }
 
     pub fn session_read_models(&self) -> SessionReadModelsHandle {
@@ -2641,6 +2728,15 @@ impl ProtectedWorkspaceStoreLookup {
         self.store_for_workspace(workspace_id).await
     }
 
+    pub(in crate::daemon) async fn store_for_task(&self, task_id: TaskId) -> anyhow::Result<Store> {
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_task(task_id)
+            .await?
+            .with_context(|| format!("workspace missing for task {}", task_id.0))?;
+        self.store_for_workspace(workspace_id).await
+    }
+
     async fn protected_workspace_store_ids(&self) -> HashSet<WorkspaceId> {
         let mut active_sessions: HashSet<SessionId> = HashSet::new();
         {
@@ -4407,7 +4503,9 @@ impl SessionVcsHandle {
     }
 }
 
-fn session_store_access_anyhow(error: crate::daemon::SessionStoreAccessError) -> anyhow::Error {
+pub(in crate::daemon) fn session_store_access_anyhow(
+    error: crate::daemon::SessionStoreAccessError,
+) -> anyhow::Error {
     match error {
         crate::daemon::SessionStoreAccessError::NotFound => anyhow::anyhow!("session not found"),
         crate::daemon::SessionStoreAccessError::LookupUnavailable(error) => error,

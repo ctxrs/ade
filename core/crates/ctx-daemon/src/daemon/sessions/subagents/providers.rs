@@ -1,44 +1,31 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
-use crate::daemon::execution_effective;
-use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
-use crate::daemon::DaemonState;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
-use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
-use ctx_provider_runtime::provider_usability::{
-    provider_status_is_usable, provider_status_unusable_reason,
-};
 use ctx_session_tools::model_resolution::ModelCatalog;
 
 use super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
 };
+use super::SubagentSpawnHost;
 
 pub(super) async fn load_requested_model_catalogs(
-    state: &Arc<DaemonState>,
+    host: &SubagentSpawnHost,
     workspace: &Workspace,
     provider_ids: &HashSet<String>,
     execution_environment: ExecutionEnvironment,
 ) -> ApiResult<HashMap<String, Option<ModelCatalog>>> {
-    let install_target = execution_effective::effective_install_target_for_environment(
-        state.as_ref(),
-        workspace.id,
-        execution_environment,
-    )
-    .await
-    .map_err(internal_request_or_policy_error)?;
+    let install_target = host
+        .effective_install_target_for_environment(workspace.id, execution_environment)
+        .await
+        .map_err(internal_request_or_policy_error)?;
     let managed =
         ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_or_err(
-            &state.core.data_root,
+            host.data_root(),
         )
         .await
         .map_err(internal_api_error)?;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    let known_providers = state.providers.known_harness_provider_ids(&matrix).await;
+    let matrix = host.load_provider_matrix().await;
+    let known_providers = host.known_harness_provider_ids(&matrix).await;
 
     let mut available_providers = known_providers.iter().cloned().collect::<Vec<_>>();
     available_providers.sort();
@@ -54,35 +41,26 @@ pub(super) async fn load_requested_model_catalogs(
             ));
         }
 
-        let status = provider_status_for_target(
-            state.as_ref(),
-            &managed,
-            &matrix,
-            provider_id,
-            install_target,
-        )
-        .await;
-        if !provider_status_is_usable(&status) {
+        if let Some(reason) = host
+            .provider_unusable_reason_for_target(&managed, &matrix, provider_id, install_target)
+            .await
+        {
             return Err(api_error(
                 SubagentErrorKind::BadRequest,
-                format!(
-                    "harness '{provider_id}' is not ready: {}",
-                    provider_status_unusable_reason(&status)
-                        .unwrap_or_else(|| "provider not ready for use".to_string())
-                ),
+                format!("harness '{provider_id}' is not ready: {reason}"),
             ));
         }
     }
 
     let mut model_catalogs = HashMap::new();
     for provider_id in provider_ids {
-        let catalog = load_provider_model_catalog_for_execution_environment(
-            state.as_ref(),
-            workspace,
-            provider_id,
-            execution_environment,
-        )
-        .await;
+        let catalog = host
+            .load_provider_model_catalog_for_execution_environment(
+                workspace,
+                provider_id,
+                execution_environment,
+            )
+            .await;
         match catalog {
             Ok(catalog) => {
                 model_catalogs.insert(provider_id.clone(), catalog);

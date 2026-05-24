@@ -71,8 +71,8 @@ pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
 pub use worktree_bootstrap::spawn_worktree_bootstrap;
 pub use worktree_cleanup::{
-    cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
-    TaskWorktreeCleanupTarget,
+    cleanup_task_worktrees, cleanup_task_worktrees_with_host, managed_worktree_root,
+    managed_worktree_root_for_data_root, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
 };
 pub use worktree_provision::{persist_provisioned_worktree, provision_worktree_for_execution};
 

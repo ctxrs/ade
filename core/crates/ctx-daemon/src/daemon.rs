@@ -107,6 +107,7 @@ pub use mcp_auth::{
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
+pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     CacheSweepConfig, SessionStoreAccessError, StoreLookup, TimedEntry, WorkspaceStoreAccessError,

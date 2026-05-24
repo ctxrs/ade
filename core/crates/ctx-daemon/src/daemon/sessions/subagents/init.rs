@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use ctx_core::ids::SessionId;
+
 use super::*;
 
 mod children;
@@ -7,17 +11,15 @@ mod request;
 mod spawning;
 
 use children::{create_subagent_child, SubagentChildInit, SubagentChildInitItem};
-use invocation::{
-    mark_subagent_invocation_failed, start_subagent_invocation, StartedSubagentInvocation,
-};
-use parent::{load_parent_worktree_context, validate_parent_spawn_capacity};
+use invocation::StartedSubagentInvocation;
+use parent::validate_parent_spawn_capacity;
 use request::{
     build_subagent_request_agents, prepare_subagent_init_request, PreparedSubagentInitRequest,
 };
 use spawning::spawn_subagent_completion_tasks;
 
 pub async fn init_subagents(
-    state: Arc<DaemonState>,
+    host: Arc<SubagentSpawnHost>,
     parent_id: SessionId,
     req: AgentInitReq,
 ) -> ApiResult<Vec<SpawnedChild>> {
@@ -27,10 +29,10 @@ pub async fn init_subagents(
         request_json,
         tool_call_id,
         worktree_selection,
-    } = prepare_subagent_init_request(&state, &req).await?;
+    } = prepare_subagent_init_request(host.as_ref(), &req).await?;
 
-    let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let creation_lock = state.task_session_creation_lock(parent.task_id).await;
+    let (store, parent) = host.load_parent_session(parent_id).await?;
+    let creation_lock = host.task_session_creation_lock(parent.task_id).await;
     let _creation_guard = creation_lock.lock().await;
     validate_parent_spawn_capacity(&store, &parent, agents.len()).await?;
 
@@ -39,36 +41,36 @@ pub async fn init_subagents(
     let provider_ids = collect_provider_ids(&request_agents, &parent.provider_id)
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
-    let parent_context = load_parent_worktree_context(&state, &store, &parent).await?;
+    let parent_context = host.load_parent_worktree_context(&store, &parent).await?;
 
-    let model_catalogs = load_requested_model_catalogs(
-        &state,
-        &parent_context.workspace,
-        &provider_ids,
-        parent_context.execution_environment,
-    )
-    .await?;
-    let worktree_plan =
-        plan_subagent_worktree_creation(&state, &parent_context.worktree, worktree_selection)
-            .await?;
+    let model_catalogs = host
+        .load_requested_model_catalogs(
+            &parent_context.workspace,
+            &provider_ids,
+            parent_context.execution_environment,
+        )
+        .await?;
+    let worktree_plan = host
+        .plan_subagent_worktree_creation(&parent_context.worktree, worktree_selection)
+        .await?;
 
     let StartedSubagentInvocation {
         invocation_id,
         tool_call_id,
         parent_turn_id,
-    } = start_subagent_invocation(
-        &state,
-        &store,
-        &parent,
-        agents.len(),
-        Some(request_json),
-        tool_call_id.as_deref(),
-    )
-    .await?;
+    } = host
+        .start_subagent_invocation(
+            &store,
+            &parent,
+            agents.len(),
+            Some(request_json),
+            tool_call_id.as_deref(),
+        )
+        .await?;
 
     let child_ids = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
     let child_init = SubagentChildInit {
-        state: state.clone(),
+        host: Arc::clone(&host),
         parent: parent.clone(),
         workspace: parent_context.workspace.clone(),
         model_catalogs,
@@ -101,8 +103,7 @@ pub async fn init_subagents(
                 let ids = child_ids.lock().await;
                 ids.clone()
             };
-            mark_subagent_invocation_failed(
-                &state,
+            host.mark_subagent_invocation_failed(
                 &parent,
                 &invocation_id,
                 &tool_call_id,
@@ -115,7 +116,7 @@ pub async fn init_subagents(
     };
 
     spawn_subagent_completion_tasks(
-        &state,
+        &host,
         &spawned_children,
         invocation_id,
         tool_call_id,

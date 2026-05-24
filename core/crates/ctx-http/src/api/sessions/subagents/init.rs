@@ -2,7 +2,7 @@ use super::*;
 use axum::extract::Extension;
 
 pub(crate) async fn mcp_spawn_agent(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpControlHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SpawnAgentRouteRequest>,

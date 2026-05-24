@@ -4,14 +4,12 @@ mod context;
 mod details;
 mod errors;
 mod init;
+mod mcp_control;
 mod providers;
 mod request;
 mod types;
 mod worktrees;
 
-use std::sync::Arc;
-
-use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use ctx_subagent_service::{
     collect_provider_ids, DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
 };
@@ -22,33 +20,35 @@ pub use self::types::{
     InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq, SpawnAgentResp, WaitAgentReq,
     WaitAgentResp,
 };
-use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::DaemonState;
-use ctx_core::ids::SessionId;
 use ctx_core::models::SubagentInvocationChild;
 
-pub use self::agent_control::{archive_agent, interrupt_agent, send_input, spawn_agent};
+pub(in crate::daemon) use self::agent_control::SubagentSpawnHost;
+pub(in crate::daemon) use self::child_runs::PersistedSubagentPrompt;
 use self::child_runs::{
     dispatch_subagent_prompt, emit_subagent_invocation_notice, finalize_subagent_invocation,
-    persist_subagent_prompt, run_subagent_child, wait_for_run_assistant_message,
-    wait_for_run_assistant_message_in_store, PersistedSubagentPrompt,
+    persist_subagent_prompt, run_subagent_child, wait_for_run_assistant_message_in_store,
 };
-use self::details::{
-    agent_delivery_label, build_agent_detail, build_enqueued_agent_detail,
-    build_spawned_agent_detail, encode_agent_ref, encode_run_ref, is_active_turn_status,
-};
+pub(in crate::daemon) use self::context::worktree_path_for_child_in_store;
+use self::details::build_spawned_agent_detail;
 pub(in crate::daemon) use self::details::{
     build_agent_detail_for_mcp_read, build_agent_summary, collect_wait_targets,
     resolve_child_agent_session,
 };
+use self::errors::ApiResult;
 pub(in crate::daemon) use self::errors::{api_error, internal_api_error, not_found};
-use self::errors::{load_parent_session, ApiResult};
 pub use self::errors::{SubagentError, SubagentErrorKind};
-use self::providers::load_requested_model_catalogs;
+pub use self::mcp_control::SessionSubagentMcpControlHandle;
+pub(in crate::daemon) use self::mcp_control::{
+    SessionSubagentMcpControlFuture, SessionSubagentMcpControlHandleParts,
+    SessionSubagentMcpControlLifecycleHost, SessionSubagentMcpControlPublicationHost,
+    SessionSubagentMcpControlSchedulerSpawner,
+};
 use self::request::ensure_requested_labels_available;
-use self::worktrees::{cleanup_archived_subagent_worktree, plan_subagent_worktree_creation};
+pub(in crate::daemon) use self::worktrees::{
+    cleanup_archived_subagent_worktree_with_host, SubagentArchiveWorktreeCleanupHost,
+};
 
-pub use init::init_subagents;
+pub(in crate::daemon) use init::init_subagents;
 
 #[derive(Clone)]
 pub struct SpawnedChild {

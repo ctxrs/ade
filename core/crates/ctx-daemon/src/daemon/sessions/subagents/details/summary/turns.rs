@@ -1,11 +1,9 @@
 use ctx_core::ids::SessionId;
 use ctx_core::models::{SessionTurn, SessionTurnStatus};
 pub(super) use ctx_subagent_service::agent_health;
+pub(in crate::daemon::sessions::subagents) use ctx_subagent_service::is_active_turn_status;
 pub(in crate::daemon::sessions::subagents::details) use ctx_subagent_service::{
     agent_active_state, agent_terminal_result_status,
-};
-pub(in crate::daemon::sessions::subagents) use ctx_subagent_service::{
-    agent_delivery_label, is_active_turn_status,
 };
 
 use super::super::super::{internal_api_error, ApiResult};

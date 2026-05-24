@@ -1,15 +1,10 @@
-use std::sync::Arc;
-
-use crate::daemon::sessions::subagents::errors::{
-    api_error, internal_api_error, ApiResult, SubagentErrorKind,
-};
-use crate::daemon::DaemonState;
+use crate::daemon::sessions::subagents::errors::{api_error, ApiResult, SubagentErrorKind};
 use ctx_subagent_service::{
     build_subagent_request_json, normalize_subagent_labels, parse_subagent_worktree,
-    resolve_max_subagents_per_call, SubagentRequestAgent, SubagentWorktreeSelection,
+    SubagentRequestAgent, SubagentWorktreeSelection,
 };
 
-use super::super::{AgentInitItem, AgentInitReq};
+use super::super::{AgentInitItem, AgentInitReq, SubagentSpawnHost};
 
 pub(super) struct PreparedSubagentInitRequest {
     pub(super) agents: Vec<AgentInitItem>,
@@ -20,7 +15,7 @@ pub(super) struct PreparedSubagentInitRequest {
 }
 
 pub(super) async fn prepare_subagent_init_request(
-    state: &Arc<DaemonState>,
+    host: &SubagentSpawnHost,
     req: &AgentInitReq,
 ) -> ApiResult<PreparedSubagentInitRequest> {
     if req.agents.is_empty() {
@@ -30,11 +25,7 @@ pub(super) async fn prepare_subagent_init_request(
         ));
     }
 
-    let settings = ctx_settings_service::load_settings(state.global_store())
-        .await
-        .map_err(internal_api_error)?;
-    let max_subagents =
-        resolve_max_subagents_per_call(settings.subagents.as_ref().and_then(|s| s.max_per_call));
+    let max_subagents = host.max_subagents_per_call().await?;
     if req.agents.len() > max_subagents {
         return Err(api_error(
             SubagentErrorKind::BadRequest,

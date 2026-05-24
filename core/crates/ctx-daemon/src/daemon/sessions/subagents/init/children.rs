@@ -9,14 +9,10 @@ use ctx_session_tools::model_resolution::ModelCatalog;
 use ctx_subagent_service::SubagentWorktreeSelection;
 use tokio::sync::Mutex;
 
-use crate::daemon::DaemonState;
 use ctx_settings_model::ExecutionSettings;
 
 use super::super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
-use super::super::{
-    dispatch_subagent_prompt, emit_subagent_invocation_notice, persist_subagent_prompt,
-    AgentInitItem, SpawnedChild,
-};
+use super::super::{AgentInitItem, SpawnedChild, SubagentSpawnHost};
 
 mod model;
 mod session_index;
@@ -28,7 +24,7 @@ use worktree::resolve_child_worktree;
 
 #[derive(Clone)]
 pub(super) struct SubagentChildInit {
-    pub(super) state: Arc<DaemonState>,
+    pub(super) host: Arc<SubagentSpawnHost>,
     pub(super) parent: Session,
     pub(super) workspace: Workspace,
     pub(super) model_catalogs: HashMap<String, Option<ModelCatalog>>,
@@ -52,11 +48,7 @@ pub(super) async fn create_subagent_child(
     init: SubagentChildInit,
     item: SubagentChildInitItem,
 ) -> ApiResult<SpawnedChild> {
-    let store = init
-        .state
-        .store_for_session(init.parent.id)
-        .await
-        .map_err(internal_api_error)?;
+    let store = init.host.store_for_session(init.parent.id).await?;
     let prompt = item.agent.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(api_error(
@@ -91,7 +83,7 @@ pub(super) async fn create_subagent_child(
     index_child_session(&init, &store, &session, &item.label).await;
 
     let child_created_at = chrono::Utc::now();
-    let persisted = persist_subagent_prompt(&init.state, &session, prompt).await?;
+    let persisted = init.host.persist_subagent_prompt(&session, prompt).await?;
     let child_session_id = session.id;
     let child = SubagentInvocationChild {
         invocation_id: init.invocation_id.clone(),
@@ -117,20 +109,22 @@ pub(super) async fn create_subagent_child(
         ids.push(child_session_id.0.to_string());
         ids.clone()
     };
-    emit_subagent_invocation_notice(
-        &init.state,
-        init.parent.id,
-        init.parent_turn_id,
-        serde_json::json!({
+    init.host
+        .emit_subagent_invocation_notice(
+            init.parent.id,
+            init.parent_turn_id,
+            serde_json::json!({
             "kind": "subagent_invocation_updated",
             "invocation_id": init.invocation_id.clone(),
             "tool_call_id": init.tool_call_id.clone(),
             "status": "running",
             "child_session_ids": child_ids_snapshot,
-        }),
-    )
-    .await?;
-    dispatch_subagent_prompt(&init.state, &session, &persisted.saved_message).await;
+            }),
+        )
+        .await?;
+    init.host
+        .dispatch_subagent_prompt(&session, &persisted.saved_message)
+        .await;
 
     Ok(SpawnedChild {
         child,

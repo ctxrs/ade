@@ -47,7 +47,7 @@ async fn resolve_provider_id(init: &SubagentChildInit, item: &SubagentChildInitI
         .trim()
         .to_string();
     if harness_defaulted {
-        init.state
+        init.host
             .emit_product_fallback_applied_counter(
                 "sessions.subagent_init",
                 "harness_default_parent",
@@ -74,7 +74,7 @@ async fn fallback_model_id(
         None
     };
     if item.agent.model.is_none() && fallback_model.is_none() {
-        init.state
+        init.host
             .emit_compat_payload_reject_counter(
                 "sessions.subagent_init",
                 "missing_model_without_default",
@@ -92,7 +92,7 @@ async fn fallback_model_id(
         } else {
             "model_default_catalog"
         };
-        init.state
+        init.host
             .emit_product_fallback_applied_counter("sessions.subagent_init", fallback, None)
             .await;
     }

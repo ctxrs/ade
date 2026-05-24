@@ -11,7 +11,7 @@ use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 use tokio::sync::{mpsc, Mutex};
 
-use super::{subagents, title_generation, title_generation::schedule_session_title_generation};
+use super::{title_generation, title_generation::schedule_session_title_generation};
 use crate::daemon::handle::{SessionTitleModelModeHandle, SessionsHandle};
 use crate::daemon::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
 
@@ -241,38 +241,6 @@ impl SessionsHandle {
         session_id: SessionId,
     ) -> Result<(), ScopedMcpSessionAccessError> {
         require_scoped_mcp_session_context(&self.state, mcp_auth, session_id).await
-    }
-
-    pub async fn spawn_agent(
-        &self,
-        parent_id: SessionId,
-        req: subagents::SpawnAgentReq,
-    ) -> Result<subagents::SpawnAgentResp, subagents::SubagentError> {
-        subagents::spawn_agent(Arc::clone(&self.state), parent_id, req).await
-    }
-
-    pub async fn send_input(
-        &self,
-        parent_id: SessionId,
-        req: subagents::SendInputReq,
-    ) -> Result<subagents::SendInputResp, subagents::SubagentError> {
-        subagents::send_input(Arc::clone(&self.state), parent_id, req).await
-    }
-
-    pub async fn archive_agent(
-        &self,
-        parent_id: SessionId,
-        req: subagents::ArchiveAgentReq,
-    ) -> Result<subagents::ArchiveAgentResp, subagents::SubagentError> {
-        subagents::archive_agent(Arc::clone(&self.state), parent_id, req).await
-    }
-
-    pub async fn interrupt_agent(
-        &self,
-        parent_id: SessionId,
-        req: subagents::InterruptAgentReq,
-    ) -> Result<subagents::InterruptAgentResp, subagents::SubagentError> {
-        subagents::interrupt_agent(Arc::clone(&self.state), parent_id, req).await
     }
 }
 

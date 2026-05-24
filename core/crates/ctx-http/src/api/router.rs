@@ -14,11 +14,11 @@ use ctx_daemon::daemon::{
     ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
     RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
     SessionArtifactsHandle, SessionControlHandle, SessionFileCompletionsHandle,
-    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpReadHandle,
-    SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SessionsHandle,
-    SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
-    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
-    TelemetryHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
+    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpControlHandle,
+    SessionSubagentMcpReadHandle, SessionSubagentReadHandle, SessionTitleModelModeHandle,
+    SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
+    TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
+    TaskTitleHandle, TelemetryHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
     WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
@@ -122,6 +122,7 @@ pub struct RouteHandles {
     pub(in crate::api) session_message_command: SessionMessageCommandHandle,
     pub(in crate::api) session_read_models: SessionReadModelsHandle,
     pub(in crate::api) session_subagent_mcp_read: SessionSubagentMcpReadHandle,
+    pub(in crate::api) session_subagent_mcp_control: SessionSubagentMcpControlHandle,
     pub(in crate::api) session_subagent_read: SessionSubagentReadHandle,
     pub(in crate::api) session_title_model_mode: SessionTitleModelModeHandle,
     pub(in crate::api) session_vcs: SessionVcsHandle,
@@ -194,6 +195,7 @@ impl RouteHandles {
             session_message_command: handle.session_message_command(),
             session_read_models: handle.session_read_models(),
             session_subagent_mcp_read: handle.session_subagent_mcp_read(),
+            session_subagent_mcp_control: handle.session_subagent_mcp_control(),
             session_subagent_read: handle.session_subagent_read(),
             session_title_model_mode: handle.session_title_model_mode(),
             session_vcs: handle.session_vcs(),
@@ -271,6 +273,7 @@ impl_route_state_extractors! {
     SessionMessageCommandHandle, session_message_command;
     SessionReadModelsHandle, session_read_models;
     SessionSubagentMcpReadHandle, session_subagent_mcp_read;
+    SessionSubagentMcpControlHandle, session_subagent_mcp_control;
     SessionSubagentReadHandle, session_subagent_read;
     SessionTitleModelModeHandle, session_title_model_mode;
     SessionVcsHandle, session_vcs;

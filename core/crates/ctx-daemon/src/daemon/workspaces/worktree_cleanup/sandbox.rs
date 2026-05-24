@@ -4,35 +4,32 @@ use anyhow::Context;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 
-use crate::daemon::DaemonState;
-
 pub(super) enum SandboxCleanupOutcome {
     Complete { errors: Vec<anyhow::Error> },
     SkipRemainingTarget { error: anyhow::Error },
 }
 
 pub(super) async fn cleanup_sandbox_materialization(
-    state: &DaemonState,
+    data_root: &StdPath,
     workspace: &Workspace,
     worktree: &Worktree,
     binding: &SandboxBinding,
     task_id: TaskId,
 ) -> SandboxCleanupOutcome {
     let mut errors = Vec::new();
-    let sandbox_mode =
-        match ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root) {
-            Ok(mode) => mode,
-            Err(err) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to resolve sandbox command mode for cleanup: {err:#}"
-                );
-                return SandboxCleanupOutcome::SkipRemainingTarget { error: err };
-            }
-        };
+    let sandbox_mode = match ctx_harness_runtime::selected_sandbox_command_mode(data_root) {
+        Ok(mode) => mode,
+        Err(err) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to resolve sandbox command mode for cleanup: {err:#}"
+            );
+            return SandboxCleanupOutcome::SkipRemainingTarget { error: err };
+        }
+    };
     if let Err(err) = ctx_sandbox_materialization::remove_live_worktree_root(
-        &state.core.data_root,
+        data_root,
         &sandbox_mode,
         workspace.id,
         StdPath::new(&binding.live_worktree_root),

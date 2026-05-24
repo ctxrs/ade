@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::daemon::workspaces::vcs_hooks;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_worktree_vcs_service::matching_managed_worktree_path;
+use ctx_worktree_vcs_service::VcsHooksHost;
 
 use crate::daemon::DaemonState;
 use branches::{cleanup_collected_worktree_branches, WorktreeBranchCleanup};
@@ -36,8 +37,16 @@ pub fn managed_worktree_root(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Option<PathBuf> {
+    managed_worktree_root_for_data_root(&state.core.data_root, workspace, worktree)
+}
+
+pub fn managed_worktree_root_for_data_root(
+    data_root: &Path,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Option<PathBuf> {
     matching_managed_worktree_path(
-        &state.core.data_root,
+        data_root,
         workspace.id,
         worktree.id,
         PathBuf::from(&worktree.root_path),
@@ -51,12 +60,36 @@ pub async fn cleanup_task_worktrees(
     targets: &[TaskWorktreeCleanupTarget],
     branch_cleanup_error_mode: BranchCleanupErrorMode,
 ) -> Vec<anyhow::Error> {
+    cleanup_task_worktrees_with_host(
+        &state.core.data_root,
+        state,
+        workspace,
+        task_id,
+        targets,
+        branch_cleanup_error_mode,
+    )
+    .await
+}
+
+pub async fn cleanup_task_worktrees_with_host<H>(
+    data_root: &Path,
+    hooks_host: &H,
+    workspace: &Workspace,
+    task_id: TaskId,
+    targets: &[TaskWorktreeCleanupTarget],
+    branch_cleanup_error_mode: BranchCleanupErrorMode,
+) -> Vec<anyhow::Error>
+where
+    H: VcsHooksHost,
+{
     let mut errors = Vec::new();
     let mut branch_cleanup = WorktreeBranchCleanup::default();
     let workspace_root_exists = tokio::fs::metadata(&workspace.root_path).await.is_ok();
     for target in targets {
         let worktree = &target.worktree;
-        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await {
+        if let Err(err) =
+            vcs_hooks::cleanup_worktree_hooks_with_host(hooks_host, workspace, worktree).await
+        {
             tracing::warn!(
                 task_id = %task_id.0,
                 worktree_id = %worktree.id.0,
@@ -64,7 +97,7 @@ pub async fn cleanup_task_worktrees(
             );
         }
         if let Some(binding) = target.sandbox_binding.as_ref() {
-            match cleanup_sandbox_materialization(state, workspace, worktree, binding, task_id)
+            match cleanup_sandbox_materialization(data_root, workspace, worktree, binding, task_id)
                 .await
             {
                 SandboxCleanupOutcome::Complete {

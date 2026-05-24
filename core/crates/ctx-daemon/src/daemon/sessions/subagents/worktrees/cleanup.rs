@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
+use crate::daemon::workspaces::vcs_hooks::WorkspaceDeletionVcsHookHost;
 use crate::daemon::workspaces::{
-    cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
+    cleanup_task_worktrees_with_host, managed_worktree_root_for_data_root, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,
 };
-use crate::daemon::DaemonState;
+use ctx_store::Store;
 
 mod context;
 mod references;
@@ -12,8 +11,28 @@ mod references;
 use context::load_archived_worktree_cleanup_context;
 use references::archived_worktree_has_other_references;
 
-pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_worktree(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) struct SubagentArchiveWorktreeCleanupHost {
+    data_root: std::path::PathBuf,
+    global_store: Store,
+    vcs_hooks: WorkspaceDeletionVcsHookHost,
+}
+
+impl SubagentArchiveWorktreeCleanupHost {
+    pub(in crate::daemon) fn new(
+        data_root: std::path::PathBuf,
+        global_store: Store,
+        vcs_hooks: WorkspaceDeletionVcsHookHost,
+    ) -> Self {
+        Self {
+            data_root,
+            global_store,
+            vcs_hooks,
+        }
+    }
+}
+
+pub(in crate::daemon) async fn cleanup_archived_subagent_worktree_with_host(
+    host: &SubagentArchiveWorktreeCleanupHost,
     store: &ctx_store::Store,
     parent: &ctx_core::models::Session,
     child: &ctx_core::models::Session,
@@ -27,18 +46,19 @@ pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_wo
     }
 
     let Some(cleanup_context) =
-        load_archived_worktree_cleanup_context(state, store, parent, child).await
+        load_archived_worktree_cleanup_context(&host.global_store, store, parent, child).await
     else {
         return true;
     };
     let mut cleanup_failed = cleanup_context.cleanup_failed;
-    let cleanup_errors = cleanup_task_worktrees(
-        state.as_ref(),
+    let cleanup_errors = cleanup_task_worktrees_with_host(
+        &host.data_root,
+        &host.vcs_hooks,
         &cleanup_context.workspace,
         child.task_id,
         &[TaskWorktreeCleanupTarget {
-            managed_root: managed_worktree_root(
-                state.as_ref(),
+            managed_root: managed_worktree_root_for_data_root(
+                &host.data_root,
                 &cleanup_context.workspace,
                 &cleanup_context.worktree,
             ),

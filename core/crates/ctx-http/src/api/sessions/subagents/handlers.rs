@@ -2,7 +2,7 @@ use super::*;
 use axum::extract::Extension;
 
 pub(crate) async fn mcp_send_input(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpControlHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SendInputRouteRequest>,
@@ -19,7 +19,7 @@ pub(crate) async fn mcp_send_input(
 }
 
 pub(crate) async fn mcp_archive_agent(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpControlHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<ArchiveAgentRouteRequest>,
@@ -68,7 +68,7 @@ pub(crate) async fn mcp_get_agent(
 }
 
 pub(crate) async fn mcp_interrupt_agent(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpControlHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<InterruptAgentRouteRequest>,
