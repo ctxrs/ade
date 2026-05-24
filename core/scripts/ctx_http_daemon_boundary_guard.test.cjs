@@ -269,6 +269,9 @@ const {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionReadModelsDaemonImplementationRatchet,
+  scanSessionReadModelsHandleFieldRatchet,
+  scanSessionReadModelsHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
@@ -1697,6 +1700,98 @@ test("appstate guard rejects session artifacts broad daemon seams", () => {
   assert.deepEqual(fieldViolations, [
     "session artifacts capability stores broad handle or daemon state",
     "session artifacts capability stores broad handle or daemon state",
+  ]);
+});
+
+test("appstate guard rejects session read-model broad route handles", () => {
+  const handlerViolations = scanSessionReadModelsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn get_session_head(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session read-model route extracts broad sessions handle",
+    "session read-model route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionReadModelsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_read_models: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionReadModelsHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session read-model route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session read-model broad daemon seams", () => {
+  const daemonViolations = scanSessionReadModelsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/route_contract/read_models.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionsHandle {
+        fn session_head_for_route(&self, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "session read-model daemon implementation uses broad daemon handle",
+    "session read-model daemon implementation uses broad session handle",
+    "session read-model daemon implementation accepts daemon state",
+  ]));
+
+  const capabilityViolations = scanSessionReadModelsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/read_models.rs",
+    contents: `
+      impl SessionReadModelsHandle {
+        fn second(&self, sessions: SessionsHandle, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(capabilityViolations), new Set([
+    "session read-model daemon implementation uses broad daemon handle",
+    "session read-model daemon implementation uses broad session handle",
+    "session read-model daemon implementation accepts daemon state",
+    "session read-model capability impl uses broad daemon handle",
+    "session read-model capability impl uses broad session handle",
+    "session read-model capability impl accepts daemon state",
+  ]));
+});
+
+test("appstate guard rejects session read-model broad handle fields", () => {
+  const fieldViolations = scanSessionReadModelsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionReadModelsHandle {
+        sessions: SessionsHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "session read-model capability stores broad handle or daemon state",
+    "session read-model capability stores broad handle or daemon state",
+    "session read-model capability stores broad handle or daemon state",
+    "session read-model capability exposes generic full-state field",
+    "session read-model capability exposes generic full-state field",
+    "session read-model capability exposes generic full-state field",
   ]);
 });
 

@@ -323,6 +323,17 @@ impl DaemonHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
 
+    pub fn session_read_models(&self) -> SessionReadModelsHandle {
+        SessionReadModelsHandle::new(
+            self.state.global_store().clone(),
+            self.session_store_lookup(),
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            self.state.core.tool_output_spool_dir.clone(),
+            self.state.telemetry.perf_telemetry.clone(),
+        )
+    }
+
     fn session_store_lookup(&self) -> SessionStoreLookup {
         SessionStoreLookup::new(
             self.state.global_store().clone(),
@@ -2731,6 +2742,60 @@ fn is_transient_store_open_error(err: &anyhow::Error) -> bool {
     msg.contains("database is locked")
         || msg.contains("sqlite_busy")
         || msg.contains("database is busy")
+}
+
+#[derive(Clone)]
+pub struct SessionReadModelsHandle {
+    global_store: Store,
+    session_stores: SessionStoreLookup,
+    stores: StoreManager,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    tool_output_spool_dir: PathBuf,
+    perf_telemetry: PerfTelemetry,
+}
+
+impl SessionReadModelsHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        session_stores: SessionStoreLookup,
+        stores: StoreManager,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        tool_output_spool_dir: PathBuf,
+        perf_telemetry: PerfTelemetry,
+    ) -> Self {
+        Self {
+            global_store,
+            session_stores,
+            stores,
+            active_snapshot,
+            tool_output_spool_dir,
+            perf_telemetry,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn session_stores(&self) -> &SessionStoreLookup {
+        &self.session_stores
+    }
+
+    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub(in crate::daemon) fn active_snapshot(&self) -> &WorkspaceActiveSnapshotHub {
+        self.active_snapshot.as_ref()
+    }
+
+    pub(in crate::daemon) fn tool_output_spool_dir(&self) -> &Path {
+        &self.tool_output_spool_dir
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
+    }
 }
 
 #[derive(Clone)]

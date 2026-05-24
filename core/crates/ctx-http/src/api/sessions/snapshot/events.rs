@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn get_session_events(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionReadModelsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionEventsRouteQuery>,
 ) -> Result<Json<SessionEventsRouteResponse>, StatusCode> {

@@ -5,14 +5,16 @@ use std::time::Duration;
 use anyhow::Result;
 use ctx_core::ids::{SessionId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    SessionEventsPage, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot, SessionState,
-    SessionTurnTool,
+    Session, SessionEventsPage, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
+    SessionState, SessionTurnTool,
 };
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_store::Store;
 
-use crate::daemon::handle::SessionsHandle;
+use crate::daemon::handle::SessionReadModelsHandle;
+use crate::daemon::SessionStoreAccessError;
 
-impl SessionsHandle {
+impl SessionReadModelsHandle {
     pub async fn load_session_snapshot(
         &self,
         session_id: SessionId,
@@ -162,18 +164,13 @@ impl SessionsHandle {
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<Option<WorkspaceId>> {
-        self.state
-            .global_store()
+        self.global_store()
             .get_workspace_id_for_session(session_id)
             .await
     }
 
     pub(in crate::daemon) async fn is_workspace_deleting(&self, workspace_id: WorkspaceId) -> bool {
-        self.state
-            .core
-            .stores
-            .is_workspace_deleting(workspace_id)
-            .await
+        self.stores().is_workspace_deleting(workspace_id).await
     }
 
     pub(in crate::daemon) async fn cached_session_head_for_request(
@@ -183,9 +180,7 @@ impl SessionsHandle {
         limit: u32,
         min_event_seq: Option<i64>,
     ) -> Option<SessionHeadSnapshot> {
-        self.state
-            .workspaces
-            .workspace_active_snapshot
+        self.active_snapshot()
             .get_cached_session_head_for_request(session_id, include_events, limit, min_event_seq)
             .await
     }
@@ -196,26 +191,23 @@ impl SessionsHandle {
         include_events: bool,
     ) {
         if include_events {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
-                .update_session_head(head)
-                .await;
+            self.active_snapshot().update_session_head(head).await;
         } else {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
+            self.active_snapshot()
                 .update_compact_session_head(head)
                 .await;
         }
     }
 
     pub(in crate::daemon) async fn emit_cache_miss(&self, cache: &str) {
-        self.state.emit_cache_miss(cache).await;
+        self.emit_cache_counter("daemon.cache_miss", cache, 1, None)
+            .await;
     }
 
     pub(in crate::daemon) async fn emit_cache_rehydrate(&self, cache: &str, ok: bool) {
-        self.state.emit_cache_rehydrate(cache, ok).await;
+        let result = if ok { "ok" } else { "fail" };
+        self.emit_cache_counter("daemon.cache_rehydrate", cache, 1, Some(("result", result)))
+            .await;
     }
 
     pub(in crate::daemon) fn record_session_head_recovery_metrics(
@@ -277,7 +269,7 @@ impl SessionsHandle {
                 head.map(|value| value.events.len() as f64).unwrap_or(0.0),
             ),
         ];
-        let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+        let perf_telemetry = self.perf_telemetry().clone();
         tokio::spawn(async move {
             for (name, unit, value) in metrics {
                 perf_telemetry
@@ -296,6 +288,74 @@ impl SessionsHandle {
                     .await;
             }
         });
+    }
+
+    async fn session_store_allow_archived_or_none(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Store>> {
+        match self
+            .session_stores()
+            .existing_session_store_allow_archived(session_id)
+            .await
+        {
+            Ok(store) => Ok(Some(store)),
+            Err(SessionStoreAccessError::NotFound) => Ok(None),
+            Err(error) => Err(session_store_access_anyhow(error)),
+        }
+    }
+
+    async fn session_artifact_path_is_accessible(
+        &self,
+        store: &Store,
+        session: &Session,
+        path: &Path,
+    ) -> anyhow::Result<bool> {
+        let session_spool_dir = self.tool_output_spool_dir().join(session.id.0.to_string());
+        ctx_session_artifacts::session_artifact_path_is_accessible(
+            store,
+            session,
+            &session_spool_dir,
+            path,
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn emit_cache_counter(
+        &self,
+        name: &str,
+        cache: &str,
+        value: u64,
+        extra_label: Option<(&str, &str)>,
+    ) {
+        if value == 0 {
+            return;
+        }
+        let mut labels = HashMap::new();
+        labels.insert("cache".to_string(), cache.to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        if let Some((key, val)) = extra_label {
+            labels.insert(key.to_string(), val.to_string());
+        }
+        let metric = PerfMetric {
+            name: name.to_string(),
+            kind: PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.perf_telemetry()
+            .record_metric(metric, None, None, None)
+            .await;
+    }
+}
+
+fn session_store_access_anyhow(error: SessionStoreAccessError) -> anyhow::Error {
+    match error {
+        SessionStoreAccessError::NotFound => anyhow::anyhow!("session not found"),
+        SessionStoreAccessError::LookupUnavailable(error) => error,
+        SessionStoreAccessError::StoreUnavailable => anyhow::anyhow!("session store unavailable"),
     }
 }
 

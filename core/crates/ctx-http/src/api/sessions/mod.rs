@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::{SessionVcsHandle, SessionsHandle};
+use ctx_daemon::daemon::{SessionReadModelsHandle, SessionVcsHandle, SessionsHandle};
 use ctx_route_contracts::sessions::{
     AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
     PostSessionMessageRouteRequest, PostSessionMessageRouteResponse, SessionControlRouteError,

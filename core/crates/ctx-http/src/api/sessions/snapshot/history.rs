@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn get_session_history(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionReadModelsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionHistoryRouteQuery>,
 ) -> Result<Json<SessionHistoryRouteResponse>, StatusCode> {
@@ -13,7 +13,7 @@ pub(crate) async fn get_session_history(
 }
 
 pub(crate) async fn list_session_turn_tools(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionReadModelsHandle>,
     Path((id, turn_id)): Path<(String, String)>,
 ) -> Result<Json<SessionTurnToolsRouteResponse>, StatusCode> {
     state

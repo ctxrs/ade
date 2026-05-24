@@ -87,15 +87,6 @@ impl SessionsHandle {
         self.state.store_for_session(session_id).await
     }
 
-    pub(in crate::daemon) async fn existing_session_store_allow_archived(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Store, SessionStoreAccessError> {
-        self.state
-            .existing_session_store_allow_archived(session_id)
-            .await
-    }
-
     pub(in crate::daemon) async fn existing_session_store(
         &self,
         session_id: SessionId,
@@ -110,17 +101,6 @@ impl SessionsHandle {
         self.state
             .existing_session_store_for_write(session_id)
             .await
-    }
-
-    pub(super) async fn session_store_allow_archived_or_none(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<Store>> {
-        match self.existing_session_store_allow_archived(session_id).await {
-            Ok(store) => Ok(Some(store)),
-            Err(SessionStoreAccessError::NotFound) => Ok(None),
-            Err(error) => Err(session_store_access_anyhow(error)),
-        }
     }
 
     pub(super) async fn session_store_or_none(

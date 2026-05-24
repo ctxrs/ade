@@ -18,7 +18,7 @@ pub(crate) use vcs::{
 };
 
 pub(crate) async fn get_session_snapshot(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionReadModelsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionSnapshotRouteQuery>,
 ) -> Result<Json<SessionSnapshotRouteResponse>, StatusCode> {

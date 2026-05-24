@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn get_session_head(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionReadModelsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionHeadRouteQuery>,
 ) -> Result<Json<SessionHeadRouteResponse>, StatusCode> {

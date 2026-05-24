@@ -210,6 +210,19 @@ const sessionVcsDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/vcs_route.rs",
 ]);
 
+const sessionReadModelsHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/snapshot.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/events.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/state.rs",
+]);
+
+const sessionReadModelsDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/read_models.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/route_contract/read_models.rs",
+]);
+
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
   "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
@@ -8209,6 +8222,45 @@ function scanSessionVcsHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionReadModelsHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionReadModelsHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session read-model route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_read_models\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionReadModelsHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session read-model route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -8863,6 +8915,69 @@ function scanSessionVcsDaemonImplementationRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionReadModelsDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionReadModelsDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session read-model daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "session read-model daemon implementation uses broad session handle",
+      regex: /\bSessionsHandle\b/gu,
+    },
+    {
+      name: "session read-model daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "SessionReadModelsHandle" })) {
+    const implChecks = [
+      {
+        name: "session read-model capability impl uses broad daemon handle",
+        regex: /\bDaemonHandle\b/gu,
+      },
+      {
+        name: "session read-model capability impl uses broad session handle",
+        regex: /\bSessionsHandle\b/gu,
+      },
+      {
+        name: "session read-model capability impl accepts daemon state",
+        regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+      },
+    ];
+    for (const check of implChecks) {
+      for (let match = check.regex.exec(impl.text); match; match = check.regex.exec(impl.text)) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -8930,6 +9045,54 @@ function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
         text: lines[line - 1]?.trim() ?? broad[0],
       });
     }
+  }
+
+  return violations;
+}
+
+function scanSessionReadModelsHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const handleStruct = rustStructBlockForType({ contents, typeName: "SessionReadModelsHandle" });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  const broadFieldRegex =
+    /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "session read-model capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers)\s*:/gmu;
+  for (
+    let generic = genericEscapeFieldRegex.exec(handleStruct.text);
+    generic;
+    generic = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + generic.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "session read-model capability exposes generic full-state field",
+      text: lines[line - 1]?.trim() ?? generic[0],
+    });
   }
 
   return violations;
@@ -12096,6 +12259,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionReadModelsHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -12264,6 +12431,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionReadModelsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -12420,6 +12591,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionArtifactsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionReadModelsDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -13198,6 +13373,9 @@ module.exports = {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionReadModelsDaemonImplementationRatchet,
+  scanSessionReadModelsHandleFieldRatchet,
+  scanSessionReadModelsHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
