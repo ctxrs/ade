@@ -52,8 +52,7 @@ pub use execution::{
     ResolvedExistingWorktreeExecution,
 };
 pub use file_completions::{
-    complete_files_for_session, complete_files_for_workspace, FileCompletionsError,
-    FileCompletionsErrorKind,
+    complete_files_for_workspace, FileCompletionsError, FileCompletionsErrorKind,
 };
 pub use harness_container::{
     ensure_workspace_harness_container, stop_workspace_harness_container,

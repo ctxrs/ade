@@ -269,6 +269,11 @@ const {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionControlDaemonImplementationRatchet,
+  scanSessionControlHandleFieldRatchet,
+  scanSessionControlHandleRatchet,
+  scanSessionFileCompletionsDaemonSeamRatchet,
+  scanSessionFileCompletionsHandleRatchet,
   scanSessionReadModelsDaemonImplementationRatchet,
   scanSessionReadModelsHandleFieldRatchet,
   scanSessionReadModelsHandleRatchet,
@@ -1793,6 +1798,174 @@ test("appstate guard rejects session read-model broad handle fields", () => {
     "session read-model capability exposes generic full-state field",
     "session read-model capability exposes generic full-state field",
   ]);
+});
+
+test("appstate guard rejects session control broad route handles", () => {
+  const handlerViolations = scanSessionControlHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/control/authenticate.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn authenticate_session(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session control route extracts broad sessions handle",
+    "session control route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionControlHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_control: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionControlHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session control route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session file-completions broad route handles", () => {
+  const handlerViolations = scanSessionFileCompletionsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/file_completions.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn session_file_completions(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session file-completions route extracts broad sessions handle",
+    "session file-completions route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionFileCompletionsHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_file_completions: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionFileCompletionsHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session file-completions route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session control broad daemon seams", () => {
+  const daemonViolations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionsHandle {
+        fn cancel_session_for_route(&self, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(daemonViolations), new Set([
+    "session control daemon implementation uses broad daemon handle",
+    "session control daemon implementation uses broad session handle",
+    "session control daemon implementation accepts daemon state",
+  ]));
+
+  const capabilityViolations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
+    contents: `
+      impl SessionControlHandle {
+        fn second(&self, sessions: SessionsHandle, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(capabilityViolations), new Set([
+    "session control daemon implementation uses broad daemon handle",
+    "session control daemon implementation uses broad session handle",
+    "session control daemon implementation accepts daemon state",
+    "session control capability impl uses broad daemon handle",
+    "session control capability impl uses broad session handle",
+    "session control capability impl accepts daemon state",
+  ]));
+});
+
+test("appstate guard rejects session control broad handle fields", () => {
+  const fieldViolations = scanSessionControlHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionControlHandle {
+        sessions: SessionsHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+      pub struct SessionFileCompletionsEffects {
+        workspaces: WorkspacesHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "session control capability stores broad handle or daemon state",
+    "session control capability stores broad handle or daemon state",
+    "session control capability stores broad handle or daemon state",
+    "session control capability exposes generic full-state field",
+    "session control capability exposes generic full-state field",
+    "session control capability exposes generic full-state field",
+    "session control capability stores broad handle or daemon state",
+    "session control capability exposes generic full-state field",
+  ]);
+});
+
+test("appstate guard rejects stale session file-completion broad helper", () => {
+  const violations = scanSessionFileCompletionsDaemonSeamRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/workspace_bridge.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn complete_files_for_session(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "session file-completions broad session helper remains",
+  ]);
+});
+
+test("appstate guard rejects hidden session file-completion daemon state seam", () => {
+  const violations = scanSessionFileCompletionsDaemonSeamRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn session_file_completions(&self) -> SessionFileCompletionsHandle {
+          let complete_files_for_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |session_id, query, limit| {
+              complete_files_for_session(&state, session_id, query, limit)
+            }
+          });
+          SessionFileCompletionsHandle::new(complete_files_for_session)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session file-completions handle hides daemon state seam",
+  ]));
 });
 
 test("appstate guard rejects session VCS broad route handles", () => {

@@ -13,9 +13,9 @@ use crate::daemon::sessions::auth::SessionAuthError;
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::workspaces::FileCompletionsErrorKind;
-use crate::daemon::SessionsHandle;
+use crate::daemon::{SessionControlHandle, SessionFileCompletionsHandle};
 
-impl SessionsHandle {
+impl SessionControlHandle {
     pub async fn cancel_session_for_route(
         &self,
         params: SessionRouteParams,
@@ -43,7 +43,7 @@ impl SessionsHandle {
         request: AuthenticateSessionRouteRequest,
     ) -> Result<(), SessionControlRouteError> {
         let session_id = parse_control_session_id(params)?;
-        self.authenticate_session_for_request(session_id, request.into_method_id())
+        self.authenticate_session(session_id, request.into_method_id())
             .await
             .map_err(session_auth_error)
     }
@@ -63,7 +63,9 @@ impl SessionsHandle {
 
         Ok(SubmitAskUserQuestionRouteResponse::ok())
     }
+}
 
+impl SessionFileCompletionsHandle {
     pub async fn complete_files_for_session_for_route(
         &self,
         params: SessionRouteParams,
@@ -180,6 +182,47 @@ mod tests {
     use super::*;
     use ctx_route_contracts::sessions::SessionControlRouteErrorKind;
     use serde_json::json;
+
+    async fn session_handles_for_test() -> (
+        tempfile::TempDir,
+        SessionControlHandle,
+        SessionFileCompletionsHandle,
+    ) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon = crate::test_support::TestDaemon::new_for_test(
+            temp.path().join("data"),
+            "http://127.0.0.1:4310".to_string(),
+        )
+        .await
+        .expect("daemon");
+        (
+            temp,
+            daemon.handle().session_control(),
+            daemon.handle().session_file_completions(),
+        )
+    }
+
+    #[tokio::test]
+    async fn migrated_control_handle_routes_parse_ids_before_effects() {
+        let (_temp, control, file_completions) = session_handles_for_test().await;
+
+        let cancel = control
+            .cancel_session_for_route(SessionRouteParams::new("not-a-session"))
+            .await
+            .expect_err("invalid cancel route id");
+        assert_eq!(cancel.kind(), SessionControlRouteErrorKind::BadRequest);
+        assert_eq!(cancel.message(), "invalid session id");
+
+        let completions = file_completions
+            .complete_files_for_session_for_route(
+                SessionRouteParams::new("not-a-session"),
+                SessionFileCompletionsRouteQuery::default(),
+            )
+            .await
+            .expect_err("invalid file-completion route id");
+        assert_eq!(completions.kind(), SessionControlRouteErrorKind::BadRequest);
+        assert_eq!(completions.message(), "invalid session id");
+    }
 
     #[test]
     fn ask_user_request_adapter_defaults_and_validates_outcome() {

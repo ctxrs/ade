@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn authenticate_session(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionControlHandle>,
     Path(id): Path<String>,
     Json(req): Json<AuthenticateSessionRouteRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {

@@ -47,6 +47,7 @@ pub use types::{
 };
 pub(crate) use types::{
     WorkspaceActiveHeadsCache, WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache,
+    WorktreeFileCompletionsCache,
 };
 
 #[cfg(test)]

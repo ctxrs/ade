@@ -1,17 +1,14 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ctx_core::models::Worktree;
 use ctx_settings_model::ContainerRuntimeKind;
 
-use crate::daemon::DaemonState;
-
 use super::super::FileCompletionsError;
 
 pub(super) async fn container_git_ls_files(
-    state: &Arc<DaemonState>,
+    data_root: &Path,
     worktree: &Worktree,
     runtime: ContainerRuntimeKind,
     workdir: &str,
@@ -20,8 +17,8 @@ pub(super) async fn container_git_ls_files(
     const SANDBOX_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
     let out = match runtime {
         ContainerRuntimeKind::NativeContainer => {
-            let mut cmd = ctx_harness_runtime::sandbox_container_command(&state.core.data_root)
-                .map_err(|err| {
+            let mut cmd =
+                ctx_harness_runtime::sandbox_container_command(data_root).map_err(|err| {
                     FileCompletionsError::internal(format!("building sandbox command: {err}"))
                 })?;
             cmd.arg("exec")
@@ -50,7 +47,7 @@ pub(super) async fn container_git_ls_files(
             tokio::time::timeout(
                 SANDBOX_GIT_LS_FILES_TIMEOUT,
                 ctx_avf_linux_runtime::run_guest_exec_capture(
-                    &state.core.data_root,
+                    data_root,
                     worktree.workspace_id,
                     worktree.id,
                     &guest_cwd,

@@ -4,18 +4,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ctx_core::ids::{SessionId, WorkspaceId};
-use ctx_core::models::{ExecutionEnvironment, Worktree};
+use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use ctx_storage_admission::is_storage_exhaustion_error;
 use ctx_store::Store;
-use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
+use ctx_worktree_data_plane::{
+    resolve_worktree_data_plane_with_host as resolve_worktree_data_plane, WorktreeDataPlaneHost,
+};
 use ctx_worktree_vcs_service::{
     filter_and_rank_paths, list_host_git_files as service_list_host_git_files,
     workspace_has_git_repo, CachedFileCompletions,
 };
 
 use crate::daemon::state::WorkspaceFileCompletionsCache;
-use crate::daemon::{DaemonState, StoreLookup, TimedEntry};
+use crate::daemon::{
+    DaemonState, SessionFileCompletionsHandle, SessionStoreAccessError, TimedEntry,
+};
 
 mod container;
 
@@ -78,13 +82,38 @@ impl FileCompletionsError {
     }
 }
 
-pub async fn complete_files_for_session(
-    state: &Arc<DaemonState>,
+impl SessionFileCompletionsHandle {
+    pub(in crate::daemon) async fn complete_files_for_session(
+        &self,
+        session_id: SessionId,
+        query: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<String>, FileCompletionsError> {
+        complete_files_for_session_with_runtime(self, session_id, query, limit).await
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeDataPlaneHost for SessionFileCompletionsHandle {
+    async fn get_workspace(
+        handle: &Self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<Workspace>> {
+        handle.global_store().get_workspace(workspace_id).await
+    }
+
+    async fn workspace_store(handle: &Self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
+        handle.store_for_workspace(workspace_id).await
+    }
+}
+
+async fn complete_files_for_session_with_runtime(
+    handle: &SessionFileCompletionsHandle,
     session_id: SessionId,
     query: Option<String>,
     limit: Option<u32>,
 ) -> Result<Vec<String>, FileCompletionsError> {
-    let store = store_for_existing_session(state, session_id).await?;
+    let store = store_for_existing_session(handle, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -95,7 +124,7 @@ pub async fn complete_files_for_session(
         .await
         .map_err(|err| FileCompletionsError::internal(format!("loading session worktree: {err}")))?
         .ok_or_else(|| FileCompletionsError::not_found("session worktree not found"))?;
-    let data_plane = resolve_worktree_data_plane(state.as_ref(), &worktree)
+    let data_plane = resolve_worktree_data_plane(handle, &worktree)
         .await
         .map_err(|err| FileCompletionsError::internal(format!("resolving data plane: {err}")))?;
     let execution_environment = match data_plane.execution_mode {
@@ -111,7 +140,7 @@ pub async fn complete_files_for_session(
         );
     }
 
-    let files = cached_worktree_files(state, &worktree, execution_environment).await?;
+    let files = cached_worktree_files(handle, &worktree, execution_environment).await?;
     Ok(rank_files(files.as_ref(), query, limit))
 }
 
@@ -162,41 +191,38 @@ pub(in crate::daemon::workspaces) async fn complete_files_for_workspace_with_run
 }
 
 async fn store_for_existing_session(
-    state: &Arc<DaemonState>,
+    handle: &SessionFileCompletionsHandle,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, FileCompletionsError> {
-    let store = match state.lookup_session_store(session_id).await {
-        StoreLookup::Found(store) => store,
-        StoreLookup::Missing | StoreLookup::Deleting => {
-            return Err(FileCompletionsError::not_found("session store not found"));
-        }
-        StoreLookup::Unavailable(err) => {
-            return Err(FileCompletionsError::internal(format!(
-                "session store unavailable: {err:#}"
-            )));
-        }
-    };
-    if store
-        .is_archived_subagent_session(session_id)
+    handle
+        .existing_session_store(session_id)
         .await
-        .map_err(|err| {
-            FileCompletionsError::internal(format!("checking archived subagent session: {err}"))
-        })?
-    {
-        return Err(FileCompletionsError::not_found(
-            "archived subagent sessions are not listable",
-        ));
+        .map_err(session_store_access_file_completions_error)
+}
+
+fn session_store_access_file_completions_error(
+    error: SessionStoreAccessError,
+) -> FileCompletionsError {
+    match error {
+        SessionStoreAccessError::NotFound => {
+            FileCompletionsError::not_found("session store not found")
+        }
+        SessionStoreAccessError::LookupUnavailable(err) => {
+            FileCompletionsError::internal(format!("session store unavailable: {err:#}"))
+        }
+        SessionStoreAccessError::StoreUnavailable => {
+            FileCompletionsError::internal("session store unavailable")
+        }
     }
-    Ok(store)
 }
 
 async fn cached_worktree_files(
-    state: &Arc<DaemonState>,
+    handle: &SessionFileCompletionsHandle,
     worktree: &Worktree,
     execution_environment: ExecutionEnvironment,
 ) -> Result<Arc<Vec<String>>, FileCompletionsError> {
     let now = Instant::now();
-    let mut cache = state.workspaces.file_completions_cache.lock().await;
+    let mut cache = handle.worktree_file_completions_cache().lock().await;
     if let Some(entry) = cache.get_mut(&worktree.id) {
         entry.touch();
         if now.duration_since(entry.value.cached_at) <= CACHE_TTL {
@@ -204,7 +230,7 @@ async fn cached_worktree_files(
         }
     }
     drop(cache);
-    load_and_cache_worktree_files(state, worktree, execution_environment, now).await
+    load_and_cache_worktree_files(handle, worktree, execution_environment, now).await
 }
 
 async fn cached_workspace_files(
@@ -233,13 +259,13 @@ async fn cached_workspace_files(
 }
 
 async fn load_and_cache_worktree_files(
-    state: &Arc<DaemonState>,
+    handle: &SessionFileCompletionsHandle,
     worktree: &Worktree,
     execution_environment: ExecutionEnvironment,
     now: Instant,
 ) -> Result<Arc<Vec<String>>, FileCompletionsError> {
     let started_at = Instant::now();
-    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree)
+    let data_plane = resolve_worktree_data_plane(handle, worktree)
         .await
         .map_err(|err| FileCompletionsError::internal(format!("resolving data plane: {err}")))?;
     let root = data_plane.live_worktree_root.clone();
@@ -248,14 +274,14 @@ async fn load_and_cache_worktree_files(
         ctx_settings_model::ExecutionMode::Sandbox
     ) {
         Arc::new(
-            container::list_container_worktree_files(state, worktree, execution_environment)
+            container::list_container_worktree_files(handle, worktree, execution_environment)
                 .await?,
         )
     } else {
         Arc::new(list_host_git_files(&root).await?)
     };
 
-    let mut cache = state.workspaces.file_completions_cache.lock().await;
+    let mut cache = handle.worktree_file_completions_cache().lock().await;
     cache.insert(
         worktree.id,
         TimedEntry::new(CachedFileCompletions {
@@ -263,12 +289,7 @@ async fn load_and_cache_worktree_files(
             files: files.clone(),
         }),
     );
-    record_list_files_metric(
-        &state.telemetry.perf_telemetry,
-        "list_files_worktree",
-        started_at,
-    )
-    .await;
+    record_list_files_metric(handle.perf_telemetry(), "list_files_worktree", started_at).await;
     Ok(files)
 }
 

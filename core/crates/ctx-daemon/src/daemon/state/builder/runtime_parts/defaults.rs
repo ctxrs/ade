@@ -10,7 +10,7 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
 ) -> WorkspaceRuntime {
     WorkspaceRuntime {
         worktree_vcs_enabled,
-        file_completions_cache: Mutex::new(HashMap::new()),
+        file_completions_cache: Arc::new(Mutex::new(HashMap::new())),
         workspace_file_completions_cache: Arc::new(Mutex::new(HashMap::new())),
         git_status_snapshots: Mutex::new(HashMap::new()),
         worktree_vcs_snapshots: Arc::new(Mutex::new(HashMap::new())),

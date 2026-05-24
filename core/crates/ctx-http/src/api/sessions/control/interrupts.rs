@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn cancel_session(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionControlHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     state
@@ -12,7 +12,7 @@ pub(crate) async fn cancel_session(
 }
 
 pub(crate) async fn interrupt_session(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionControlHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let request_started = std::time::Instant::now();

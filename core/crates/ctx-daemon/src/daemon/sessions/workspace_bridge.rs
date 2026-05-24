@@ -1,24 +1,13 @@
-use anyhow::Result;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
 use ctx_store::Store;
 
 use crate::daemon::handle::SessionsHandle;
 use crate::daemon::workspaces::{
-    complete_files_for_session, resolve_existing_worktree_execution, FileCompletionsError,
-    ResolvedExistingWorktreeExecution,
+    resolve_existing_worktree_execution, ResolvedExistingWorktreeExecution,
 };
 
 impl SessionsHandle {
-    pub async fn complete_files_for_session(
-        &self,
-        session_id: SessionId,
-        query: Option<String>,
-        limit: Option<u32>,
-    ) -> Result<Vec<String>, FileCompletionsError> {
-        complete_files_for_session(&self.state, session_id, query, limit).await
-    }
-
     pub async fn resolve_existing_worktree_execution(
         &self,
         store: &Store,

@@ -17,6 +17,8 @@ use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRu
 
 pub(crate) type WorkspaceFileCompletionsCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>>;
+pub(crate) type WorktreeFileCompletionsCache =
+    Arc<Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>>;
 pub(crate) type WorkspaceActiveSnapshotCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>>;
 pub(crate) type WorkspaceActiveHeadsCache =
@@ -42,8 +44,7 @@ pub type SessionRuntime = ctx_session_runtime::runtime::SessionRuntime<Scheduler
 
 pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_enabled: bool,
-    pub(crate) file_completions_cache:
-        Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>,
+    pub(crate) file_completions_cache: WorktreeFileCompletionsCache,
     pub(crate) workspace_file_completions_cache: WorkspaceFileCompletionsCache,
     pub(crate) git_status_snapshots:
         Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,

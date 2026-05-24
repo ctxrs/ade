@@ -74,7 +74,7 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
 fn test_workspace_runtime() -> WorkspaceRuntime {
     WorkspaceRuntime {
         worktree_vcs_enabled: true,
-        file_completions_cache: AsyncMutex::new(HashMap::new()),
+        file_completions_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         workspace_file_completions_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         git_status_snapshots: AsyncMutex::new(HashMap::new()),
         worktree_vcs_snapshots: Arc::new(AsyncMutex::new(HashMap::new())),

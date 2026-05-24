@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::Result;
 use ctx_core::ids::{SessionId, TaskId, TurnId};
@@ -12,14 +11,9 @@ use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 use tokio::sync::{mpsc, Mutex};
 
-use super::{
-    ask_user, auth, command_dispatch, subagents, title_generation,
-    title_generation::schedule_session_title_generation,
-};
+use super::{subagents, title_generation, title_generation::schedule_session_title_generation};
 use crate::daemon::handle::SessionsHandle;
-use crate::daemon::{
-    require_scoped_mcp_session_context, ScopedMcpSessionAccessError, SessionStoreAccessError,
-};
+use crate::daemon::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
 
 #[derive(Debug)]
 pub enum GenerateSessionTitleError {
@@ -92,55 +86,6 @@ impl SessionsHandle {
         if let Err(error) = self.emit_workspace_task_upsert(task.id).await {
             tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {error:?}");
         }
-    }
-
-    pub async fn cancel_session(
-        &self,
-        session_id: SessionId,
-    ) -> Result<(), command_dispatch::SessionSchedulerCommandError> {
-        command_dispatch::cancel_session(&self.state, session_id).await
-    }
-
-    pub async fn interrupt_session(
-        &self,
-        session_id: SessionId,
-        request_started: Instant,
-    ) -> Result<(), command_dispatch::SessionSchedulerCommandError> {
-        command_dispatch::interrupt_session(&self.state, session_id, request_started).await
-    }
-
-    pub async fn submit_ask_user_answer(
-        &self,
-        session_id: SessionId,
-        submission: ask_user::SubmitAskUserAnswer,
-    ) -> Result<(), ask_user::SubmitAskUserAnswerError> {
-        ask_user::submit_ask_user_answer(&self.state, session_id, submission).await
-    }
-
-    pub async fn authenticate_session(
-        &self,
-        store: &Store,
-        session: &Session,
-        method_id: Option<String>,
-    ) -> Result<(), auth::SessionAuthError> {
-        auth::run_session_authentication(&self.state, store, session, method_id).await
-    }
-
-    pub async fn authenticate_session_for_request(
-        &self,
-        session_id: SessionId,
-        method_id: Option<String>,
-    ) -> Result<(), auth::SessionAuthError> {
-        let store = self
-            .existing_session_store_for_write(session_id)
-            .await
-            .map_err(session_store_access_auth_error)?;
-        let session = store
-            .get_session(session_id)
-            .await
-            .map_err(|_| auth::SessionAuthError::Internal("failed to load session".to_string()))?
-            .ok_or(auth::SessionAuthError::NotFound("session"))?;
-        self.authenticate_session(&store, &session, method_id).await
     }
 
     pub async fn generate_session_title_for_request(
@@ -361,17 +306,5 @@ fn session_root_kind_for_worktree(worktree: Option<&Worktree>) -> &'static str {
     match worktree.and_then(|worktree| worktree.git_branch.as_ref()) {
         Some(_) => "worktree",
         None => "workspace_root",
-    }
-}
-
-fn session_store_access_auth_error(error: SessionStoreAccessError) -> auth::SessionAuthError {
-    match error {
-        SessionStoreAccessError::NotFound => auth::SessionAuthError::NotFound("session"),
-        SessionStoreAccessError::LookupUnavailable(error) => {
-            auth::SessionAuthError::Internal(error.to_string())
-        }
-        SessionStoreAccessError::StoreUnavailable => {
-            auth::SessionAuthError::Internal("workspace store unavailable".to_string())
-        }
     }
 }

@@ -223,6 +223,20 @@ const sessionReadModelsDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/route_contract/read_models.rs",
 ]);
 
+const sessionControlHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/control/authenticate.rs",
+  "core/crates/ctx-http/src/api/sessions/control/interrupts.rs",
+  "core/crates/ctx-http/src/api/sessions/control/ask_user.rs",
+]);
+
+const sessionFileCompletionsHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/file_completions.rs",
+]);
+
+const sessionControlDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
+]);
+
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
   "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
@@ -8261,6 +8275,84 @@ function scanSessionReadModelsHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionControlHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionControlHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session control route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_control\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionControlHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session control route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanSessionFileCompletionsHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionFileCompletionsHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session file-completions route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_file_completions\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionFileCompletionsHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session file-completions route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -8978,6 +9070,120 @@ function scanSessionReadModelsDaemonImplementationRatchet({ filePath, contents }
   return violations;
 }
 
+function scanSessionControlDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionControlDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session control daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "session control daemon implementation uses broad session handle",
+      regex: /\bSessionsHandle\b/gu,
+    },
+    {
+      name: "session control daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  for (const typeName of ["SessionControlHandle", "SessionFileCompletionsHandle"]) {
+    for (const impl of rustImplBlocksForType({ contents, typeName })) {
+      const implChecks = [
+        {
+          name: "session control capability impl uses broad daemon handle",
+          regex: /\bDaemonHandle\b/gu,
+        },
+        {
+          name: "session control capability impl uses broad session handle",
+          regex: /\bSessionsHandle\b/gu,
+        },
+        {
+          name: "session control capability impl accepts daemon state",
+          regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+        },
+      ];
+      for (const check of implChecks) {
+        for (let match = check.regex.exec(impl.text); match; match = check.regex.exec(impl.text)) {
+          const offset = impl.index + match.index;
+          const line = contents.slice(0, offset).split(/\r?\n/u).length;
+          violations.push({
+            filePath,
+            line,
+            name: check.name,
+            text: lines[line - 1]?.trim() ?? match[0],
+          });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+function scanSessionFileCompletionsDaemonSeamRatchet({ filePath, contents }) {
+  if (
+    filePath !== "core/crates/ctx-daemon/src/daemon/sessions/workspace_bridge.rs" &&
+    filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs"
+  ) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/workspace_bridge.rs") {
+    const staleHelperRegex = /\bcomplete_files_for_session\s*\(/gu;
+    for (
+      let match = staleHelperRegex.exec(contents);
+      match;
+      match = staleHelperRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session file-completions broad session helper remains",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const block = rustFunctionBlockForName({ contents, fnName: "session_file_completions" });
+    if (block) {
+      const hiddenStateRegex =
+        /\blet\s+state\s*=\s*Arc::clone\s*\(\s*&self\.state\s*\)|\bcomplete_files_for_session\s*\(/gu;
+      for (
+        let match = hiddenStateRegex.exec(block.text);
+        match;
+        match = hiddenStateRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session file-completions handle hides daemon state seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -9095,6 +9301,59 @@ function scanSessionReadModelsHandleFieldRatchet({ filePath, contents }) {
     });
   }
 
+  return violations;
+}
+
+function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  for (const typeName of [
+    "SessionControlHandle",
+    "SessionControlEffects",
+    "SessionFileCompletionsHandle",
+    "SessionFileCompletionsEffects",
+  ]) {
+    const structBlock = rustStructBlockForType({ contents, typeName });
+    if (!structBlock) {
+      continue;
+    }
+    const broadFieldRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(structBlock.text);
+      broad;
+      broad = broadFieldRegex.exec(structBlock.text)
+    ) {
+      const offset = structBlock.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session control capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    const genericEscapeFieldRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers)\s*:/gmu;
+    for (
+      let generic = genericEscapeFieldRegex.exec(structBlock.text);
+      generic;
+      generic = genericEscapeFieldRegex.exec(structBlock.text)
+    ) {
+      const offset = structBlock.index + generic.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session control capability exposes generic full-state field",
+        text: lines[line - 1]?.trim() ?? generic[0],
+      });
+    }
+  }
   return violations;
 }
 
@@ -12259,6 +12518,14 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionControlHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionFileCompletionsHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionReadModelsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -12431,6 +12698,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionControlHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionReadModelsHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -12591,6 +12862,14 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionArtifactsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionControlDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionFileCompletionsDaemonSeamRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -13373,6 +13652,11 @@ module.exports = {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionControlDaemonImplementationRatchet,
+  scanSessionControlHandleFieldRatchet,
+  scanSessionControlHandleRatchet,
+  scanSessionFileCompletionsDaemonSeamRatchet,
+  scanSessionFileCompletionsHandleRatchet,
   scanSessionReadModelsDaemonImplementationRatchet,
   scanSessionReadModelsHandleFieldRatchet,
   scanSessionReadModelsHandleRatchet,

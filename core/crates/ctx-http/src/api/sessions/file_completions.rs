@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn session_file_completions(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionFileCompletionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionFileCompletionsRouteQuery>,
 ) -> Result<Json<ctx_route_contracts::sessions::SessionFileCompletionsRouteResponse>, StatusCode> {

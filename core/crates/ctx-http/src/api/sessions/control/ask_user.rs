@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn submit_ask_user_question(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionControlHandle>,
     Path(id): Path<String>,
     Json(req): Json<SubmitAskUserQuestionRouteRequest>,
 ) -> Result<
