@@ -1284,10 +1284,7 @@ const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
   },
 ];
 
-const EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS = new Set([
-  "core/crates/ctx-http/src/api/router.rs",
-  "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
-]);
+const EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS = new Set([]);
 
 const DAEMON_EXTRACTION_BLOCKER_PATTERNS = [
   {
@@ -7067,6 +7064,75 @@ function scanExecutionHandleRouteExtractorRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (filePath.startsWith("core/crates/ctx-http/src/")) {
+    const extractorRegex =
+      /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*DaemonShutdownHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*DaemonShutdownHandle\s*>)/gu;
+    const allowedPath =
+      filePath === "core/crates/ctx-http/src/api/updates/drain/shutdown.rs";
+    if (!allowedPath) {
+      for (
+        let match = extractorRegex.exec(contents);
+        match;
+        match = extractorRegex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown route extracts DaemonShutdownHandle outside shutdown route",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const block = rustStructBlockForType({ contents, typeName: "DaemonShutdownHandle" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown capability stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanProviderAccountHandleRatchet({ filePath, contents }) {
   if (!providerAccountCrudApiRoots.some((root) => filePath.startsWith(root))) {
     return [];
@@ -11765,6 +11831,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanDaemonShutdownHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanProviderAccountHandleRatchet({
         filePath: relativePath,
         contents,
@@ -11924,6 +11994,10 @@ function scanRepo() {
         workspaceDeletionCapability: hasWorkspaceDeletionCapability,
         workspaceDeletionRouteMigrated: hasWorkspaceDeletionRouteMigrated,
       }),
+      ...scanDaemonShutdownHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -11947,6 +12021,10 @@ function scanRepo() {
         patterns: HANDLE_BACKDOOR_PATTERNS,
       }),
       ...scanAppStateRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanDaemonShutdownHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -12811,6 +12889,7 @@ module.exports = {
   routerCompositionPatternsForPath,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,

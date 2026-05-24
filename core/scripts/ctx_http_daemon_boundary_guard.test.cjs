@@ -188,6 +188,7 @@ const {
   routerCompositionPatternsForPath,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
@@ -562,12 +563,12 @@ test("appstate daemon handle construction ratchet preserves known baseline recon
   assert.deepEqual(violations, []);
 });
 
-test("appstate execution handle extractor ratchet allows only shutdown route", () => {
+test("appstate execution handle extractor ratchet rejects all HTTP routes", () => {
   assert.equal(
     EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS.has(
       "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
     ),
-    true,
+    false,
   );
   const violations = scanExecutionHandleRouteExtractorRatchet({
     filePath: "core/crates/ctx-http/src/api/execution.rs",
@@ -594,8 +595,55 @@ test("appstate execution handle extractor ratchet allows only shutdown route", (
         use ctx_daemon::daemon::ExecutionHandle;
         async fn route(State(execution): State<ExecutionHandle>) {}
       `,
+    }).map((violation) => violation.name),
+    [
+      "execution route extracts broad execution handle",
+      "execution route extracts broad execution handle",
+    ],
+  );
+});
+
+test("appstate daemon shutdown handle ratchet rejects broad fields and wrong route extraction", () => {
+  const routeViolations = scanDaemonShutdownHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/execution.rs",
+    contents: `
+      async fn route(State(shutdown): State<DaemonShutdownHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "daemon shutdown route extracts DaemonShutdownHandle outside shutdown route",
+  ]);
+
+  assert.deepEqual(
+    scanDaemonShutdownHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
+      contents: `
+        async fn route(State(shutdown): State<DaemonShutdownHandle>) {}
+      `,
     }),
     [],
+  );
+
+  const fieldViolations = scanDaemonShutdownHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct DaemonShutdownHandle {
+        state: Arc<DaemonState>,
+        execution: ExecutionHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "daemon shutdown capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "daemon shutdown capability exposes generic full-state escape hatch",
+    ),
   );
 });
 

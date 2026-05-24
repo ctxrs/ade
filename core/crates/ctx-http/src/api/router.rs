@@ -6,7 +6,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 use ctx_daemon::daemon::{
-    AuthHandle, BlobHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
+    AuthHandle, BlobHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
     OrgPolicyHandle, ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
@@ -143,7 +143,7 @@ pub struct RouteHandles {
     pub(in crate::api) execution_launch: ExecutionLaunchHandle,
     pub(in crate::api) linux_sandbox_runtime: LinuxSandboxRuntimeHandle,
     pub(in crate::api) update_drain: UpdateDrainHandle,
-    pub(in crate::api) execution: ExecutionHandle,
+    pub(in crate::api) daemon_shutdown: DaemonShutdownHandle,
 }
 
 impl RouteHandles {
@@ -207,7 +207,7 @@ impl RouteHandles {
             execution_launch: handle.execution_launch(),
             linux_sandbox_runtime: handle.linux_sandbox_runtime(),
             update_drain: handle.update_drain(),
-            execution: handle.execution(),
+            daemon_shutdown: handle.daemon_shutdown(),
         }
     }
 }
@@ -276,7 +276,7 @@ impl_route_state_extractors! {
     ExecutionLaunchHandle, execution_launch;
     LinuxSandboxRuntimeHandle, linux_sandbox_runtime;
     UpdateDrainHandle, update_drain;
-    ExecutionHandle, execution;
+    DaemonShutdownHandle, daemon_shutdown;
 }
 
 pub fn router(handles: RouteHandles) -> axum::Router {

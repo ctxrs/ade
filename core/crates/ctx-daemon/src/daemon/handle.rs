@@ -1237,6 +1237,22 @@ impl DaemonHandle {
         )
     }
 
+    pub fn daemon_shutdown(&self) -> DaemonShutdownHandle {
+        let request_shutdown = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |reason: String| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::maintenance::request_daemon_shutdown(state, reason).await
+                }) as DaemonShutdownFuture
+            }
+        });
+        DaemonShutdownHandle::new(
+            self.state.core.local_shutdown_token.clone(),
+            request_shutdown,
+        )
+    }
+
     pub fn execution(&self) -> ExecutionHandle {
         ExecutionHandle::new(Arc::clone(&self.state))
     }
@@ -4372,6 +4388,57 @@ impl UpdateDrainHandle {
 
     pub(in crate::daemon) fn update_drain(&self) -> Arc<UpdateDrainCoordinator> {
         Arc::clone(&self.update_drain)
+    }
+}
+
+type DaemonShutdownFuture = Pin<
+    Box<
+        dyn Future<
+                Output = Result<
+                    crate::daemon::DaemonTurnActivitySummary,
+                    crate::daemon::maintenance::DaemonShutdownError,
+                >,
+            > + Send
+            + 'static,
+    >,
+>;
+type DaemonShutdownEffect = Arc<dyn Fn(String) -> DaemonShutdownFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct DaemonShutdownHandle {
+    local_shutdown_token: Option<String>,
+    request_shutdown: DaemonShutdownEffect,
+}
+
+impl DaemonShutdownHandle {
+    pub(in crate::daemon) fn new(
+        local_shutdown_token: Option<String>,
+        request_shutdown: DaemonShutdownEffect,
+    ) -> Self {
+        Self {
+            local_shutdown_token,
+            request_shutdown,
+        }
+    }
+
+    pub(in crate::daemon) fn local_shutdown_token_authorized(
+        &self,
+        supplied: Option<&str>,
+    ) -> bool {
+        let Some(expected) = self.local_shutdown_token.as_deref() else {
+            return false;
+        };
+        supplied.is_some_and(|value| value == expected)
+    }
+
+    pub(in crate::daemon) async fn request_shutdown(
+        &self,
+        reason: String,
+    ) -> Result<
+        crate::daemon::DaemonTurnActivitySummary,
+        crate::daemon::maintenance::DaemonShutdownError,
+    > {
+        (self.request_shutdown)(reason).await
     }
 }
 

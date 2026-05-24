@@ -19,8 +19,8 @@ use crate::daemon::activity::{
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::{
     daemon_turn_activity_summary, reconcile_running_turns_with_reason,
-    spawn_deferred_daemon_shutdown, DaemonSandboxWorkActivitySummary, DaemonState,
-    DaemonTurnActivitySummary, ExecutionHandle, LinuxSandboxRuntimeHandle, UpdateDrainHandle,
+    spawn_deferred_daemon_shutdown, DaemonSandboxWorkActivitySummary, DaemonShutdownHandle,
+    DaemonState, DaemonTurnActivitySummary, LinuxSandboxRuntimeHandle, UpdateDrainHandle,
 };
 
 pub struct MaintenanceDrainPermit {
@@ -362,7 +362,7 @@ impl LinuxSandboxRuntimeHandle {
     }
 }
 
-impl ExecutionHandle {
+impl DaemonShutdownHandle {
     pub async fn request_daemon_shutdown_for_route(
         &self,
         req: ShutdownDaemonRouteRequest,
@@ -379,27 +379,14 @@ impl ExecutionHandle {
             .reason()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "desktop_quit".to_string());
-        let activity = request_daemon_shutdown(std::sync::Arc::clone(&self.state), reason)
+        let activity = self
+            .request_shutdown(reason)
             .await
             .map_err(daemon_shutdown_route_error)?;
         Ok(ShutdownDaemonRouteResult {
             accepted: true,
             activity,
         })
-    }
-
-    fn local_shutdown_token_authorized(&self, supplied: Option<&str>) -> bool {
-        let Some(expected) = self.state.core.local_shutdown_token.as_deref() else {
-            return false;
-        };
-        supplied.is_some_and(|value| value == expected)
-    }
-
-    pub async fn request_daemon_shutdown(
-        &self,
-        reason: String,
-    ) -> Result<DaemonTurnActivitySummary, DaemonShutdownError> {
-        request_daemon_shutdown(std::sync::Arc::clone(&self.state), reason).await
     }
 }
 

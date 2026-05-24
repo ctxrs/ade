@@ -222,7 +222,7 @@ async fn release_update_drain_route_requires_confirm() {
 #[tokio::test]
 async fn shutdown_route_rejects_missing_or_invalid_local_token() {
     let (_data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
-    let handle = crate::daemon::DaemonHandle::new(state).execution();
+    let handle = crate::daemon::DaemonHandle::new(state).daemon_shutdown();
 
     for token in [None, Some("wrong".to_string())] {
         let error = handle

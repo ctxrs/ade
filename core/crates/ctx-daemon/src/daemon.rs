@@ -73,8 +73,8 @@ pub use activity::{
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::{
-    AuthHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
-    ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
+    AuthHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
+    ExecutionHandle, ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
     OrgPolicyHandle, ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
     ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
