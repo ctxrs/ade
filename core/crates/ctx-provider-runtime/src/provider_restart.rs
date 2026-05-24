@@ -130,7 +130,7 @@ pub async fn apply_settings_to_runtime(
     settings: &ProviderRestartConfig,
     system: &SystemSnapshot,
 ) -> Result<()> {
-    let effective = compute_effective_limits(settings, &system);
+    let effective = compute_effective_limits(settings, system);
 
     let runtime = ProviderRestartRuntime {
         enabled: settings.enabled,

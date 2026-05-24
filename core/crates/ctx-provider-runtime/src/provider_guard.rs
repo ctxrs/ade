@@ -129,7 +129,7 @@ pub async fn apply_settings_to_runtime(
     settings: &ProviderGuardConfig,
     system: &SystemSnapshot,
 ) -> Result<()> {
-    let effective = compute_effective_limits(settings, &system);
+    let effective = compute_effective_limits(settings, system);
 
     let runtime = ProviderGuardRuntime {
         enabled: settings.enabled,

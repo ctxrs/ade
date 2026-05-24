@@ -49,16 +49,16 @@ pub async fn build_provider_bootstrap_options(
         &source_config_error,
     )
     .await;
-    let options = provider_bootstrap_options_response(
+    let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
         workspace_id,
-        &provider_status,
+        provider_status: &provider_status,
         preferred_model_id,
-        source_config.as_ref(),
-        source_config_error.as_deref(),
+        source_config: source_config.as_ref(),
+        source_config_error: source_config_error.as_deref(),
         has_active_auth,
         auth_mode,
-        auth_config_error.as_deref(),
-    );
+        auth_config_error: auth_config_error.as_deref(),
+    });
 
     ProviderBootstrapOptions {
         provider_id,
@@ -67,16 +67,30 @@ pub async fn build_provider_bootstrap_options(
     }
 }
 
+pub struct ProviderBootstrapOptionsResponseInput<'a> {
+    pub workspace_id: WorkspaceId,
+    pub provider_status: &'a ProviderStatus,
+    pub preferred_model_id: Option<String>,
+    pub source_config: Option<&'a HarnessProviderSourceConfig>,
+    pub source_config_error: Option<&'a str>,
+    pub has_active_auth: bool,
+    pub auth_mode: &'a str,
+    pub auth_config_error: Option<&'a str>,
+}
+
 pub fn provider_bootstrap_options_response(
-    workspace_id: WorkspaceId,
-    provider_status: &ProviderStatus,
-    preferred_model_id: Option<String>,
-    source_config: Option<&HarnessProviderSourceConfig>,
-    source_config_error: Option<&str>,
-    has_active_auth: bool,
-    auth_mode: &str,
-    auth_config_error: Option<&str>,
+    input: ProviderBootstrapOptionsResponseInput<'_>,
 ) -> serde_json::Value {
+    let ProviderBootstrapOptionsResponseInput {
+        workspace_id,
+        provider_status,
+        preferred_model_id,
+        source_config,
+        source_config_error,
+        has_active_auth,
+        auth_mode,
+        auth_config_error,
+    } = input;
     let provider_id = provider_status.provider_id.as_str();
     let (mut probe_ok, mut auth_required, mut probe_error) =
         bootstrap_provider_probe_summary(provider_status, has_active_auth);
@@ -263,16 +277,16 @@ mod tests {
     fn usable_unauthenticated_provider_requires_auth() {
         let status = provider_status("codex");
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            None,
-            None,
-            None,
-            false,
-            "none",
-            None,
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: None,
+            source_config: None,
+            source_config_error: None,
+            has_active_auth: false,
+            auth_mode: "none",
+            auth_config_error: None,
+        });
 
         assert_eq!(options["provider_id"], "codex");
         assert_eq!(options["workspace_id"], uuid::Uuid::nil().to_string());
@@ -294,16 +308,16 @@ mod tests {
             recommended_action: ProviderRecommendedAction::ResolveDependency,
         };
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            None,
-            None,
-            None,
-            true,
-            "subscription",
-            None,
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: None,
+            source_config: None,
+            source_config_error: None,
+            has_active_auth: true,
+            auth_mode: "subscription",
+            auth_config_error: None,
+        });
 
         assert_eq!(options["probe_ok"], false);
         assert_eq!(options["auth_required"], false);
@@ -315,16 +329,16 @@ mod tests {
     fn config_errors_fail_closed_and_surface_config_error() {
         let status = provider_status("codex");
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            None,
-            None,
-            Some("stale selected endpoint"),
-            true,
-            "endpoint",
-            None,
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: None,
+            source_config: None,
+            source_config_error: Some("stale selected endpoint"),
+            has_active_auth: true,
+            auth_mode: "endpoint",
+            auth_config_error: None,
+        });
 
         assert_eq!(options["probe_ok"], false);
         assert_eq!(options["auth_required"], false);
@@ -336,16 +350,16 @@ mod tests {
     fn auth_config_errors_fail_closed() {
         let status = provider_status("codex");
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            None,
-            None,
-            None,
-            false,
-            "none",
-            Some("auth load failed"),
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: None,
+            source_config: None,
+            source_config_error: None,
+            has_active_auth: false,
+            auth_mode: "none",
+            auth_config_error: Some("auth load failed"),
+        });
 
         assert_eq!(options["probe_ok"], false);
         assert_eq!(options["auth_required"], false);
@@ -358,16 +372,16 @@ mod tests {
         let status = provider_status("codex");
         let source = source_config(endpoint_record());
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            Some("gpt-alt".to_string()),
-            Some(&source),
-            None,
-            true,
-            "endpoint",
-            None,
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: Some("gpt-alt".to_string()),
+            source_config: Some(&source),
+            source_config_error: None,
+            has_active_auth: true,
+            auth_mode: "endpoint",
+            auth_config_error: None,
+        });
 
         assert_eq!(options["auth_required"], false);
         assert_eq!(options["models"]["meta"]["source_kind"], "endpoint");
@@ -382,16 +396,16 @@ mod tests {
         let mut status = provider_status("fake");
         status.version = Some("1.0.0".to_string());
 
-        let options = provider_bootstrap_options_response(
-            WorkspaceId(uuid::Uuid::nil()),
-            &status,
-            Some("not-in-catalog".to_string()),
-            None,
-            None,
-            true,
-            "subscription",
-            None,
-        );
+        let options = provider_bootstrap_options_response(ProviderBootstrapOptionsResponseInput {
+            workspace_id: WorkspaceId(uuid::Uuid::nil()),
+            provider_status: &status,
+            preferred_model_id: Some("not-in-catalog".to_string()),
+            source_config: None,
+            source_config_error: None,
+            has_active_auth: true,
+            auth_mode: "subscription",
+            auth_config_error: None,
+        });
 
         assert_eq!(options["models"]["meta"]["source_kind"], "subscription");
         assert_eq!(options["models"]["current_model_id"], "fake-model");
