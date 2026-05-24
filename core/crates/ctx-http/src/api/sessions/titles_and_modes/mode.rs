@@ -1,7 +1,8 @@
 use super::*;
+use ctx_daemon::daemon::SessionTitleModelModeHandle;
 
 pub(crate) async fn set_session_mode(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionTitleModelModeHandle>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionModeRouteRequest>,
 ) -> Result<StatusCode, StatusCode> {

@@ -113,17 +113,6 @@ impl SessionsHandle {
             Err(error) => Err(session_store_access_anyhow(error)),
         }
     }
-
-    pub(super) async fn session_store_for_write_or_none(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<Store>> {
-        match self.existing_session_store_for_write(session_id).await {
-            Ok(store) => Ok(Some(store)),
-            Err(SessionStoreAccessError::NotFound) => Ok(None),
-            Err(error) => Err(session_store_access_anyhow(error)),
-        }
-    }
 }
 
 fn session_store_access_anyhow(error: SessionStoreAccessError) -> anyhow::Error {

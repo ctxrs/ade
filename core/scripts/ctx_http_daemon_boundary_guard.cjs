@@ -233,8 +233,27 @@ const sessionFileCompletionsHandleApiPaths = new Set([
   "core/crates/ctx-http/src/api/sessions/file_completions.rs",
 ]);
 
+const sessionTitleModelModeHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes.rs",
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes/title.rs",
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes/model.rs",
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes/mode.rs",
+]);
+
 const sessionControlDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
+]);
+
+const sessionTitleModelModeDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/title_model_mode_route.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/model_target_bridge.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/model_switch.rs",
+]);
+
+const sessionTitleModelModeMigratedTitleImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
 ]);
 
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
@@ -8353,6 +8372,45 @@ function scanSessionFileCompletionsHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionTitleModelModeHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionTitleModelModeHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session title/model/mode route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_title_model_mode\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionTitleModelModeHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session title/model/mode route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -9184,6 +9242,40 @@ function scanSessionFileCompletionsDaemonSeamRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionTitleModelModeDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionTitleModelModeDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session title/model/mode daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "session title/model/mode daemon implementation uses broad session handle",
+      regex: /\bSessionsHandle\b/gu,
+    },
+    {
+      name: "session title/model/mode daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -9353,6 +9445,141 @@ function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
         text: lines[line - 1]?.trim() ?? generic[0],
       });
     }
+  }
+  return violations;
+}
+
+function scanSessionTitleModelModeHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const structBlock = rustStructBlockForType({
+    contents,
+    typeName: "SessionTitleModelModeHandle",
+  });
+  if (!structBlock) {
+    return violations;
+  }
+  const broadFieldRegex =
+    /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime|ProviderWorkspaceLaunchRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  for (
+    let broad = broadFieldRegex.exec(structBlock.text);
+    broad;
+    broad = broadFieldRegex.exec(structBlock.text)
+  ) {
+    const offset = structBlock.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "session title/model/mode capability stores broad handle or runtime bag",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers|effects)\s*:/gmu;
+  for (
+    let generic = genericEscapeFieldRegex.exec(structBlock.text);
+    generic;
+    generic = genericEscapeFieldRegex.exec(structBlock.text)
+  ) {
+    const offset = structBlock.index + generic.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "session title/model/mode capability exposes generic full-state field",
+      text: lines[line - 1]?.trim() ?? generic[0],
+    });
+  }
+  return violations;
+}
+
+function scanSessionTitleModelModeTitleImplementationRatchet({ filePath, contents }) {
+  if (!sessionTitleModelModeMigratedTitleImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadSeamRegex =
+    /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bSessionsHandle\b|\bDaemonHandle\b/gu;
+
+  let blocks = [];
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/handle.rs") {
+    blocks = rustImplBlocksForType({
+      contents,
+      typeName: "SessionTitleModelModeHandle",
+    });
+  } else if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs") {
+    blocks = [
+      rustFunctionBlockForName({
+        contents,
+        fnName: "maybe_generate_session_title_with_handle",
+      }),
+    ].filter(Boolean);
+  } else if (
+    filePath ===
+    "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs"
+  ) {
+    blocks = [
+      rustFunctionBlockForName({
+        contents,
+        fnName: "apply_session_title_update_with_handle",
+      }),
+    ].filter(Boolean);
+  }
+
+  for (const block of blocks) {
+    broadSeamRegex.lastIndex = 0;
+    for (
+      let broad = broadSeamRegex.exec(block.text);
+      broad;
+      broad = broadSeamRegex.exec(block.text)
+    ) {
+      const offset = block.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session title/model/mode title implementation uses broad daemon seam",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const block = rustFunctionBlockForName({
+    contents,
+    fnName: "session_title_model_mode",
+  });
+  if (!block) {
+    return violations;
+  }
+  const hiddenDaemonStateModelCatalogRegex =
+    /\bmodel_catalog_loader\s*=\s*Arc::new\b|\blet\s+state\s*=\s*Arc::clone\s*\(\s*&self\.state\s*\)|\bload_provider_model_catalog_for_execution_environment\s*\(\s*&state\b/gu;
+  for (
+    let hidden = hiddenDaemonStateModelCatalogRegex.exec(block.text);
+    hidden;
+    hidden = hiddenDaemonStateModelCatalogRegex.exec(block.text)
+  ) {
+    const offset = block.index + hidden.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "session title/model/mode assembly hides daemon state model-catalog seam",
+      text: lines[line - 1]?.trim() ?? hidden[0],
+    });
   }
   return violations;
 }
@@ -12530,6 +12757,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionTitleModelModeHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -12706,6 +12937,18 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionTitleModelModeAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionTitleModelModeHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionTitleModelModeTitleImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -12874,6 +13117,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionReadModelsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionTitleModelModeDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -13660,6 +13907,11 @@ module.exports = {
   scanSessionReadModelsDaemonImplementationRatchet,
   scanSessionReadModelsHandleFieldRatchet,
   scanSessionReadModelsHandleRatchet,
+  scanSessionTitleModelModeAssemblyRatchet,
+  scanSessionTitleModelModeDaemonImplementationRatchet,
+  scanSessionTitleModelModeHandleFieldRatchet,
+  scanSessionTitleModelModeHandleRatchet,
+  scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,

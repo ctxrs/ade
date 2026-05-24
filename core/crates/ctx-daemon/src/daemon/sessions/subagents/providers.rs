@@ -77,7 +77,7 @@ pub(super) async fn load_requested_model_catalogs(
     let mut model_catalogs = HashMap::new();
     for provider_id in provider_ids {
         let catalog = load_provider_model_catalog_for_execution_environment(
-            state,
+            state.as_ref(),
             workspace,
             provider_id,
             execution_environment,

@@ -277,6 +277,11 @@ const {
   scanSessionReadModelsDaemonImplementationRatchet,
   scanSessionReadModelsHandleFieldRatchet,
   scanSessionReadModelsHandleRatchet,
+  scanSessionTitleModelModeAssemblyRatchet,
+  scanSessionTitleModelModeDaemonImplementationRatchet,
+  scanSessionTitleModelModeHandleFieldRatchet,
+  scanSessionTitleModelModeHandleRatchet,
+  scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
@@ -1966,6 +1971,163 @@ test("appstate guard rejects hidden session file-completion daemon state seam", 
   assert.deepEqual(new Set(violations), new Set([
     "session file-completions handle hides daemon state seam",
   ]));
+});
+
+test("appstate guard rejects session title/model/mode broad route handles", () => {
+  const handlerViolations = scanSessionTitleModelModeHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/titles_and_modes/model.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn set_session_model(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session title/model/mode route extracts broad sessions handle",
+    "session title/model/mode route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionTitleModelModeHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_title_model_mode: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionTitleModelModeHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session title/model/mode route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session title/model/mode broad daemon seams", () => {
+  const violations = scanSessionTitleModelModeDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_model_mode_route.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionsHandle {
+        fn set_session_model_for_route(&self, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session title/model/mode daemon implementation uses broad daemon handle",
+    "session title/model/mode daemon implementation uses broad session handle",
+    "session title/model/mode daemon implementation accepts daemon state",
+  ]));
+});
+
+test("appstate guard rejects session title/model/mode broad handle fields", () => {
+  const fieldViolations = scanSessionTitleModelModeHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionTitleModelModeHandle {
+        sessions: SessionsHandle,
+        workspaces: WorkspacesHandle,
+        providers: ProvidersHandle,
+        state: Arc<DaemonState>,
+        store_manager: StoreManager,
+        workspace_runtime: WorkspaceRuntime,
+        effects: SessionTitleModelModeEffects,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(fieldViolations, [
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability stores broad handle or runtime bag",
+    "session title/model/mode capability exposes generic full-state field",
+    "session title/model/mode capability exposes generic full-state field",
+    "session title/model/mode capability exposes generic full-state field",
+    "session title/model/mode capability exposes generic full-state field",
+    "session title/model/mode capability exposes generic full-state field",
+  ]);
+});
+
+test("appstate guard rejects hidden session title/model/mode model-catalog daemon seam", () => {
+  const violations = scanSessionTitleModelModeAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn session_title_model_mode(&self) -> SessionTitleModelModeHandle {
+          let model_catalog_loader = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace, provider_id, execution_environment| {
+              load_provider_model_catalog_for_execution_environment(&state, &workspace, &provider_id, execution_environment)
+            }
+          });
+          SessionTitleModelModeHandle::new(SessionTitleModelModeHandleParts {
+            model_catalog_loader,
+          })
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "session title/model/mode assembly hides daemon state model-catalog seam",
+    "session title/model/mode assembly hides daemon state model-catalog seam",
+    "session title/model/mode assembly hides daemon state model-catalog seam",
+  ]);
+});
+
+test("appstate guard rejects broad seams in migrated title/model/mode title implementation", () => {
+  const handleViolations = scanSessionTitleModelModeTitleImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
+    contents: `
+      impl SessionTitleModelModeHandle {
+        pub async fn generate_session_title_for_request(&self, state: Arc<DaemonState>, raw: DaemonState) {
+          let sessions: SessionsHandle = todo!();
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(handleViolations, [
+    "session title/model/mode title implementation uses broad daemon seam",
+    "session title/model/mode title implementation uses broad daemon seam",
+    "session title/model/mode title implementation uses broad daemon seam",
+  ]);
+
+  const generationViolations = scanSessionTitleModelModeTitleImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+    contents: `
+      pub async fn maybe_generate_session_title_with_handle(
+        handle: &SessionTitleModelModeHandle,
+        state: Arc<DaemonState>,
+      ) {
+        let raw: DaemonState = todo!();
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(generationViolations, [
+    "session title/model/mode title implementation uses broad daemon seam",
+    "session title/model/mode title implementation uses broad daemon seam",
+  ]);
+
+  const persistenceViolations = scanSessionTitleModelModeTitleImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+    contents: `
+      pub async fn apply_session_title_update_with_handle(
+        handle: &SessionTitleModelModeHandle,
+        daemon: DaemonHandle,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(persistenceViolations, [
+    "session title/model/mode title implementation uses broad daemon seam",
+  ]);
 });
 
 test("appstate guard rejects session VCS broad route handles", () => {

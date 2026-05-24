@@ -3,7 +3,6 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::super::errors::ApiErrorResp;
-use ctx_daemon::daemon::SessionsHandle;
 use ctx_route_contracts::sessions::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse, SessionRouteParams,
     SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
@@ -17,6 +16,9 @@ mod title;
 pub(crate) use mode::set_session_mode;
 pub(crate) use model::set_session_model;
 pub(crate) use title::generate_session_title;
+
+#[cfg(test)]
+use ctx_daemon::daemon::SessionTitleModelModeHandle;
 
 type ApiErr = (StatusCode, Json<ApiErrorResp>);
 
@@ -59,12 +61,12 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
-    async fn sessions_handle() -> SessionsHandle {
+    async fn sessions_handle() -> SessionTitleModelModeHandle {
         crate::test_support::TestDaemonFixture::new("http://127.0.0.1:0")
             .await
             .daemon()
             .handle()
-            .sessions()
+            .session_title_model_mode()
     }
 
     #[tokio::test]

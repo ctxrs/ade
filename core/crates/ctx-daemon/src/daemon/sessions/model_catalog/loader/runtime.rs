@@ -3,7 +3,7 @@ use ctx_provider_runtime::provider_launch::options::runtime_probe_models_payload
 use ctx_provider_runtime::provider_launch::probe::provider_probe_context_for_workspace_runtime;
 
 pub(super) async fn load_runtime_model_catalog(
-    state: &Arc<DaemonState>,
+    host: &impl ModelCatalogHost,
     workspace: &Workspace,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
@@ -12,7 +12,7 @@ pub(super) async fn load_runtime_model_catalog(
 ) -> Result<Option<ModelCatalog>, String> {
     let (cfg, config_error) =
         ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
+            ProviderRuntimeHost::data_root(host),
         )
         .await;
     if let Some(config_error) = config_error {
@@ -38,9 +38,7 @@ pub(super) async fn load_runtime_model_catalog(
     let args = runtime_command.args;
 
     let probe_context =
-        match provider_probe_context_for_workspace_runtime(state.as_ref(), workspace, provider_id)
-            .await
-        {
+        match provider_probe_context_for_workspace_runtime(host, workspace, provider_id).await {
             Ok(context) => context,
             Err(err) => {
                 tracing::warn!(
@@ -56,7 +54,7 @@ pub(super) async fn load_runtime_model_catalog(
         &mut env,
         &cfg,
         provider_id,
-        &state.core.data_root,
+        ProviderRuntimeHost::data_root(host),
         Some(install_target),
     );
     if let Err(err) = installer::ensure_codex_cli_command_env_for_target(
@@ -108,8 +106,7 @@ pub(super) async fn load_runtime_model_catalog(
         "probed_at": chrono::Utc::now().to_rfc3339(),
     });
     value = redact_json_value(value);
-    state
-        .providers
+    host.provider_runtime()
         .store_provider_options_cache_value(cache_key, value)
         .await;
     Ok(Some(models))

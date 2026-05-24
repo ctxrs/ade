@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::daemon::{DaemonState, SessionsHandle};
+use crate::daemon::{DaemonState, SessionTitleModelModeHandle, SessionsHandle};
 use ctx_core::models::Session;
 use ctx_managed_installs::title_generation_local::{
     TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
@@ -9,6 +9,7 @@ use ctx_observability::logs;
 use ctx_provider_install::install_state::InstallId;
 use ctx_session_title_service::title_generation::{self, TitleGenerationOutcome};
 use ctx_settings_model as user_settings;
+use ctx_store::Store;
 
 mod persistence;
 pub use persistence::apply_session_title_update;
@@ -63,7 +64,13 @@ pub async fn start_title_generation_local_install(state: Arc<DaemonState>) -> In
 pub async fn configured_title_generation_settings(
     state: &DaemonState,
 ) -> Option<user_settings::TitleGenerationSettings> {
-    let settings = match ctx_settings_service::load_settings(state.global_store()).await {
+    configured_title_generation_settings_for_store(state.global_store()).await
+}
+
+pub async fn configured_title_generation_settings_for_store(
+    global_store: &Store,
+) -> Option<user_settings::TitleGenerationSettings> {
+    let settings = match ctx_settings_service::load_settings(global_store).await {
         Ok(settings) => settings,
         Err(err) => {
             tracing::warn!(
@@ -101,6 +108,30 @@ pub async fn maybe_generate_session_title(
         title_generation::generate_title_for_prompt(cfg.as_ref(), &prompt, &state.core.data_root)
             .await?;
     apply_session_title_update(&state, &session, outcome.clone()).await?;
+    Ok(Some(outcome))
+}
+
+pub async fn maybe_generate_session_title_with_handle(
+    handle: &SessionTitleModelModeHandle,
+    session: Session,
+    prompt: String,
+    force: bool,
+    cfg: Option<user_settings::TitleGenerationSettings>,
+) -> anyhow::Result<Option<TitleGenerationOutcome>> {
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Ok(None);
+    }
+
+    let current = session.title.trim();
+    if !force && !current.is_empty() && current != title_generation::DEFAULT_SESSION_TITLE {
+        return Ok(None);
+    }
+
+    let outcome =
+        title_generation::generate_title_for_prompt(cfg.as_ref(), &prompt, handle.data_root())
+            .await?;
+    persistence::apply_session_title_update_with_handle(handle, &session, outcome.clone()).await?;
     Ok(Some(outcome))
 }
 

@@ -9,7 +9,7 @@ use ctx_session_tools::model_resolution::{
 use ctx_storage_admission::is_storage_exhaustion_error;
 
 use super::model_target_bridge::SessionModelTargetLoadError;
-use crate::daemon::handle::SessionsHandle;
+use crate::daemon::handle::SessionTitleModelModeHandle;
 
 #[derive(Debug, Clone)]
 pub struct SetSessionModelRequest {
@@ -97,7 +97,7 @@ struct ResolvedSessionModelUpdate {
 }
 
 pub(super) async fn set_session_model_for_request(
-    sessions: &SessionsHandle,
+    sessions: &SessionTitleModelModeHandle,
     session_id: SessionId,
     request: SetSessionModelRequest,
 ) -> Result<Session, SetSessionModelError> {
@@ -134,7 +134,7 @@ pub(super) async fn set_session_model_for_request(
 }
 
 async fn load_session_model_target(
-    sessions: &SessionsHandle,
+    sessions: &SessionTitleModelModeHandle,
     session_id: SessionId,
 ) -> Result<SessionModelTarget, SetSessionModelError> {
     let (session, workspace, execution_environment, install_target) = sessions
@@ -175,7 +175,7 @@ fn execution_settings_error(error: anyhow::Error) -> SetSessionModelError {
 }
 
 async fn resolve_session_model_update(
-    sessions: &SessionsHandle,
+    sessions: &SessionTitleModelModeHandle,
     workspace: &Workspace,
     session: &Session,
     execution_environment: ExecutionEnvironment,

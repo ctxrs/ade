@@ -22,7 +22,7 @@ use super::{
     ProviderInstallHandle, ProviderStatusHandle, ProviderUsageHandle,
 };
 
-fn current_ctx_version_for_provider_runtime() -> Option<String> {
+pub(in crate::daemon) fn current_ctx_version_for_provider_runtime() -> Option<String> {
     match ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION")) {
         Ok(identity) => Some(identity.exact_version.clone()),
         Err(err) => {

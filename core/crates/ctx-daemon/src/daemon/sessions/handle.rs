@@ -12,7 +12,7 @@ use ctx_store::Store;
 use tokio::sync::{mpsc, Mutex};
 
 use super::{subagents, title_generation, title_generation::schedule_session_title_generation};
-use crate::daemon::handle::SessionsHandle;
+use crate::daemon::handle::{SessionTitleModelModeHandle, SessionsHandle};
 use crate::daemon::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
 
 #[derive(Debug)]
@@ -21,6 +21,73 @@ pub enum GenerateSessionTitleError {
     PromptRequired,
     Skipped,
     Internal(anyhow::Error),
+}
+
+impl SessionTitleModelModeHandle {
+    pub async fn generate_session_title_for_request(
+        &self,
+        session_id: SessionId,
+        prompt: Option<String>,
+        force: Option<bool>,
+    ) -> Result<Session, GenerateSessionTitleError> {
+        let store = self
+            .session_store_or_none(session_id)
+            .await
+            .map_err(GenerateSessionTitleError::Internal)?
+            .ok_or(GenerateSessionTitleError::NotFound)?;
+        let session = store
+            .get_session(session_id)
+            .await
+            .map_err(GenerateSessionTitleError::Internal)?
+            .ok_or(GenerateSessionTitleError::NotFound)?;
+
+        let prompt = if let Some(prompt) = prompt
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            prompt
+        } else {
+            store
+                .get_first_user_message_content(session_id)
+                .await
+                .map_err(GenerateSessionTitleError::Internal)?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or(GenerateSessionTitleError::PromptRequired)?
+        };
+
+        let force = force.unwrap_or(true);
+        let cfg = self.configured_title_generation_settings().await;
+        self.maybe_generate_session_title(session, prompt, force, cfg)
+            .await
+            .map_err(GenerateSessionTitleError::Internal)?
+            .ok_or(GenerateSessionTitleError::Skipped)?;
+
+        store
+            .get_session(session_id)
+            .await
+            .map_err(GenerateSessionTitleError::Internal)?
+            .ok_or(GenerateSessionTitleError::NotFound)
+    }
+
+    pub async fn configured_title_generation_settings(
+        &self,
+    ) -> Option<ctx_settings_model::TitleGenerationSettings> {
+        title_generation::configured_title_generation_settings_for_store(self.global_store()).await
+    }
+
+    pub async fn maybe_generate_session_title(
+        &self,
+        session: Session,
+        prompt: String,
+        force: bool,
+        cfg: Option<ctx_settings_model::TitleGenerationSettings>,
+    ) -> anyhow::Result<Option<TitleGenerationOutcome>> {
+        title_generation::maybe_generate_session_title_with_handle(
+            self, session, prompt, force, cfg,
+        )
+        .await
+    }
 }
 
 impl SessionsHandle {
@@ -86,52 +153,6 @@ impl SessionsHandle {
         if let Err(error) = self.emit_workspace_task_upsert(task.id).await {
             tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {error:?}");
         }
-    }
-
-    pub async fn generate_session_title_for_request(
-        &self,
-        session_id: SessionId,
-        prompt: Option<String>,
-        force: Option<bool>,
-    ) -> Result<Session, GenerateSessionTitleError> {
-        let store = self
-            .session_store_or_none(session_id)
-            .await
-            .map_err(GenerateSessionTitleError::Internal)?
-            .ok_or(GenerateSessionTitleError::NotFound)?;
-        let session = store
-            .get_session(session_id)
-            .await
-            .map_err(GenerateSessionTitleError::Internal)?
-            .ok_or(GenerateSessionTitleError::NotFound)?;
-
-        let prompt = if let Some(prompt) = prompt
-            .as_ref()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            prompt
-        } else {
-            store
-                .get_first_user_message_content(session_id)
-                .await
-                .map_err(GenerateSessionTitleError::Internal)?
-                .filter(|value| !value.trim().is_empty())
-                .ok_or(GenerateSessionTitleError::PromptRequired)?
-        };
-
-        let force = force.unwrap_or(true);
-        let cfg = self.configured_title_generation_settings().await;
-        self.maybe_generate_session_title(session, prompt, force, cfg)
-            .await
-            .map_err(GenerateSessionTitleError::Internal)?
-            .ok_or(GenerateSessionTitleError::Skipped)?;
-
-        store
-            .get_session(session_id)
-            .await
-            .map_err(GenerateSessionTitleError::Internal)?
-            .ok_or(GenerateSessionTitleError::NotFound)
     }
 
     pub async fn remember_session_meta(&self, session: &Session) {

@@ -1,7 +1,8 @@
 use super::*;
+use ctx_daemon::daemon::SessionTitleModelModeHandle;
 
 pub(crate) async fn generate_session_title(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionTitleModelModeHandle>,
     Path(id): Path<String>,
     Json(req): Json<GenerateSessionTitleRouteRequest>,
 ) -> Result<Json<GenerateSessionTitleRouteResponse>, ApiErr> {

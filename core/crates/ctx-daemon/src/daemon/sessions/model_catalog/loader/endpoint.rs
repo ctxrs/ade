@@ -6,14 +6,14 @@ pub(super) enum EndpointModelCatalog {
 }
 
 pub(super) async fn load_endpoint_model_catalog(
-    state: &Arc<DaemonState>,
+    host: &impl ModelCatalogHost,
     workspace: &Workspace,
     provider_id: &str,
     cache_key: String,
 ) -> Result<EndpointModelCatalog, String> {
     let (source_config, source_config_error) =
         ctx_provider_runtime::provider_launch::config::load_provider_source_config_with_error(
-            &state.core.data_root,
+            ProviderRuntimeHost::data_root(host),
             provider_id,
         )
         .await;
@@ -40,7 +40,7 @@ pub(super) async fn load_endpoint_model_catalog(
 
     let now = chrono::Utc::now();
     if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
-        let data_root = state.core.data_root.clone();
+        let data_root = ProviderRuntimeHost::data_root(host).to_path_buf();
         let provider_id_for_refresh = provider_id.to_string();
         let endpoint_id_for_refresh = endpoint.id.clone();
         tokio::spawn(async move {
@@ -73,8 +73,7 @@ pub(super) async fn load_endpoint_model_catalog(
     });
     value["source"] = serde_json::to_value(config).unwrap_or(serde_json::Value::Null);
     value = redact_json_value(value);
-    state
-        .providers
+    host.provider_runtime()
         .store_provider_options_cache_value(cache_key, value)
         .await;
     Ok(EndpointModelCatalog::Loaded(Some(Box::new(models))))

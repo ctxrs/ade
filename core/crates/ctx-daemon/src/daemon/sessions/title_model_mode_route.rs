@@ -10,9 +10,9 @@ use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::{
     GenerateSessionTitleError, SetSessionModeError, SetSessionModelError, SetSessionModelErrorKind,
 };
-use crate::daemon::SessionsHandle;
+use crate::daemon::SessionTitleModelModeHandle;
 
-impl SessionsHandle {
+impl SessionTitleModelModeHandle {
     pub async fn generate_session_title_for_route(
         &self,
         params: SessionRouteParams,

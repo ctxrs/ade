@@ -1,14 +1,20 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Session, SessionEventType, Workspace};
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
-use ctx_session_tools::model_resolution::ModelCatalog;
+use ctx_store::Store;
+use ctx_worktree_data_plane::{
+    apply_data_plane_to_execution_settings,
+    resolve_worktree_data_plane_with_host as resolve_worktree_data_plane, WorktreeDataPlaneHost,
+};
 
-use super::{model_catalog, model_switch};
-use crate::daemon::handle::SessionsHandle;
+use super::model_switch;
+use crate::daemon::handle::SessionTitleModelModeHandle;
+use crate::daemon::workspaces::ResolvedExistingWorktreeExecution;
 use crate::daemon::SessionStoreAccessError;
 
 #[derive(Debug)]
@@ -25,7 +31,21 @@ pub(crate) enum SessionModelTargetLoadError {
     Internal(anyhow::Error),
 }
 
-impl SessionsHandle {
+#[async_trait]
+impl WorktreeDataPlaneHost for SessionTitleModelModeHandle {
+    async fn get_workspace(
+        handle: &Self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<Workspace>> {
+        handle.global_store().get_workspace(workspace_id).await
+    }
+
+    async fn workspace_store(handle: &Self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
+        handle.store_for_workspace(workspace_id).await
+    }
+}
+
+impl SessionTitleModelModeHandle {
     pub async fn set_session_mode_for_request(
         &self,
         session_id: SessionId,
@@ -160,6 +180,31 @@ impl SessionsHandle {
         Ok((session, workspace, execution_environment, install_target))
     }
 
+    pub async fn resolve_existing_worktree_execution(
+        &self,
+        store: &Store,
+        _workspace: &Workspace,
+        worktree_id: ctx_core::ids::WorktreeId,
+    ) -> anyhow::Result<ResolvedExistingWorktreeExecution> {
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await?
+            .ok_or_else(|| anyhow!("worktree not found"))?;
+        let base_effective =
+            ctx_settings_service::effective_execution_settings(self.global_store(), store)
+                .await
+                .context("loading workspace execution settings")?;
+        let data_plane = resolve_worktree_data_plane(self, &worktree)
+            .await
+            .context("resolving worktree data plane")?;
+        let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane)
+            .context("applying worktree data plane to execution settings")?;
+        Ok(ResolvedExistingWorktreeExecution {
+            worktree,
+            effective,
+        })
+    }
+
     pub(crate) async fn persist_session_model_update_for_request(
         &self,
         session_id: SessionId,
@@ -224,9 +269,10 @@ impl SessionsHandle {
         workspace_id: WorkspaceId,
         execution_environment: ExecutionEnvironment,
     ) -> anyhow::Result<InstallTarget> {
-        crate::daemon::execution_effective::effective_install_target_for_environment(
-            self.state.as_ref(),
-            workspace_id,
+        let store = self.store_for_workspace(workspace_id).await?;
+        ctx_settings_service::effective_install_target_for_environment(
+            self.global_store(),
+            &store,
             execution_environment,
         )
         .await
@@ -238,26 +284,33 @@ impl SessionsHandle {
         install_target: InstallTarget,
     ) -> anyhow::Result<Arc<dyn ProviderAdapter>> {
         ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
-            self.state.as_ref(),
+            self,
             provider_id,
             install_target,
         )
         .await
     }
 
-    pub(crate) async fn load_provider_model_catalog_for_execution_environment(
+    pub(crate) async fn update_workspace_provider_preferred_model_id(
         &self,
-        workspace: &Workspace,
+        workspace_id: WorkspaceId,
         provider_id: &str,
-        execution_environment: ExecutionEnvironment,
-    ) -> Result<Option<ModelCatalog>, String> {
-        model_catalog::load_provider_model_catalog_for_execution_environment(
-            &self.state,
-            workspace,
+        preferred_model_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::update_preferred_new_session_model_id(
+            &store,
             provider_id,
-            execution_environment,
+            preferred_model_id,
         )
-        .await
+        .await?;
+        ctx_provider_runtime::provider_cache::invalidate_workspace_provider_options_cache(
+            self.providers(),
+            workspace_id,
+            provider_id,
+        )
+        .await;
+        Ok(())
     }
 }
 
