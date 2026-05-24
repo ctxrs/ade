@@ -136,4 +136,75 @@ describe("clientBase semantic telemetry", () => {
       }),
     );
   });
+
+  it("keeps protected client metrics when later metric floods saturate the queue", async () => {
+    fetchMock.mockResolvedValue(response(204));
+
+    recordClientHistogramMetric("workbench.interrupt_click_to_pending_ms", "ms", 1);
+    for (let index = 0; index < 205; index += 1) {
+      recordClientHistogramMetric("workbench.client_receive_lag_ms", "ms", index);
+    }
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const batch = postedClientMetricBatchAt(0);
+    expect(batch.events).toHaveLength(200);
+    expect(batch.events).toContainEqual(
+      expect.objectContaining({
+        name: "workbench.interrupt_click_to_pending_ms",
+        value: 1,
+      }),
+    );
+  });
+
+  it("retries client metrics after a transport failure", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(503))
+      .mockResolvedValueOnce(response(204));
+
+    recordClientHistogramMetric("workbench.interrupt_click_to_pending_ms", "ms", 12);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(postedClientMetricBatchAt(1).events).toContainEqual(
+      expect.objectContaining({
+        name: "workbench.interrupt_click_to_pending_ms",
+        value: 12,
+      }),
+    );
+  });
+
+  it("keeps protected failed client metrics when the queue refills before retry", async () => {
+    let resolveFirstFlush: (response: Response) => void = () => {};
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFirstFlush = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(response(204));
+
+    recordClientHistogramMetric("workbench.interrupt_click_to_pending_ms", "ms", 25);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    for (let index = 0; index < 205; index += 1) {
+      recordClientHistogramMetric("workbench.client_receive_lag_ms", "ms", index);
+    }
+    resolveFirstFlush(response(503));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(postedClientMetricBatchAt(1).events).toContainEqual(
+      expect.objectContaining({
+        name: "workbench.interrupt_click_to_pending_ms",
+        value: 25,
+      }),
+    );
+  });
 });

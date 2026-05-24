@@ -18,11 +18,27 @@ type ClientTelemetryMetric = {
   run_id?: string | null;
 };
 
+type QueuedClientTelemetryMetric = ClientTelemetryMetric & {
+  protectFromDrop: boolean;
+};
+
 let clientTelemetryTimer: number | null = null;
-const clientTelemetryQueue: ClientTelemetryMetric[] = [];
+const clientTelemetryQueue: QueuedClientTelemetryMetric[] = [];
 let semanticTelemetryTimer: number | null = null;
 const semanticTelemetryQueue: SemanticTelemetryEvent[] = [];
 let semanticTelemetryRemoteEnabled = true;
+
+const PROTECTED_CLIENT_TELEMETRY_METRICS = new Set([
+  "workbench.interrupt_click_to_pending_ms",
+]);
+
+const scheduleClientTelemetryFlush = (delayMs = CLIENT_TELEMETRY_FLUSH_MS): void => {
+  if (typeof window === "undefined" || clientTelemetryTimer !== null) return;
+  clientTelemetryTimer = window.setTimeout(() => {
+    clientTelemetryTimer = null;
+    flushClientTelemetry().catch(() => {});
+  }, delayMs);
+};
 
 const scheduleSemanticTelemetryFlush = (delayMs = CLIENT_TELEMETRY_FLUSH_MS): void => {
   if (typeof window === "undefined" || semanticTelemetryTimer !== null) return;
@@ -78,15 +94,54 @@ export const getTelemetryRunId = (): string | null => {
 
 const queueClientTelemetry = (event: ClientTelemetryMetric) => {
   if (typeof window === "undefined") return;
+  pushClientTelemetry({
+    ...event,
+    protectFromDrop: PROTECTED_CLIENT_TELEMETRY_METRICS.has(event.name),
+  });
+  scheduleClientTelemetryFlush();
+};
+
+const pushClientTelemetry = (
+  event: QueuedClientTelemetryMetric,
+  direction: "front" | "back" = "back",
+): void => {
   if (clientTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) {
-    clientTelemetryQueue.shift();
+    const dropIndex = clientTelemetryQueue.findIndex((queued) => !queued.protectFromDrop);
+    clientTelemetryQueue.splice(dropIndex >= 0 ? dropIndex : 0, 1);
   }
-  clientTelemetryQueue.push(event);
-  if (clientTelemetryTimer !== null) return;
-  clientTelemetryTimer = window.setTimeout(() => {
-    clientTelemetryTimer = null;
-    flushClientTelemetry().catch(() => {});
-  }, CLIENT_TELEMETRY_FLUSH_MS);
+  if (direction === "front") {
+    clientTelemetryQueue.unshift(event);
+  } else {
+    clientTelemetryQueue.push(event);
+  }
+};
+
+const requeueClientTelemetryBatch = (events: readonly QueuedClientTelemetryMetric[]): void => {
+  clientTelemetryQueue.unshift(...events);
+  while (clientTelemetryQueue.length > CLIENT_TELEMETRY_MAX) {
+    let dropIndex = -1;
+    for (let index = clientTelemetryQueue.length - 1; index >= 0; index -= 1) {
+      if (!clientTelemetryQueue[index]?.protectFromDrop) {
+        dropIndex = index;
+        break;
+      }
+    }
+    clientTelemetryQueue.splice(dropIndex >= 0 ? dropIndex : clientTelemetryQueue.length - 1, 1);
+  }
+  scheduleClientTelemetryFlush(SEMANTIC_TELEMETRY_RETRY_MS);
+};
+
+const stripClientTelemetryQueueMetadata = (
+  event: QueuedClientTelemetryMetric,
+): ClientTelemetryMetric => {
+  return {
+    name: event.name,
+    kind: event.kind,
+    unit: event.unit,
+    value: event.value,
+    labels: event.labels,
+    run_id: event.run_id,
+  };
 };
 
 const queueSemanticTelemetry = (event: SemanticTelemetryEvent) => {
@@ -219,8 +274,14 @@ export const setSemanticTelemetryRemoteEnabled = (enabled: boolean): void => {
 
 const flushClientTelemetry = async () => {
   if (!clientTelemetryQueue.length) return;
-  const batch: ClientTelemetryBatch = { events: clientTelemetryQueue.splice(0) };
-  await postTelemetryBatch(CLIENT_TELEMETRY_PATH, batch, "client_telemetry_flush");
+  const events = clientTelemetryQueue.splice(0);
+  const batch: ClientTelemetryBatch = {
+    events: events.map(stripClientTelemetryQueueMetadata),
+  };
+  const uploaded = await postTelemetryBatch(CLIENT_TELEMETRY_PATH, batch, "client_telemetry_flush");
+  if (!uploaded) {
+    requeueClientTelemetryBatch(events);
+  }
 };
 
 const flushSemanticTelemetry = async () => {
