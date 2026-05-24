@@ -1208,10 +1208,6 @@ impl DaemonHandle {
         TelemetryHandle::new(self.state.core.data_root.clone(), &self.state.telemetry)
     }
 
-    pub fn transport(&self) -> TransportHandle {
-        TransportHandle::new(Arc::clone(&self.state))
-    }
-
     pub fn terminal_route(&self) -> TerminalRouteHandle {
         let create_terminal = Arc::new({
             let state = Arc::clone(&self.state);
@@ -1284,10 +1280,6 @@ impl DaemonHandle {
             self.state.core.local_shutdown_token.clone(),
             request_shutdown,
         )
-    }
-
-    pub fn execution(&self) -> ExecutionHandle {
-        ExecutionHandle::new(Arc::clone(&self.state))
     }
 }
 
@@ -5066,5 +5058,3 @@ impl SessionLifecycleHost for WorkspaceStreamSessionLifecycleHost {
 domain_handle_with_accessor!(SessionsHandle, sessions);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);
 domain_handle_with_accessor!(ProvidersHandle, providers);
-domain_handle_with_accessor!(TransportHandle, transport);
-domain_handle_with_accessor!(ExecutionHandle, execution);

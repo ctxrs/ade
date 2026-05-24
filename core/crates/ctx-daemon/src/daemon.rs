@@ -74,7 +74,7 @@ pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::{
     AuthHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
-    ExecutionHandle, ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
+    ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
     MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
     OrgPolicyHandle, ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
     ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
@@ -83,8 +83,8 @@ pub use handle::{
     RunArchiveHandle, SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle,
     TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
     TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle,
-    TerminalRouteHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
+    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
     WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
     WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,

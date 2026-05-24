@@ -361,6 +361,8 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TasksHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TelemetryHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("WorkspaceStreamHandle"), false);
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TransportHandle"), false);
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("ExecutionHandle"), false);
   const violations = scanAppStateRouteHandleRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
     contents: `
@@ -376,8 +378,6 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
       domain_handle_with_accessor!(ProvidersHandle, providers);
-      domain_handle_with_accessor!(TransportHandle, transport);
-      domain_handle_with_accessor!(ExecutionHandle, execution);
       domain_handle_with_accessor!(SurpriseHandle, surprise);
     `,
   });
@@ -389,6 +389,62 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
       "unclassified full-state route handle",
     ],
   );
+});
+
+test("appstate route handle ratchet rejects stale transport and execution handles", () => {
+  const transportViolations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      macro_rules! domain_handle_with_accessor {
+        ($name:ident, $accessor:ident) => {
+          pub struct $name {
+            state: Arc<DaemonState>,
+          }
+        };
+      }
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
+      domain_handle_with_accessor!(ProvidersHandle, providers);
+      domain_handle_with_accessor!(TransportHandle, transport);
+    `,
+  });
+  assert.deepEqual(
+    transportViolations.map((violation) => violation.name),
+    [
+      "full-state route handle ratchet exceeded",
+      "unclassified full-state route handle",
+    ],
+  );
+  assert.deepEqual(transportViolations.at(-1).text, "TransportHandle");
+
+  const executionViolations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      macro_rules! domain_handle_with_accessor {
+        ($name:ident, $accessor:ident) => {
+          pub struct $name {
+            state: Arc<DaemonState>,
+          }
+        };
+      }
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
+      domain_handle_with_accessor!(ProvidersHandle, providers);
+      domain_handle_with_accessor!(ExecutionHandle, execution);
+    `,
+  });
+  assert.deepEqual(
+    executionViolations.map((violation) => violation.name),
+    [
+      "full-state route handle ratchet exceeded",
+      "unclassified full-state route handle",
+    ],
+  );
+  assert.deepEqual(executionViolations.at(-1).text, "ExecutionHandle");
 });
 
 test("appstate route handle ratchet rejects migrated telemetry full-state reintroduction", () => {
@@ -407,8 +463,6 @@ test("appstate route handle ratchet rejects migrated telemetry full-state reintr
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
       domain_handle_with_accessor!(ProvidersHandle, providers);
-      domain_handle_with_accessor!(TransportHandle, transport);
-      domain_handle_with_accessor!(ExecutionHandle, execution);
       domain_handle_with_accessor!(TelemetryHandle, telemetry);
     `,
   });
@@ -438,8 +492,6 @@ test("appstate route handle ratchet rejects stale tasks full-state reintroductio
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
       domain_handle_with_accessor!(ProvidersHandle, providers);
-      domain_handle_with_accessor!(TransportHandle, transport);
-      domain_handle_with_accessor!(ExecutionHandle, execution);
       domain_handle_with_accessor!(TasksHandle, tasks);
     `,
   });
@@ -470,8 +522,6 @@ test("appstate route handle ratchet rejects workspace stream full-state reintrod
       domain_handle_with_accessor!(SessionsHandle, sessions);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
       domain_handle_with_accessor!(ProvidersHandle, providers);
-      domain_handle_with_accessor!(TransportHandle, transport);
-      domain_handle_with_accessor!(ExecutionHandle, execution);
       domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
     `,
   });

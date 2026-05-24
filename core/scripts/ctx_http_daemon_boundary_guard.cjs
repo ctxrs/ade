@@ -1278,8 +1278,6 @@ const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
   "SessionsHandle",
   "WorkspacesHandle",
   "ProvidersHandle",
-  "TransportHandle",
-  "ExecutionHandle",
 ]);
 
 const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
