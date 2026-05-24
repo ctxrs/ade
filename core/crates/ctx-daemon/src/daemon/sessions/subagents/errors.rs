@@ -4,8 +4,8 @@ use ctx_core::models::Session;
 use ctx_observability::logs;
 use ctx_storage_admission::is_storage_exhaustion_error;
 
-pub(super) type SubagentResult<T> = Result<T, SubagentError>;
-pub(super) type ApiResult<T> = SubagentResult<T>;
+pub(in crate::daemon) type SubagentResult<T> = Result<T, SubagentError>;
+pub(in crate::daemon) type ApiResult<T> = SubagentResult<T>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SubagentErrorKind {
@@ -47,11 +47,14 @@ pub(super) fn subagent_error(kind: SubagentErrorKind, error: impl Into<String>) 
     }
 }
 
-pub(super) fn api_error(kind: SubagentErrorKind, error: impl Into<String>) -> SubagentError {
+pub(in crate::daemon) fn api_error(
+    kind: SubagentErrorKind,
+    error: impl Into<String>,
+) -> SubagentError {
     subagent_error(kind, error)
 }
 
-pub(super) fn not_found(error: impl Into<String>) -> SubagentError {
+pub(in crate::daemon) fn not_found(error: impl Into<String>) -> SubagentError {
     subagent_error(SubagentErrorKind::NotFound, error)
 }
 
@@ -62,7 +65,7 @@ pub(super) fn internal_subagent_error(error: impl ToString) -> SubagentError {
     )
 }
 
-pub(super) fn internal_api_error(error: impl ToString) -> SubagentError {
+pub(in crate::daemon) fn internal_api_error(error: impl ToString) -> SubagentError {
     internal_subagent_error(error)
 }
 

@@ -267,35 +267,12 @@ impl SessionsHandle {
         subagents::archive_agent(Arc::clone(&self.state), parent_id, req).await
     }
 
-    pub async fn list_agents(
-        &self,
-        parent_id: SessionId,
-    ) -> Result<Vec<subagents::AgentSummary>, subagents::SubagentError> {
-        subagents::list_agents(Arc::clone(&self.state), parent_id).await
-    }
-
-    pub async fn get_agent(
-        &self,
-        parent_id: SessionId,
-        req: subagents::GetAgentReq,
-    ) -> Result<subagents::GetAgentResp, subagents::SubagentError> {
-        subagents::get_agent(Arc::clone(&self.state), parent_id, req).await
-    }
-
     pub async fn interrupt_agent(
         &self,
         parent_id: SessionId,
         req: subagents::InterruptAgentReq,
     ) -> Result<subagents::InterruptAgentResp, subagents::SubagentError> {
         subagents::interrupt_agent(Arc::clone(&self.state), parent_id, req).await
-    }
-
-    pub async fn wait_agent(
-        &self,
-        parent_id: SessionId,
-        req: subagents::WaitAgentReq,
-    ) -> Result<subagents::WaitAgentResp, subagents::SubagentError> {
-        subagents::wait_agent(Arc::clone(&self.state), parent_id, req).await
     }
 }
 

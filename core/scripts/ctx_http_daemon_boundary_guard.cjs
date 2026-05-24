@@ -259,6 +259,21 @@ const sessionSubagentReadHandleApiPaths = new Set([
   "core/crates/ctx-http/src/api/sessions/subagents/listings.rs",
 ]);
 
+const sessionSubagentMcpReadHandleApiPath =
+  "core/crates/ctx-http/src/api/sessions/subagents/handlers.rs";
+const sessionSubagentMcpReadHandlerNames = [
+  "mcp_list_agents",
+  "mcp_get_agent",
+  "mcp_wait_agent",
+];
+const sessionSubagentMcpReadDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/subagents/details/builders.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/subagents/context.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/wait.rs",
+]);
+
 const sessionSubagentReadDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
 ]);
@@ -8512,6 +8527,53 @@ function scanSessionSubagentReadHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionSubagentMcpReadHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (filePath === sessionSubagentMcpReadHandleApiPath) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (const fnName of sessionSubagentMcpReadHandlerNames) {
+      const block = rustFunctionBlockForName({ contents, fnName });
+      if (!block) {
+        continue;
+      }
+      sessionsHandleRegex.lastIndex = 0;
+      for (
+        let match = sessionsHandleRegex.exec(block.text);
+        match;
+        match = sessionsHandleRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session subagent MCP read route extracts broad sessions handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_subagent_mcp_read\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionSubagentMcpReadHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent MCP read route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -9491,6 +9553,122 @@ function scanSessionSubagentReadDaemonImplementationRatchet({ filePath, contents
   return violations;
 }
 
+function scanSessionSubagentMcpReadDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionSubagentMcpReadDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs") {
+    const readFacadeRegex =
+      /\b(?:list_agents_for_mcp_route|get_agent_for_mcp_route|wait_agent_for_mcp_route)\b/gu;
+    for (const impl of rustImplBlocksForType({ contents, typeName: "SessionsHandle" })) {
+      readFacadeRegex.lastIndex = 0;
+      for (
+        let match = readFacadeRegex.exec(impl.text);
+        match;
+        match = readFacadeRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session subagent MCP read facade remains on broad sessions handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const broadSeamRegex =
+      /\b(?:DaemonHandle|SessionsHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (const impl of rustImplBlocksForType({
+      contents,
+      typeName: "SessionSubagentMcpReadHandle",
+    })) {
+      broadSeamRegex.lastIndex = 0;
+      for (
+        let match = broadSeamRegex.exec(impl.text);
+        match;
+        match = broadSeamRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session subagent MCP read daemon implementation uses broad seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/handle.rs") {
+    const requestMethodRegex =
+      /\bpub\s+(?:async\s+)?fn\s+(?:list_agents|get_agent|wait_agent)\s*\(/gu;
+    for (const impl of rustImplBlocksForType({ contents, typeName: "SessionsHandle" })) {
+      requestMethodRegex.lastIndex = 0;
+      for (
+        let match = requestMethodRegex.exec(impl.text);
+        match;
+        match = requestMethodRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session subagent MCP read request method remains on broad sessions handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  const helperNamesByPath = new Map([
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/details/builders.rs",
+      ["build_agent_detail_for_mcp_read"],
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/context.rs",
+      ["context_window_for_run_in_store", "worktree_path_for_child_in_store"],
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/wait.rs",
+      ["wait_for_run_assistant_message_in_store"],
+    ],
+  ]);
+  const helperNames = helperNamesByPath.get(filePath) ?? [];
+  const broadHelperRegex =
+    /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bstate\s*\.\s*store_for_session\b/gu;
+  for (const fnName of helperNames) {
+    const block = rustFunctionBlockForName({ contents, fnName });
+    if (!block) {
+      continue;
+    }
+    broadHelperRegex.lastIndex = 0;
+    for (
+      let match = broadHelperRegex.exec(block.text);
+      match;
+      match = broadHelperRegex.exec(block.text)
+    ) {
+      const offset = block.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent MCP read helper uses broad daemon state",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -9876,6 +10054,77 @@ function scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }) {
         filePath,
         line,
         name: "session subagent read capability exposes store escape hatch",
+        text: lines[line - 1]?.trim() ?? escape[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanSessionSubagentMcpReadHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "SessionSubagentMcpReadHandle",
+  });
+  if (handleStruct) {
+    const broadFieldRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|SessionRuntime|SchedulerCommand|StoreManager|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(handleStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent MCP read capability stores broad handle or runtime bag",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    const genericEscapeFieldRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers|effects)\s*:/gmu;
+    for (
+      let generic = genericEscapeFieldRegex.exec(handleStruct.text);
+      generic;
+      generic = genericEscapeFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + generic.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent MCP read capability exposes generic full-state field",
+        text: lines[line - 1]?.trim() ?? generic[0],
+      });
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({
+    contents,
+    typeName: "SessionSubagentMcpReadHandle",
+  })) {
+    const storeEscapeRegex =
+      /\bpub(?:\s*\([^)]*\))?\s+(?:async\s+)?fn\s+(?:store_for_session|existing_session_store|existing_session_store_for_write|session_store_or_none|session_stores)\b|\bpub(?:\s*\([^)]*\))?\s+(?:async\s+)?fn\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*->[^;\n{]*\bStore\b/gu;
+    for (
+      let escape = storeEscapeRegex.exec(impl.text);
+      escape;
+      escape = storeEscapeRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent MCP read capability exposes store escape hatch",
         text: lines[line - 1]?.trim() ?? escape[0],
       });
     }
@@ -13155,6 +13404,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionSubagentMcpReadHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -13347,6 +13600,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionSubagentMcpReadHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionTitleModelModeTitleImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -13531,6 +13788,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionSubagentReadDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionSubagentMcpReadDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -14325,6 +14586,9 @@ module.exports = {
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
+  scanSessionSubagentMcpReadDaemonImplementationRatchet,
+  scanSessionSubagentMcpReadHandleFieldRatchet,
+  scanSessionSubagentMcpReadHandleRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
   scanSessionSubagentReadHandleRatchet,

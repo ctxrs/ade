@@ -123,6 +123,7 @@ mod tests {
     async fn mcp_subagent_routes_preserve_json_invalid_id_errors() {
         let fixture = sessions_fixture().await;
         let handle = fixture.daemon().handle().sessions();
+        let mcp_read_handle = fixture.daemon().handle().session_subagent_mcp_read();
 
         let err = mcp_spawn_agent(
             State(handle.clone()),
@@ -175,7 +176,7 @@ mod tests {
         assert_json_invalid_session_id(err);
 
         let err = mcp_list_agents(
-            State(handle.clone()),
+            State(mcp_read_handle.clone()),
             None,
             Path("not-a-session".to_string()),
         )
@@ -184,7 +185,7 @@ mod tests {
         assert_json_invalid_session_id(err);
 
         let err = mcp_get_agent(
-            State(handle.clone()),
+            State(mcp_read_handle.clone()),
             None,
             Path("not-a-session".to_string()),
             Json(route_request::<GetAgentRouteRequest>(json!({
@@ -196,7 +197,7 @@ mod tests {
         assert_json_invalid_session_id(err);
 
         let err = mcp_wait_agent(
-            State(handle),
+            State(mcp_read_handle),
             None,
             Path("not-a-session".to_string()),
             Json(route_request::<WaitAgentRouteRequest>(json!({

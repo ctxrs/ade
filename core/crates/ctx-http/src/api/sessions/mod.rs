@@ -5,7 +5,8 @@ use axum::Json;
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
     SessionControlHandle, SessionFileCompletionsHandle, SessionMessageCommandHandle,
-    SessionReadModelsHandle, SessionSubagentReadHandle, SessionVcsHandle, SessionsHandle,
+    SessionReadModelsHandle, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
+    SessionVcsHandle, SessionsHandle,
 };
 use ctx_route_contracts::sessions::{
     AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,

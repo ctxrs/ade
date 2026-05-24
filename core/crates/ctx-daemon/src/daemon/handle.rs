@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
@@ -16,7 +17,7 @@ use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
 use ctx_merge_queue::MergeQueueRuntime;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
-use ctx_observability::perf_telemetry::PerfTelemetry;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use ctx_observability::telemetry::Telemetry;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -447,6 +448,52 @@ impl DaemonHandle {
 
     pub fn session_subagent_read(&self) -> SessionSubagentReadHandle {
         SessionSubagentReadHandle::new(self.session_store_lookup())
+    }
+
+    pub fn session_subagent_mcp_read(&self) -> SessionSubagentMcpReadHandle {
+        let provider_inactivity_timeout = Arc::new({
+            let sessions = Arc::clone(&self.state.sessions);
+            move || {
+                let sessions = Arc::clone(&sessions);
+                Box::pin(async move { sessions.provider_inactivity_timeout().await })
+                    as SessionSubagentMcpReadFuture<_>
+            }
+        });
+        let emit_legacy_context_window_key_reject = Arc::new({
+            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+            move |legacy_key: String| {
+                let perf_telemetry = perf_telemetry.clone();
+                Box::pin(async move {
+                    let mut labels = HashMap::new();
+                    labels.insert("source".to_string(), "daemon".to_string());
+                    labels.insert(
+                        "surface".to_string(),
+                        "sessions.context_window_summary".to_string(),
+                    );
+                    labels.insert("issue".to_string(), "legacy_context_window_key".to_string());
+                    labels.insert("legacy_key".to_string(), legacy_key);
+                    perf_telemetry
+                        .record_metric(
+                            PerfMetric {
+                                name: "compat.payload_reject_count".to_string(),
+                                kind: PerfMetricKind::Counter,
+                                unit: "count".to_string(),
+                                value: 1.0,
+                                labels,
+                            },
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
+                }) as SessionSubagentMcpReadFuture<_>
+            }
+        });
+        SessionSubagentMcpReadHandle::new(
+            self.session_store_lookup(),
+            provider_inactivity_timeout,
+            emit_legacy_context_window_key_reject,
+        )
     }
 
     pub fn session_read_models(&self) -> SessionReadModelsHandle {
@@ -3748,6 +3795,283 @@ impl SessionSubagentReadHandle {
         }
         Ok(Some(invocation))
     }
+}
+
+type SessionSubagentMcpReadFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type SessionSubagentMcpReadProviderTimeout =
+    Arc<dyn Fn() -> SessionSubagentMcpReadFuture<Duration> + Send + Sync>;
+type SessionSubagentMcpReadLegacyContextWindowRejectCounter =
+    Arc<dyn Fn(String) -> SessionSubagentMcpReadFuture<()> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct SessionSubagentMcpReadHandle {
+    session_stores: SessionStoreLookup,
+    provider_inactivity_timeout: SessionSubagentMcpReadProviderTimeout,
+    emit_legacy_context_window_key_reject: SessionSubagentMcpReadLegacyContextWindowRejectCounter,
+}
+
+impl SessionSubagentMcpReadHandle {
+    pub(in crate::daemon) fn new(
+        session_stores: SessionStoreLookup,
+        provider_inactivity_timeout: SessionSubagentMcpReadProviderTimeout,
+        emit_legacy_context_window_key_reject: SessionSubagentMcpReadLegacyContextWindowRejectCounter,
+    ) -> Self {
+        Self {
+            session_stores,
+            provider_inactivity_timeout,
+            emit_legacy_context_window_key_reject,
+        }
+    }
+
+    async fn load_parent_session(
+        &self,
+        parent_id: SessionId,
+    ) -> Result<(Store, Session), crate::daemon::sessions::subagents::SubagentError> {
+        let store = match self.session_stores.existing_session_store(parent_id).await {
+            Ok(store) => store,
+            Err(crate::daemon::SessionStoreAccessError::NotFound) => {
+                return Err(crate::daemon::sessions::subagents::not_found(
+                    "parent session not found",
+                ));
+            }
+            Err(error) => {
+                return Err(crate::daemon::sessions::subagents::internal_api_error(
+                    session_store_access_anyhow(error),
+                ));
+            }
+        };
+        let parent = store
+            .get_session(parent_id)
+            .await
+            .map_err(crate::daemon::sessions::subagents::internal_api_error)?
+            .ok_or_else(|| {
+                crate::daemon::sessions::subagents::not_found("parent session not found")
+            })?;
+        Ok((store, parent))
+    }
+
+    async fn provider_inactivity_timeout(&self) -> Duration {
+        (self.provider_inactivity_timeout)().await
+    }
+
+    pub(in crate::daemon) async fn require_scoped_mcp_session_context(
+        &self,
+        mcp_auth: ctx_mcp_auth::McpAuthContext,
+        session_id: SessionId,
+    ) -> Result<(), crate::daemon::ScopedMcpSessionAccessError> {
+        self.session_stores
+            .require_scoped_mcp_session_context(mcp_auth, session_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn list_agents(
+        &self,
+        parent_id: SessionId,
+    ) -> Result<
+        Vec<crate::daemon::sessions::subagents::AgentSummary>,
+        crate::daemon::sessions::subagents::SubagentError,
+    > {
+        let (store, parent) = self.load_parent_session(parent_id).await?;
+        let inactivity_timeout = self.provider_inactivity_timeout().await;
+        let subs = store
+            .list_subagent_sessions(parent.id)
+            .await
+            .map_err(crate::daemon::sessions::subagents::internal_api_error)?;
+        let mut agents = Vec::with_capacity(subs.len());
+        for sub in subs {
+            let (summary, _latest_turn) = crate::daemon::sessions::subagents::build_agent_summary(
+                &store,
+                sub.id,
+                &sub.title,
+                inactivity_timeout,
+            )
+            .await?;
+            agents.push(summary);
+        }
+        Ok(agents)
+    }
+
+    pub(in crate::daemon) async fn get_agent(
+        &self,
+        parent_id: SessionId,
+        req: crate::daemon::sessions::subagents::GetAgentReq,
+    ) -> Result<
+        crate::daemon::sessions::subagents::GetAgentResp,
+        crate::daemon::sessions::subagents::SubagentError,
+    > {
+        let (store, parent) = self.load_parent_session(parent_id).await?;
+        let inactivity_timeout = self.provider_inactivity_timeout().await;
+        let child = crate::daemon::sessions::subagents::resolve_child_agent_session(
+            &store,
+            &parent,
+            &req.agent_id,
+        )
+        .await?;
+        let detail = crate::daemon::sessions::subagents::build_agent_detail_for_mcp_read(
+            &store,
+            &parent,
+            &child,
+            inactivity_timeout,
+            &self.emit_legacy_context_window_key_reject,
+        )
+        .await?;
+        Ok(crate::daemon::sessions::subagents::GetAgentResp { agent: detail })
+    }
+
+    pub(in crate::daemon) async fn wait_agent(
+        &self,
+        parent_id: SessionId,
+        req: crate::daemon::sessions::subagents::WaitAgentReq,
+    ) -> Result<
+        crate::daemon::sessions::subagents::WaitAgentResp,
+        crate::daemon::sessions::subagents::SubagentError,
+    > {
+        let agent_ids = ctx_subagent_service::normalize_wait_agent_ids(
+            req.agent_id.as_deref(),
+            req.agent_ids.as_deref(),
+        )
+        .map_err(|error| {
+            crate::daemon::sessions::subagents::api_error(
+                crate::daemon::sessions::subagents::SubagentErrorKind::BadRequest,
+                error,
+            )
+        })?;
+        let (store, parent) = self.load_parent_session(parent_id).await?;
+        let inactivity_timeout = self.provider_inactivity_timeout().await;
+        let targets =
+            crate::daemon::sessions::subagents::collect_wait_targets(&store, &parent, &agent_ids)
+                .await?;
+        let mode = ctx_subagent_service::parse_wait_mode(req.mode.as_deref()).map_err(|error| {
+            crate::daemon::sessions::subagents::api_error(
+                crate::daemon::sessions::subagents::SubagentErrorKind::BadRequest,
+                error,
+            )
+        })?;
+        let until =
+            ctx_subagent_service::parse_wait_until(req.until.as_deref()).map_err(|error| {
+                crate::daemon::sessions::subagents::api_error(
+                    crate::daemon::sessions::subagents::SubagentErrorKind::BadRequest,
+                    error,
+                )
+            })?;
+        if req.since_seq.is_some() && targets.len() != 1 {
+            return Err(crate::daemon::sessions::subagents::api_error(
+                crate::daemon::sessions::subagents::SubagentErrorKind::BadRequest,
+                "since_seq is only supported with a single agent_id",
+            ));
+        }
+
+        let timeout_ms = req.timeout_ms.unwrap_or(30_000);
+        let mut details = self
+            .collect_wait_details(&store, &parent, &targets, inactivity_timeout)
+            .await?;
+        let thresholds = subagent_wait_update_thresholds(&details, until, req.since_seq);
+
+        if ctx_subagent_service::wait_predicate_satisfied(
+            &subagent_agent_wait_details(&details),
+            mode,
+            until,
+            &thresholds,
+        ) {
+            return Ok(subagent_wait_response("matched", mode, until, details));
+        }
+        if timeout_ms == 0 {
+            return Ok(subagent_wait_response("timeout", mode, until, details));
+        }
+
+        let started_at = Instant::now();
+        while started_at.elapsed() < Duration::from_millis(timeout_ms) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            details = self
+                .collect_wait_details(&store, &parent, &targets, inactivity_timeout)
+                .await?;
+            if ctx_subagent_service::wait_predicate_satisfied(
+                &subagent_agent_wait_details(&details),
+                mode,
+                until,
+                &thresholds,
+            ) {
+                return Ok(subagent_wait_response("matched", mode, until, details));
+            }
+        }
+
+        Ok(subagent_wait_response("timeout", mode, until, details))
+    }
+
+    async fn collect_wait_details(
+        &self,
+        store: &Store,
+        parent: &Session,
+        targets: &[Session],
+        inactivity_timeout: Duration,
+    ) -> Result<
+        Vec<crate::daemon::sessions::subagents::AgentDetail>,
+        crate::daemon::sessions::subagents::SubagentError,
+    > {
+        let mut details = Vec::with_capacity(targets.len());
+        for target in targets {
+            details.push(
+                crate::daemon::sessions::subagents::build_agent_detail_for_mcp_read(
+                    store,
+                    parent,
+                    target,
+                    inactivity_timeout,
+                    &self.emit_legacy_context_window_key_reject,
+                )
+                .await?,
+            );
+        }
+        Ok(details)
+    }
+}
+
+fn subagent_wait_update_thresholds(
+    details: &[crate::daemon::sessions::subagents::AgentDetail],
+    until: ctx_subagent_service::AgentWaitUntil,
+    since_seq: Option<i64>,
+) -> HashMap<String, i64> {
+    let mut thresholds = HashMap::new();
+    match until {
+        ctx_subagent_service::AgentWaitUntil::Terminal => {}
+        ctx_subagent_service::AgentWaitUntil::Update => {
+            if let Some(since_seq) = since_seq {
+                thresholds.insert(details[0].agent.agent_id.clone(), since_seq);
+            } else {
+                for detail in details {
+                    thresholds.insert(detail.agent.agent_id.clone(), detail.agent.last_event_seq);
+                }
+            }
+        }
+    }
+    thresholds
+}
+
+fn subagent_wait_response(
+    wait_status: &str,
+    mode: ctx_subagent_service::AgentWaitMode,
+    until: ctx_subagent_service::AgentWaitUntil,
+    results: Vec<crate::daemon::sessions::subagents::AgentDetail>,
+) -> crate::daemon::sessions::subagents::WaitAgentResp {
+    crate::daemon::sessions::subagents::WaitAgentResp {
+        wait_status: wait_status.to_string(),
+        mode: mode.as_str().to_string(),
+        until: until.as_str().to_string(),
+        results,
+    }
+}
+
+fn subagent_agent_wait_details(
+    details: &[crate::daemon::sessions::subagents::AgentDetail],
+) -> Vec<ctx_subagent_service::AgentWaitDetail<'_>> {
+    details
+        .iter()
+        .map(|detail| ctx_subagent_service::AgentWaitDetail {
+            agent_id: &detail.agent.agent_id,
+            has_current_run: detail.agent.current_run_id.is_some(),
+            has_latest_result: detail.agent.latest_result_status.is_some(),
+            last_event_seq: detail.agent.last_event_seq,
+        })
+        .collect()
 }
 
 #[derive(Clone)]

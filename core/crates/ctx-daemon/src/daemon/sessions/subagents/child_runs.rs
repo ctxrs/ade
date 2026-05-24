@@ -11,3 +11,4 @@ pub(super) use prompt::{
     PersistedSubagentPrompt,
 };
 pub(super) use wait::wait_for_run_assistant_message;
+pub(in crate::daemon) use wait::wait_for_run_assistant_message_in_store;

@@ -36,7 +36,7 @@ pub(crate) async fn mcp_archive_agent(
 }
 
 pub(crate) async fn mcp_list_agents(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpReadHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ListAgentsRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -51,7 +51,7 @@ pub(crate) async fn mcp_list_agents(
 }
 
 pub(crate) async fn mcp_get_agent(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpReadHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<GetAgentRouteRequest>,
@@ -85,7 +85,7 @@ pub(crate) async fn mcp_interrupt_agent(
 }
 
 pub(crate) async fn mcp_wait_agent(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentMcpReadHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<WaitAgentRouteRequest>,

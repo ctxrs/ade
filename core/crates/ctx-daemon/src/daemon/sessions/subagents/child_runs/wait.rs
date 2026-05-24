@@ -74,6 +74,14 @@ pub(in crate::daemon::sessions::subagents) async fn wait_for_run_assistant_messa
         .store_for_session(session_id)
         .await
         .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
+    wait_for_run_assistant_message_in_store(&store, session_id, run_id).await
+}
+
+pub(in crate::daemon) async fn wait_for_run_assistant_message_in_store(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    run_id: RunId,
+) -> Result<Option<String>, String> {
     let deadline = Instant::now() + std::time::Duration::from_secs(2);
 
     loop {

@@ -15,7 +15,7 @@ use self::turns::{agent_health, latest_terminal_turn_for_session};
 
 mod turns;
 
-pub(in crate::daemon::sessions::subagents) async fn resolve_child_agent_session(
+pub(in crate::daemon) async fn resolve_child_agent_session(
     store: &ctx_store::Store,
     parent: &ctx_core::models::Session,
     raw_agent_id: &str,
@@ -30,7 +30,7 @@ pub(in crate::daemon::sessions::subagents) async fn resolve_child_agent_session(
     Ok(child)
 }
 
-pub(in crate::daemon::sessions::subagents) async fn build_agent_summary(
+pub(in crate::daemon) async fn build_agent_summary(
     store: &ctx_store::Store,
     session_id: SessionId,
     session_title: &str,

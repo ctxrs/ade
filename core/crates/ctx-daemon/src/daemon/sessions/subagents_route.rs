@@ -14,7 +14,10 @@ use ctx_subagent_service::route_contract::{
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
-use crate::daemon::{ScopedMcpSessionAccessError, SessionSubagentReadHandle, SessionsHandle};
+use crate::daemon::{
+    ScopedMcpSessionAccessError, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
+    SessionsHandle,
+};
 
 impl SessionSubagentReadHandle {
     pub async fn list_session_subagents_for_route(
@@ -106,6 +109,37 @@ impl SessionsHandle {
             .map_err(subagent_route_error)
     }
 
+    pub async fn interrupt_agent_for_mcp_route(
+        &self,
+        params: SessionRouteParams,
+        mcp_auth: Option<McpAuthContext>,
+        request: InterruptAgentRouteRequest,
+    ) -> Result<InterruptAgentRouteResponse, SessionSubagentRouteError> {
+        let parent_id = self
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
+            .await?;
+        self.interrupt_agent(parent_id, request.into_low_level())
+            .await
+            .map(InterruptAgentRouteResponse::new)
+            .map_err(subagent_route_error)
+    }
+
+    async fn resolve_mcp_subagent_parent_session_id(
+        &self,
+        params: SessionRouteParams,
+        mcp_auth: Option<McpAuthContext>,
+    ) -> Result<SessionId, SessionSubagentRouteError> {
+        let session_id = parse_subagent_route_id(params)?;
+        if let Some(mcp_auth) = mcp_auth {
+            self.require_scoped_mcp_session_context(mcp_auth, session_id)
+                .await
+                .map_err(scoped_mcp_session_route_error)?;
+        }
+        Ok(session_id)
+    }
+}
+
+impl SessionSubagentMcpReadHandle {
     pub async fn list_agents_for_mcp_route(
         &self,
         params: SessionRouteParams,
@@ -132,21 +166,6 @@ impl SessionsHandle {
         self.get_agent(parent_id, request.into_low_level())
             .await
             .map(GetAgentRouteResponse::new)
-            .map_err(subagent_route_error)
-    }
-
-    pub async fn interrupt_agent_for_mcp_route(
-        &self,
-        params: SessionRouteParams,
-        mcp_auth: Option<McpAuthContext>,
-        request: InterruptAgentRouteRequest,
-    ) -> Result<InterruptAgentRouteResponse, SessionSubagentRouteError> {
-        let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
-            .await?;
-        self.interrupt_agent(parent_id, request.into_low_level())
-            .await
-            .map(InterruptAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
@@ -220,7 +239,9 @@ mod tests {
     use chrono::Utc;
     use ctx_core::ids::{RunId, SessionId, TurnId};
     use ctx_core::models::{Session, SessionTurn, SessionTurnStatus, SubagentInvocation};
+    use ctx_mcp_auth::McpAuthCapabilities;
     use ctx_store::Store;
+    use ctx_subagent_service::encode_agent_ref;
     use ctx_subagent_service::route_contract::SessionSubagentRouteErrorKind;
     use serde_json::json;
 
@@ -292,6 +313,15 @@ mod tests {
             })
             .await?;
         Ok(turn_id)
+    }
+
+    fn scoped_context_for(session: &Session) -> McpAuthContext {
+        McpAuthContext {
+            session_id: session.id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            capabilities: McpAuthCapabilities::provider_session(),
+        }
     }
 
     #[test]
@@ -474,6 +504,80 @@ mod tests {
             .unwrap_err();
         assert_eq!(mismatch.kind(), SessionSubagentRouteErrorKind::NotFound);
         assert_eq!(mismatch.message(), "session not found");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_read_handle_lists_agents_with_scoped_context() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let child = daemon
+            .seed_subagent_mcp_existing_label_child_for_test(parent.id, "Scoped Reader")
+            .await?;
+
+        let response = daemon
+            .handle()
+            .session_subagent_mcp_read()
+            .list_agents_for_mcp_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                Some(scoped_context_for(&parent)),
+            )
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        let payload = serde_json::to_value(response)?;
+        let agents = payload.as_array().expect("agents response is an array");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["agent_id"], encode_agent_ref(child.session_id));
+        assert_eq!(agents[0]["task_label"], "Scoped Reader");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_read_handle_rejects_foreign_scoped_context() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let mut foreign_auth = scoped_context_for(&parent);
+        foreign_auth.session_id = SessionId::new();
+
+        let error = daemon
+            .handle()
+            .session_subagent_mcp_read()
+            .list_agents_for_mcp_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                Some(foreign_auth),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), SessionSubagentRouteErrorKind::Unauthorized);
+        assert_eq!(
+            error.message(),
+            "scoped ctx-mcp token is limited to the current session"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_read_handle_wait_zero_timeout_returns_timeout() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let child = daemon
+            .seed_subagent_mcp_existing_label_child_for_test(parent.id, "Waiter")
+            .await?;
+        let request: WaitAgentRouteRequest = serde_json::from_value(json!({
+            "agent_id": encode_agent_ref(child.session_id),
+            "timeout_ms": 0
+        }))?;
+
+        let response = daemon
+            .handle()
+            .session_subagent_mcp_read()
+            .wait_agent_for_mcp_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                Some(scoped_context_for(&parent)),
+                request,
+            )
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        let payload = serde_json::to_value(response)?;
+        assert_eq!(payload["wait_status"], "timeout");
+        assert_eq!(payload["results"].as_array().expect("results").len(), 1);
         Ok(())
     }
 }

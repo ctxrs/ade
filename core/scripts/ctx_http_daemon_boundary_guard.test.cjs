@@ -285,6 +285,9 @@ const {
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
+  scanSessionSubagentMcpReadDaemonImplementationRatchet,
+  scanSessionSubagentMcpReadHandleFieldRatchet,
+  scanSessionSubagentMcpReadHandleRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
   scanSessionSubagentReadHandleRatchet,
@@ -2336,6 +2339,110 @@ test("appstate guard rejects session subagent read broad fields and store escape
     "session subagent read capability stores broad handle or runtime bag",
     "session subagent read capability exposes generic full-state field",
     "session subagent read capability exposes store escape hatch",
+  ]));
+});
+
+test("appstate guard rejects session subagent MCP read broad route handles", () => {
+  const handlerViolations = scanSessionSubagentMcpReadHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/subagents/handlers.rs",
+    contents: `
+      async fn mcp_spawn_agent(State(sessions): State<SessionsHandle>) {}
+      async fn mcp_list_agents(State(sessions): State<SessionsHandle>) {}
+      async fn mcp_get_agent(State(state): State<SessionSubagentMcpReadHandle>) {}
+      async fn mcp_wait_agent(State(state): State<SessionSubagentMcpReadHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session subagent MCP read route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionSubagentMcpReadHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_subagent_mcp_read: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionSubagentMcpReadHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session subagent MCP read route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session subagent MCP read broad daemon seams", () => {
+  const routeViolations = scanSessionSubagentMcpReadDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn wait_agent_for_mcp_route(&self) {}
+      }
+      impl SessionSubagentMcpReadHandle {
+        fn bad(&self, handle: DaemonHandle, state: Arc<DaemonState>, sessions: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routeViolations), new Set([
+    "session subagent MCP read facade remains on broad sessions handle",
+    "session subagent MCP read daemon implementation uses broad seam",
+  ]));
+
+  const sessionsHandleViolations = scanSessionSubagentMcpReadDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn list_agents(&self) {}
+        pub async fn get_agent(&self) {}
+        pub async fn wait_agent(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(sessionsHandleViolations), new Set([
+    "session subagent MCP read request method remains on broad sessions handle",
+  ]));
+
+  const helperViolations = scanSessionSubagentMcpReadDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/subagents/details/builders.rs",
+    contents: `
+      async fn build_agent_detail_for_mcp_read(state: Arc<DaemonState>) {
+        let _ = state.store_for_session(session_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(helperViolations), new Set([
+    "session subagent MCP read helper uses broad daemon state",
+  ]));
+});
+
+test("appstate guard rejects session subagent MCP read broad fields and store escapes", () => {
+  const violations = scanSessionSubagentMcpReadHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionSubagentMcpReadHandle {
+        sessions: SessionsHandle,
+        state: Arc<DaemonState>,
+        session_runtime: SessionRuntime<SchedulerCommand>,
+        store_manager: StoreManager,
+        effects: SessionSubagentMcpReadEffects,
+      }
+      impl SessionSubagentMcpReadHandle {
+        pub(in crate::daemon) async fn existing_session_store(&self, id: SessionId) -> Result<Store> {}
+        pub(in crate::daemon) fn public_store(&self) -> Store {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session subagent MCP read capability stores broad handle or runtime bag",
+    "session subagent MCP read capability exposes generic full-state field",
+    "session subagent MCP read capability exposes store escape hatch",
   ]));
 });
 
