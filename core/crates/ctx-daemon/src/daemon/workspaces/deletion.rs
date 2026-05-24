@@ -42,20 +42,35 @@ pub(in crate::daemon) struct WorkspaceDeletionRuntime {
     fail_after_begin_for_test: Arc<AtomicBool>,
 }
 
+struct WorkspaceDeletionRuntimeDeps {
+    data_root: PathBuf,
+    daemon_url: String,
+    stores: StoreManager,
+    global_store: Store,
+    sessions: Arc<SessionRuntime>,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+    workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    harness: Arc<HarnessRuntimeManager>,
+    providers: Arc<ProviderRuntime>,
+}
+
 impl WorkspaceDeletionRuntime {
-    pub(in crate::daemon) fn new(
-        data_root: PathBuf,
-        daemon_url: String,
-        stores: StoreManager,
-        global_store: Store,
-        sessions: Arc<SessionRuntime>,
-        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
-        workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
-        workspace_active_heads_cache: WorkspaceActiveHeadsCache,
-        workspace_file_completions_cache: WorkspaceFileCompletionsCache,
-        harness: Arc<HarnessRuntimeManager>,
-        providers: Arc<ProviderRuntime>,
-    ) -> Self {
+    fn new(deps: WorkspaceDeletionRuntimeDeps) -> Self {
+        let WorkspaceDeletionRuntimeDeps {
+            data_root,
+            daemon_url,
+            stores,
+            global_store,
+            sessions,
+            active_snapshot,
+            workspace_active_snapshot_cache,
+            workspace_active_heads_cache,
+            workspace_file_completions_cache,
+            harness,
+            providers,
+        } = deps;
         let session_lifecycle = WorkspaceDeletionSessionLifecycleHost::new(
             global_store.clone(),
             Arc::clone(&active_snapshot),
@@ -256,16 +271,24 @@ pub(in crate::daemon) fn runtime_from_state(
     state: &Arc<DaemonState>,
 ) -> Arc<WorkspaceDeletionRuntime> {
     Arc::new(WorkspaceDeletionRuntime::new(
-        state.core.data_root.clone(),
-        state.core.daemon_url.clone(),
-        state.core.stores.clone(),
-        state.global_store().clone(),
-        Arc::clone(&state.sessions),
-        Arc::clone(&state.workspaces.workspace_active_snapshot),
-        Arc::clone(&state.workspaces.workspace_active_snapshot_cache),
-        Arc::clone(&state.workspaces.workspace_active_heads_cache),
-        Arc::clone(&state.workspaces.workspace_file_completions_cache),
-        Arc::clone(&state.execution.harness),
-        Arc::clone(&state.providers),
+        WorkspaceDeletionRuntimeDeps {
+            data_root: state.core.data_root.clone(),
+            daemon_url: state.core.daemon_url.clone(),
+            stores: state.core.stores.clone(),
+            global_store: state.global_store().clone(),
+            sessions: Arc::clone(&state.sessions),
+            active_snapshot: Arc::clone(&state.workspaces.workspace_active_snapshot),
+            workspace_active_snapshot_cache: Arc::clone(
+                &state.workspaces.workspace_active_snapshot_cache,
+            ),
+            workspace_active_heads_cache: Arc::clone(
+                &state.workspaces.workspace_active_heads_cache,
+            ),
+            workspace_file_completions_cache: Arc::clone(
+                &state.workspaces.workspace_file_completions_cache,
+            ),
+            harness: Arc::clone(&state.execution.harness),
+            providers: Arc::clone(&state.providers),
+        },
     ))
 }
