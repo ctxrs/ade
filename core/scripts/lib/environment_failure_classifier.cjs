@@ -196,8 +196,8 @@ const ENVIRONMENT_FAILURE_CLASSES = Object.freeze([
     category: "external_dependency",
     retry_policy: Object.freeze({
       retryable: true,
-      max_retries: 2,
-      backoff: "linear_seconds_60",
+      max_retries: 4,
+      backoff: "linear_seconds_20",
     }),
     required_evidence: Object.freeze([
       "raw Bazel external repository, registry, BCR, or rules repository evidence",

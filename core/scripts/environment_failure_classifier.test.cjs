@@ -45,6 +45,10 @@ test("classifies known environment failures from raw evidence snippets", () => {
       classId: "bazel_external_repository_fetch_5xx",
       text: "Bazel external repository rules_python failed: Error downloading https://bcr.bazel.build/modules/rules_python: GET returned 502 Bad Gateway",
     },
+    {
+      classId: "bazel_external_repository_fetch_5xx",
+      text: "Repo rules_kotlin+ failed while fetching rules_kotlin-v1.9.6.tar.gz from GitHub: GET returned 502 Bad Gateway or Proxy Error",
+    },
   ];
 
   for (const entry of cases) {
@@ -58,6 +62,20 @@ test("classifies known environment failures from raw evidence snippets", () => {
     assert.ok(classification.evidence.length > 0);
     assert.ok(classification.evidence[0].snippet.length <= 360);
   }
+});
+
+test("allows enough retries for bursty Bazel external repository 5xx failures", () => {
+  const classification = classifyEnvironmentFailure(
+    "Repo rules_kotlin+ failed while fetching rules_kotlin-v1.9.6.tar.gz: GET returned 502 Bad Gateway or Proxy Error",
+    {
+      commitSha: EXACT_SHA,
+      retryAttempt: 3,
+    },
+  );
+  assert.equal(classification.class_id, "bazel_external_repository_fetch_5xx");
+  assert.equal(classification.retry_policy.max_retries, 4);
+  assert.equal(classification.retry_policy.retry_allowed, true);
+  assert.equal(classification.retry_policy.retry_exhausted, false);
 });
 
 test("treats ambiguous failures as product failures without retry policy", () => {
