@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::SessionsHandle;
+use ctx_daemon::daemon::TitleGenerationLocalHandle;
 use ctx_managed_installs::title_generation_local::{
     TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
 };
@@ -20,7 +20,7 @@ pub(in crate::api) struct TitleGenerationLocalInstallResponse {
 }
 
 pub(in crate::api) async fn get_title_generation_local_status(
-    State(state): State<SessionsHandle>,
+    State(state): State<TitleGenerationLocalHandle>,
 ) -> Result<Json<TitleGenerationLocalStatusResponse>, StatusCode> {
     let status = state
         .title_generation_local_status()
@@ -36,7 +36,7 @@ pub(in crate::api) async fn get_title_generation_local_status(
 }
 
 pub(in crate::api) async fn install_title_generation_local(
-    State(state): State<SessionsHandle>,
+    State(state): State<TitleGenerationLocalHandle>,
 ) -> Result<Json<TitleGenerationLocalInstallResponse>, StatusCode> {
     let install_id = state.start_title_generation_local_install().await;
     Ok(Json(TitleGenerationLocalInstallResponse { install_id }))

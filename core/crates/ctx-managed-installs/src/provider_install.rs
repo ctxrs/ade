@@ -116,8 +116,8 @@ pub(super) async fn run_tracked_provider_install(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn emit_install(
-    state: &AppState,
+pub(super) async fn emit_install<H: InstallProgressHost + ?Sized>(
+    state: &H,
     install_id: Option<InstallId>,
     provider_id: &str,
     level: InstallEventLevel,
@@ -143,8 +143,8 @@ pub(super) async fn emit_install(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn emit_install_with_code(
-    state: &AppState,
+pub(super) async fn emit_install_with_code<H: InstallProgressHost + ?Sized>(
+    state: &H,
     install_id: Option<InstallId>,
     provider_id: &str,
     level: InstallEventLevel,
@@ -182,8 +182,8 @@ pub(super) async fn emit_install_with_code(
         .await;
 }
 
-pub(super) async fn ensure_install_not_cancelled(
-    state: &AppState,
+pub(super) async fn ensure_install_not_cancelled<H: InstallProgressHost + ?Sized>(
+    state: &H,
     install_id: Option<InstallId>,
 ) -> Result<()> {
     let Some(install_id) = install_id else {

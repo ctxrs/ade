@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn install_title_generation_local_with_progress(
-    state: std::sync::Arc<AppState>,
+    state: std::sync::Arc<dyn TitleGenerationLocalInstallHost>,
     install_id: InstallId,
 ) -> Result<()> {
     let res = install_title_generation_local_impl(state.as_ref(), Some(install_id)).await;
@@ -22,8 +22,21 @@ pub async fn install_title_generation_local_with_progress(
     res
 }
 
+pub trait TitleGenerationLocalInstallHost: InstallProgressHost {
+    fn data_root(&self) -> &Path;
+}
+
+impl<T> TitleGenerationLocalInstallHost for T
+where
+    T: ManagedInstallHost + ?Sized,
+{
+    fn data_root(&self) -> &Path {
+        ManagedInstallHost::data_root(self)
+    }
+}
+
 async fn install_title_generation_local_impl(
-    state: &AppState,
+    state: &dyn TitleGenerationLocalInstallHost,
     install_id: Option<InstallId>,
 ) -> Result<()> {
     let Some(runtime_spec) = title_generation_local::runtime_download_spec() else {

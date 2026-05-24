@@ -208,6 +208,51 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
 
 pub type AppState = dyn ManagedInstallHost;
 
+#[async_trait]
+pub trait InstallProgressHost: Send + Sync + 'static {
+    async fn get_install_info(&self, install_id: InstallId) -> Option<InstallInfo>;
+
+    async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent);
+
+    async fn finish_install(
+        &self,
+        install_id: InstallId,
+        success: bool,
+        error: Option<String>,
+        error_code: Option<InstallErrorCode>,
+    );
+
+    async fn is_install_cancelled(&self, install_id: InstallId) -> bool;
+}
+
+#[async_trait]
+impl<T> InstallProgressHost for T
+where
+    T: ManagedInstallHost + ?Sized,
+{
+    async fn get_install_info(&self, install_id: InstallId) -> Option<InstallInfo> {
+        ManagedInstallHost::get_install_info(self, install_id).await
+    }
+
+    async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
+        ManagedInstallHost::emit_install_event(self, install_id, event).await;
+    }
+
+    async fn finish_install(
+        &self,
+        install_id: InstallId,
+        success: bool,
+        error: Option<String>,
+        error_code: Option<InstallErrorCode>,
+    ) {
+        ManagedInstallHost::finish_install(self, install_id, success, error, error_code).await;
+    }
+
+    async fn is_install_cancelled(&self, install_id: InstallId) -> bool {
+        ManagedInstallHost::is_install_cancelled(self, install_id).await
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagedPythonRuntimeSpec {
     version: String,

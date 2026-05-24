@@ -6,19 +6,20 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 use ctx_daemon::daemon::{
-    AuthHandle, BlobHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
-    ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
-    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
-    OrgPolicyHandle, ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
-    ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
-    ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
-    RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
-    SessionArtifactsHandle, SessionControlHandle, SessionFileCompletionsHandle,
-    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpControlHandle,
-    SessionSubagentMcpReadHandle, SessionSubagentReadHandle, SessionTitleModelModeHandle,
-    SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
-    TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
-    TaskTitleHandle, TelemetryHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
+    AuthHandle, BlobHandle, DaemonHandle, DaemonShutdownHandle, DemoSeedTranscriptHandle,
+    DiagnosticsHandle, DictationHandle, ExecutionLaunchHandle, HealthHandle,
+    LinuxSandboxRuntimeHandle, LogsHandle, MergeQueueApiHandle, MobileRuntimeHandle,
+    MobileSecureProxyHandle, MobileStoreHandle, OrgPolicyHandle, ProviderAccountsHandle,
+    ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
+    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RepoOnboardingHandle,
+    RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle, SessionArtifactsHandle,
+    SessionControlHandle, SessionFileCompletionsHandle, SessionMessageCommandHandle,
+    SessionReadModelsHandle, SessionSubagentMcpControlHandle, SessionSubagentMcpReadHandle,
+    SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle,
+    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
+    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle,
+    TerminalRouteHandle, TitleGenerationLocalHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
     WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
@@ -126,7 +127,8 @@ pub struct RouteHandles {
     pub(in crate::api) session_subagent_read: SessionSubagentReadHandle,
     pub(in crate::api) session_title_model_mode: SessionTitleModelModeHandle,
     pub(in crate::api) session_vcs: SessionVcsHandle,
-    pub(in crate::api) sessions: SessionsHandle,
+    pub(in crate::api) demo_seed_transcript: DemoSeedTranscriptHandle,
+    pub(in crate::api) title_generation_local: TitleGenerationLocalHandle,
     pub(in crate::api) task_creation: TaskCreationHandle,
     pub(in crate::api) task_lifecycle: TaskLifecycleHandle,
     pub(in crate::api) task_listing: TaskListingHandle,
@@ -199,7 +201,8 @@ impl RouteHandles {
             session_subagent_read: handle.session_subagent_read(),
             session_title_model_mode: handle.session_title_model_mode(),
             session_vcs: handle.session_vcs(),
-            sessions: handle.sessions(),
+            demo_seed_transcript: handle.demo_seed_transcript(),
+            title_generation_local: handle.title_generation_local(),
             task_creation: handle.task_creation(),
             task_lifecycle: handle.task_lifecycle(),
             task_listing: handle.task_listing(),
@@ -277,7 +280,8 @@ impl_route_state_extractors! {
     SessionSubagentReadHandle, session_subagent_read;
     SessionTitleModelModeHandle, session_title_model_mode;
     SessionVcsHandle, session_vcs;
-    SessionsHandle, sessions;
+    DemoSeedTranscriptHandle, demo_seed_transcript;
+    TitleGenerationLocalHandle, title_generation_local;
     TaskCreationHandle, task_creation;
     TaskLifecycleHandle, task_lifecycle;
     TaskListingHandle, task_listing;

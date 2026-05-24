@@ -31,7 +31,9 @@ mod workspace_bridge;
 
 pub use artifact_access::SessionImageBlobStoreError;
 pub use artifacts::SessionArtifactDownload;
-pub use demo_seed::{DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn};
+pub use demo_seed::{
+    DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptHandle, DemoSeedTranscriptTurn,
+};
 pub use handle::GenerateSessionTitleError;
 pub use message_commands::{PostUserMessageError, PostUserMessageInput};
 pub use model_switch::{SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest};

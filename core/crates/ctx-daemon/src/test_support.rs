@@ -4064,7 +4064,9 @@ impl TestDaemon {
         &self,
         install_id: InstallId,
     ) -> anyhow::Result<()> {
-        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        let state: Arc<
+            dyn ctx_managed_installs::title_generation::TitleGenerationLocalInstallHost,
+        > = self.state.clone();
         ctx_managed_installs::install_title_generation_local_with_progress(state, install_id).await
     }
 

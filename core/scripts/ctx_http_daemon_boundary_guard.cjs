@@ -3413,10 +3413,10 @@ const SETTINGS_API_ORCHESTRATION_PATTERNS = [
 
 const TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS = [
   {
-    name: "title-generation API imports daemon beyond SessionsHandle",
+    name: "title-generation API imports daemon beyond title-generation local handle",
     regex: /a^/,
     contentRegex: /\bctx_daemon\b/gm,
-    allowContentRegex: /\buse\s+ctx_daemon::daemon::SessionsHandle\s*;/gm,
+    allowContentRegex: /\buse\s+ctx_daemon::daemon::TitleGenerationLocalHandle\s*;/gm,
   },
 ];
 
@@ -8636,6 +8636,151 @@ function scanSessionSubagentMcpControlHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanFinalSessionRouteCapabilityRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath === "core/crates/ctx-http/src/api/title_generation.rs" ||
+    filePath === "core/crates/ctx-http/src/api/demo/seed_transcript.rs"
+  ) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "final session route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsessions\s*:\s*SessionsHandle\b|\bsessions\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionsHandle\s*,\s*sessions\s*;|\bhandle\.sessions\s*\(\s*\)/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "final session route exposes broad sessions handle in router state",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs" ||
+    filePath === "core/crates/ctx-daemon/src/daemon/sessions/demo_route.rs" ||
+    filePath === "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs"
+  ) {
+    const staleFacadeRegex =
+      /\b(?:title_generation_local_status|start_title_generation_local_install|seed_demo_transcript_for_route|seed_demo_transcript)\b/gu;
+    for (const impl of rustImplBlocksForType({ contents, typeName: "SessionsHandle" })) {
+      staleFacadeRegex.lastIndex = 0;
+      for (
+        let match = staleFacadeRegex.exec(impl.text);
+        match;
+        match = staleFacadeRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "final session route facade remains on broad sessions handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  const guardedHandleTypesByPath = new Map([
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+      ["TitleGenerationLocalHandle", "TitleGenerationLocalInstallEffect"],
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs",
+      ["DemoSeedTranscriptHandle", "DemoSeedTranscriptRefreshHost"],
+    ],
+  ]);
+  const guardedHandleTypes = guardedHandleTypesByPath.get(filePath) ?? [];
+  if (guardedHandleTypes.length === 0) {
+    return violations;
+  }
+
+  const broadSeamRegex =
+    /\b(?:DaemonState|DaemonHandle|SessionsHandle|ManagedInstallHost|AppState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|handle)\s*:/gmu;
+  for (const typeName of guardedHandleTypes) {
+    const structBlock = rustStructBlockForType({ contents, typeName });
+    if (structBlock) {
+      broadSeamRegex.lastIndex = 0;
+      for (
+        let match = broadSeamRegex.exec(structBlock.text);
+        match;
+        match = broadSeamRegex.exec(structBlock.text)
+      ) {
+        const offset = structBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "final session route capability stores broad daemon seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      genericEscapeFieldRegex.lastIndex = 0;
+      for (
+        let match = genericEscapeFieldRegex.exec(structBlock.text);
+        match;
+        match = genericEscapeFieldRegex.exec(structBlock.text)
+      ) {
+        const offset = structBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "final session route capability exposes generic full-state field",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    for (const impl of rustImplBlocksForType({ contents, typeName })) {
+      broadSeamRegex.lastIndex = 0;
+      for (
+        let match = broadSeamRegex.exec(impl.text);
+        match;
+        match = broadSeamRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "final session route capability method uses broad daemon seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -13627,6 +13772,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanFinalSessionRouteCapabilityRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -13827,6 +13976,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanFinalSessionRouteCapabilityRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionTitleModelModeTitleImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -14023,6 +14176,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionSubagentMcpControlHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanFinalSessionRouteCapabilityRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -14823,6 +14980,7 @@ module.exports = {
   scanSessionSubagentMcpControlDaemonImplementationRatchet,
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
+  scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
   scanSessionSubagentReadHandleRatchet,

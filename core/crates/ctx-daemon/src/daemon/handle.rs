@@ -50,11 +50,17 @@ use ctx_worktree_vcs_service::{
 };
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::daemon::sessions::subagents::{
-    SessionSubagentMcpControlFuture, SessionSubagentMcpControlHandle,
-    SessionSubagentMcpControlHandleParts, SessionSubagentMcpControlLifecycleHost,
-    SessionSubagentMcpControlPublicationHost, SessionSubagentMcpControlSchedulerSpawner,
-    SubagentSpawnHost,
+use crate::daemon::sessions::title_generation::{
+    TitleGenerationLocalHandle, TitleGenerationLocalInstallEffect,
+};
+use crate::daemon::sessions::{
+    subagents::{
+        SessionSubagentMcpControlFuture, SessionSubagentMcpControlHandle,
+        SessionSubagentMcpControlHandleParts, SessionSubagentMcpControlLifecycleHost,
+        SessionSubagentMcpControlPublicationHost, SessionSubagentMcpControlSchedulerSpawner,
+        SubagentSpawnHost,
+    },
+    DemoSeedTranscriptHandle,
 };
 
 use super::{
@@ -337,6 +343,26 @@ impl DaemonHandle {
 
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn title_generation_local(&self) -> TitleGenerationLocalHandle {
+        TitleGenerationLocalHandle::new(
+            self.state.core.data_root.clone(),
+            TitleGenerationLocalInstallEffect::new(
+                self.state.core.data_root.clone(),
+                Arc::clone(&self.state.providers),
+                self.state.telemetry.ops_events.clone(),
+            ),
+        )
+    }
+
+    pub fn demo_seed_transcript(&self) -> DemoSeedTranscriptHandle {
+        DemoSeedTranscriptHandle::new(
+            self.session_store_lookup(),
+            self.protected_workspace_store_lookup(),
+            Arc::clone(&self.state.sessions),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+        )
     }
 
     pub fn session_control(&self) -> SessionControlHandle {

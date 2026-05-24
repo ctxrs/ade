@@ -4,14 +4,14 @@ use axum::Json;
 
 use super::dev_mode::dev_tools_enabled;
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::SessionsHandle;
+use ctx_daemon::daemon::DemoSeedTranscriptHandle;
 use ctx_route_contracts::sessions::{
     DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteRequest,
     DemoSeedTranscriptRouteResponse, SessionRouteParams,
 };
 
 pub(crate) async fn dev_seed_session_transcript(
-    State(sessions): State<SessionsHandle>,
+    State(demo_seed): State<DemoSeedTranscriptHandle>,
     Path(id): Path<String>,
     Json(req): Json<DemoSeedTranscriptRouteRequest>,
 ) -> Result<Json<DemoSeedTranscriptRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -24,7 +24,7 @@ pub(crate) async fn dev_seed_session_transcript(
         ));
     }
 
-    let response = sessions
+    let response = demo_seed
         .seed_demo_transcript_for_route(SessionRouteParams::new(id), req)
         .await
         .map_err(seed_transcript_error)?;

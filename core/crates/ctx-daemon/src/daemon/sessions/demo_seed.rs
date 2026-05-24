@@ -1,11 +1,18 @@
+use std::sync::Arc;
+
 use chrono::{Duration as ChronoDuration, Utc};
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId};
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
+    Message, MessageDelivery, MessageRole, SessionEventType, SessionHeadSnapshot, SessionTurn,
+    SessionTurnStatus, Task,
+};
+use ctx_session_runtime::runtime::{
+    SessionHeadRefreshHost, SessionHeadRefreshLoad, SessionRuntime,
 };
 use ctx_store::Store;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-use crate::daemon::handle::SessionsHandle;
+use crate::daemon::handle::{ProtectedWorkspaceStoreLookup, SessionStoreLookup};
 
 pub struct DemoSeedTranscript {
     pub session_title: Option<String>,
@@ -47,7 +54,56 @@ pub enum DemoSeedTranscriptError {
     AppendTurnFinishedEvent,
 }
 
-impl SessionsHandle {
+#[derive(Clone)]
+pub struct DemoSeedTranscriptHandle {
+    session_stores: SessionStoreLookup,
+    session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    refresh_host: Arc<DemoSeedTranscriptRefreshHost>,
+}
+
+impl DemoSeedTranscriptHandle {
+    pub(in crate::daemon) fn new(
+        session_stores: SessionStoreLookup,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    ) -> Self {
+        let refresh_host = Arc::new(DemoSeedTranscriptRefreshHost::new(
+            session_stores.clone(),
+            workspace_stores,
+            active_snapshot,
+        ));
+        Self {
+            session_stores,
+            session_runtime,
+            refresh_host,
+        }
+    }
+
+    async fn store_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, DemoSeedTranscriptError> {
+        self.session_stores
+            .existing_session_store_for_write(session_id)
+            .await
+            .map_err(demo_seed_store_lookup_error)
+    }
+
+    async fn remember_session_meta(&self, session: &ctx_core::models::Session) {
+        self.session_runtime.remember_session_meta(session).await;
+    }
+
+    async fn refresh_session_head_cache(&self, session_id: SessionId) {
+        self.session_runtime
+            .refresh_session_head_cache_with_host(self.refresh_host.as_ref(), session_id)
+            .await;
+    }
+
+    async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> anyhow::Result<()> {
+        self.refresh_host.emit_workspace_task_upsert(task_id).await
+    }
+
     pub async fn seed_demo_transcript(
         &self,
         session_id: SessionId,
@@ -280,6 +336,114 @@ impl SessionsHandle {
             seeded_messages,
             seeded_events,
         })
+    }
+}
+
+fn demo_seed_store_lookup_error(
+    error: crate::daemon::SessionStoreAccessError,
+) -> DemoSeedTranscriptError {
+    match error {
+        crate::daemon::SessionStoreAccessError::NotFound => {
+            DemoSeedTranscriptError::SessionNotFound
+        }
+        crate::daemon::SessionStoreAccessError::LookupUnavailable(_)
+        | crate::daemon::SessionStoreAccessError::StoreUnavailable => {
+            DemoSeedTranscriptError::StoreUnavailable
+        }
+    }
+}
+
+struct DemoSeedTranscriptRefreshHost {
+    session_stores: SessionStoreLookup,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+}
+
+impl DemoSeedTranscriptRefreshHost {
+    fn new(
+        session_stores: SessionStoreLookup,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    ) -> Self {
+        Self {
+            session_stores,
+            workspace_stores,
+            active_snapshot,
+        }
+    }
+
+    async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> anyhow::Result<()> {
+        let mut task: Option<Task> = None;
+        let store = self.workspace_stores.store_for_task(task_id).await?;
+        match store.get_workspace_active_task_summary(task_id).await? {
+            Some(summary) => {
+                let workspace_id = summary.task.workspace_id;
+                task = Some(summary.task.clone());
+                self.active_snapshot
+                    .publish_active_task_upsert(workspace_id, summary)
+                    .await;
+            }
+            None => {
+                if let Some(loaded) = store.get_task(task_id).await? {
+                    task = Some(loaded.clone());
+                    self.active_snapshot
+                        .publish_active_task_delete(loaded.workspace_id, task_id)
+                        .await;
+                }
+            }
+        }
+
+        if let Some(task) = task.as_ref().filter(|task| task.archived_at.is_some()) {
+            self.emit_workspace_archived_task_upsert(task).await?;
+        }
+        Ok(())
+    }
+
+    async fn emit_workspace_archived_task_upsert(&self, task: &Task) -> anyhow::Result<()> {
+        let store = self.workspace_stores.store_for_task(task.id).await?;
+        let Some(summary) = store.get_workspace_task_summary(task.id).await? else {
+            return Ok(());
+        };
+        if summary.task.archived_at.is_none() {
+            return Ok(());
+        }
+
+        let _ = store
+            .bump_workspace_archived_snapshot_rev(task.workspace_id)
+            .await?;
+        self.active_snapshot
+            .publish_archived_task_upsert(task.workspace_id, summary)
+            .await;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionHeadRefreshHost for DemoSeedTranscriptRefreshHost {
+    async fn load_active_snapshot_head(&self, session_id: SessionId) -> SessionHeadRefreshLoad {
+        let store = match self.session_stores.existing_session_store(session_id).await {
+            Ok(store) => store,
+            Err(err) => {
+                return SessionHeadRefreshLoad::Failed {
+                    error: format!("{err:?}"),
+                };
+            }
+        };
+        match store.get_active_snapshot_head(session_id).await {
+            Ok(Some(head)) => SessionHeadRefreshLoad::Found(Box::new(head)),
+            Ok(None) => SessionHeadRefreshLoad::Missing,
+            Err(err) => SessionHeadRefreshLoad::Failed {
+                error: format!("{err:#}"),
+            },
+        }
+    }
+
+    async fn update_compact_session_head(&self, head: SessionHeadSnapshot) {
+        self.active_snapshot.update_compact_session_head(head).await;
+    }
+
+    async fn remove_session_from_active_head_cache(&self, session_id: SessionId) {
+        self.active_snapshot.remove_session(session_id).await;
     }
 }
 

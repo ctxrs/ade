@@ -291,6 +291,7 @@ const {
   scanSessionSubagentMcpControlDaemonImplementationRatchet,
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
+  scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
   scanSessionSubagentReadHandleRatchet,
@@ -2550,6 +2551,126 @@ test("appstate guard rejects session subagent MCP control broad fields and store
     "session subagent MCP control capability stores broad handle or runtime bag",
     "session subagent MCP control capability exposes generic full-state field",
     "session subagent MCP control capability exposes store escape hatch",
+  ]));
+});
+
+test("appstate guard rejects final session route broad HTTP state", () => {
+  const titleViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-http/src/api/title_generation.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn get_title_generation_local_status(
+        State(state): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(titleViolations, [
+    "final session route extracts broad sessions handle",
+    "final session route extracts broad sessions handle",
+  ]);
+
+  const demoViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-http/src/api/demo/seed_transcript.rs",
+    contents: `
+      async fn dev_seed_session_transcript(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(demoViolations, [
+    "final session route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      pub struct RouteHandles {
+        sessions: SessionsHandle,
+      }
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { sessions: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionsHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "final session route exposes broad sessions handle in router state",
+  ]));
+});
+
+test("appstate guard rejects final session route broad daemon seams", () => {
+  const titleViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn title_generation_local_status(&self) {}
+        pub async fn start_title_generation_local_install(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(titleViolations, [
+    "final session route facade remains on broad sessions handle",
+    "final session route facade remains on broad sessions handle",
+  ]);
+
+  const demoViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn seed_demo_transcript(&self) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(demoViolations, [
+    "final session route facade remains on broad sessions handle",
+  ]);
+});
+
+test("appstate guard rejects final session route capability broad fields and methods", () => {
+  const titleViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+    contents: `
+      pub struct TitleGenerationLocalHandle {
+        state: Arc<DaemonState>,
+      }
+      pub(in crate::daemon) struct TitleGenerationLocalInstallEffect {
+        host: Arc<dyn ManagedInstallHost>,
+      }
+      impl TitleGenerationLocalHandle {
+        fn bad(&self, handle: DaemonHandle, sessions: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(titleViolations), new Set([
+    "final session route capability stores broad daemon seam",
+    "final session route capability exposes generic full-state field",
+    "final session route capability method uses broad daemon seam",
+  ]));
+
+  const demoViolations = scanFinalSessionRouteCapabilityRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs",
+    contents: `
+      pub struct DemoSeedTranscriptHandle {
+        sessions: SessionsHandle,
+      }
+      impl DemoSeedTranscriptHandle {
+        fn bad(&self, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(demoViolations), new Set([
+    "final session route capability stores broad daemon seam",
+    "final session route capability exposes generic full-state field",
+    "final session route capability method uses broad daemon seam",
   ]));
 });
 
@@ -12325,7 +12446,7 @@ test("daemon boundary guard rejects title-generation daemon status leaves", () =
       violations.some(
         (violation) =>
           violation.name ===
-          "title-generation API imports daemon beyond SessionsHandle",
+          "title-generation API imports daemon beyond title-generation local handle",
       ),
       `expected title-generation daemon import violation for:\n${contents}`,
     );
@@ -12333,7 +12454,7 @@ test("daemon boundary guard rejects title-generation daemon status leaves", () =
 
   const allowed = scanText({
     filePath: "core/crates/ctx-http/src/api/title_generation.rs",
-    contents: "use ctx_daemon::daemon::SessionsHandle;",
+    contents: "use ctx_daemon::daemon::TitleGenerationLocalHandle;",
     patterns: TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   });
 
@@ -12354,7 +12475,7 @@ test("daemon boundary guard rejects title-generation daemon status leaves", () =
     sessionTitleTestViolations.some(
       (violation) =>
         violation.name ===
-        "title-generation API imports daemon beyond SessionsHandle",
+        "title-generation API imports daemon beyond title-generation local handle",
     ),
     "expected title-generation session API test to reject daemon title policy imports",
   );

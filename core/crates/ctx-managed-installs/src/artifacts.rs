@@ -267,8 +267,8 @@ pub(crate) async fn install_agent_server_url_binary(
     Ok(resolved)
 }
 
-pub(crate) async fn download_to_file(
-    state: &AppState,
+pub(crate) async fn download_to_file<H: InstallProgressHost + ?Sized>(
+    state: &H,
     install_id: Option<InstallId>,
     provider_id: &str,
     stage: &str,
@@ -287,8 +287,10 @@ pub(crate) async fn download_to_file(
     .await
 }
 
-pub(crate) async fn download_to_file_with_managed_runtime_redirects(
-    state: &AppState,
+pub(crate) async fn download_to_file_with_managed_runtime_redirects<
+    H: InstallProgressHost + ?Sized,
+>(
+    state: &H,
     install_id: Option<InstallId>,
     provider_id: &str,
     stage: &str,
@@ -313,8 +315,8 @@ pub(crate) enum DownloadRedirectPolicy {
     ManagedRuntimeMirrorOnly,
 }
 
-async fn download_to_file_with_redirect_policy(
-    state: &AppState,
+async fn download_to_file_with_redirect_policy<H: InstallProgressHost + ?Sized>(
+    state: &H,
     install_id: Option<InstallId>,
     provider_id: &str,
     stage: &str,
