@@ -282,6 +282,9 @@ const {
   scanSessionTitleModelModeHandleFieldRatchet,
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
+  scanSessionMessageCommandDaemonImplementationRatchet,
+  scanSessionMessageCommandHandleFieldRatchet,
+  scanSessionMessageCommandHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
@@ -2128,6 +2131,130 @@ test("appstate guard rejects broad seams in migrated title/model/mode title impl
   assert.deepEqual(persistenceViolations, [
     "session title/model/mode title implementation uses broad daemon seam",
   ]);
+});
+
+test("appstate guard rejects session message command broad route handles", () => {
+  const handlerViolations = scanSessionMessageCommandHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn post_message(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session message command route extracts broad sessions handle",
+    "session message command route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionMessageCommandHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_message_command: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionMessageCommandHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session message command route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session message command broad daemon seams", () => {
+  const violations = scanSessionMessageCommandDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/message_commands.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl SessionsHandle {
+        fn post_user_message_for_request(&self, handle: DaemonHandle, state: Arc<DaemonState>) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session message command daemon implementation uses broad daemon handle",
+    "session message command daemon implementation uses broad session handle",
+    "session message command daemon implementation accepts daemon state",
+  ]));
+});
+
+test("appstate guard covers split session message command helper files", () => {
+  const attachmentViolations = scanSessionMessageCommandDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/message_attachment_signatures.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle};
+      use crate::daemon::DaemonState;
+      impl MessageAttachmentSignatureResolver for SessionMessageCommandHandle {
+        fn bad(&self, handle: DaemonHandle, state: Arc<DaemonState>, sessions: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(attachmentViolations), new Set([
+    "session message command daemon implementation uses broad daemon handle",
+    "session message command daemon implementation uses broad session handle",
+    "session message command daemon implementation accepts daemon state",
+  ]));
+
+  const artifactViolations = scanSessionMessageCommandDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
+    contents: `
+      impl SessionsHandle {
+        fn existing_artifact_route_impl_is_not_part_of_this_ratchet(&self) {}
+      }
+
+      impl SessionMessageCommandHandle {
+        fn bad(&self, handle: DaemonHandle, state: Arc<DaemonState>, sessions: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(artifactViolations), new Set([
+    "session message command daemon implementation uses broad daemon handle",
+    "session message command daemon implementation uses broad session handle",
+    "session message command daemon implementation accepts daemon state",
+  ]));
+});
+
+test("appstate guard rejects session message command broad handle fields", () => {
+  const fieldViolations = scanSessionMessageCommandHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionMessageCommandHandle {
+        sessions: SessionsHandle,
+        workspaces: WorkspacesHandle,
+        providers: ProvidersHandle,
+        state: Arc<DaemonState>,
+        store_manager: StoreManager,
+        workspace_runtime: WorkspaceRuntime,
+        effects: SessionMessageCommandEffects,
+      }
+      pub struct SessionMessageSchedulerSpawner {
+        state: Arc<DaemonState>,
+        weak_state: Weak<DaemonState>,
+      }
+      impl DaemonHandle {
+        pub fn session_message_command(&self) -> SessionMessageCommandHandle {
+          let state = Arc::clone(&self.state);
+          SessionMessageCommandHandle::new(state)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(fieldViolations), new Set([
+    "session message command capability stores broad handle or runtime bag",
+    "session message command capability exposes generic full-state field",
+    "session message scheduler spawner stores strong daemon state seam",
+    "session message command assembly hides strong daemon state scheduler seam",
+  ]));
 });
 
 test("appstate guard rejects session VCS broad route handles", () => {

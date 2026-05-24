@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn post_message(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionMessageCommandHandle>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     Json(req): Json<PostSessionMessageRouteRequest>,

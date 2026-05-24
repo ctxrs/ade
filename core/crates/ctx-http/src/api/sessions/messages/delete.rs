@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn delete_session_message(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionMessageCommandHandle>,
     Path((session_id, id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
     state

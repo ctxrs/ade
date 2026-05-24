@@ -5,7 +5,7 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::{Artifact, Session, SessionEventType, Worktree};
 use ctx_store::Store;
 
-use crate::daemon::handle::{SessionArtifactsHandle, SessionsHandle};
+use crate::daemon::handle::{SessionArtifactsHandle, SessionMessageCommandHandle, SessionsHandle};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionImageBlobStoreError {
@@ -96,6 +96,41 @@ impl SessionsHandle {
         )
         .await
         .map_err(Into::into)
+    }
+}
+
+impl SessionMessageCommandHandle {
+    pub async fn get_blob(
+        &self,
+        id: &str,
+    ) -> Result<
+        Option<(
+            String,
+            String,
+            i64,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        )>,
+    > {
+        self.global_store().get_blob(id).await
+    }
+
+    pub async fn store_inline_image_blob(
+        &self,
+        bytes: &[u8],
+        mime_type: &str,
+        name: Option<&str>,
+    ) -> Result<String, SessionImageBlobStoreError> {
+        ctx_session_artifacts::store_image_blob(
+            self.data_root(),
+            self.global_store(),
+            bytes,
+            mime_type,
+            name,
+        )
+        .await
+        .map(|stored| stored.blob_id)
+        .map_err(SessionImageBlobStoreError::from)
     }
 }
 

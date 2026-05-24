@@ -14,10 +14,10 @@ use ctx_daemon::daemon::{
     ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
     RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
     SessionArtifactsHandle, SessionControlHandle, SessionFileCompletionsHandle,
-    SessionReadModelsHandle, SessionTitleModelModeHandle, SessionVcsHandle, SessionsHandle,
-    SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
-    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
-    TelemetryHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
+    SessionMessageCommandHandle, SessionReadModelsHandle, SessionTitleModelModeHandle,
+    SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
+    TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
+    TaskTitleHandle, TelemetryHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
     UpdateReleaseHandle, WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
     WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
@@ -118,6 +118,7 @@ pub struct RouteHandles {
     pub(in crate::api) session_artifacts: SessionArtifactsHandle,
     pub(in crate::api) session_control: SessionControlHandle,
     pub(in crate::api) session_file_completions: SessionFileCompletionsHandle,
+    pub(in crate::api) session_message_command: SessionMessageCommandHandle,
     pub(in crate::api) session_read_models: SessionReadModelsHandle,
     pub(in crate::api) session_title_model_mode: SessionTitleModelModeHandle,
     pub(in crate::api) session_vcs: SessionVcsHandle,
@@ -187,6 +188,7 @@ impl RouteHandles {
             session_artifacts: handle.session_artifacts(),
             session_control: handle.session_control(),
             session_file_completions: handle.session_file_completions(),
+            session_message_command: handle.session_message_command(),
             session_read_models: handle.session_read_models(),
             session_title_model_mode: handle.session_title_model_mode(),
             session_vcs: handle.session_vcs(),
@@ -261,6 +263,7 @@ impl_route_state_extractors! {
     SessionArtifactsHandle, session_artifacts;
     SessionControlHandle, session_control;
     SessionFileCompletionsHandle, session_file_completions;
+    SessionMessageCommandHandle, session_message_command;
     SessionReadModelsHandle, session_read_models;
     SessionTitleModelModeHandle, session_title_model_mode;
     SessionVcsHandle, session_vcs;

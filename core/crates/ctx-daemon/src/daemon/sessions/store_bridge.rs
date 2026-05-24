@@ -94,15 +94,6 @@ impl SessionsHandle {
         self.state.existing_session_store(session_id).await
     }
 
-    pub(in crate::daemon) async fn existing_session_store_for_write(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Store, SessionStoreAccessError> {
-        self.state
-            .existing_session_store_for_write(session_id)
-            .await
-    }
-
     pub(super) async fn session_store_or_none(
         &self,
         session_id: SessionId,

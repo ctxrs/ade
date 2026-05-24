@@ -1,17 +1,15 @@
-use base64::Engine;
+use std::time::Instant;
+
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{Message, MessageAttachment, MessageDelivery, Session};
 use ctx_session_message_service::message_admission::{
-    post_user_message_record, MessageAdmissionError, MessageAttachmentSignature,
-    MessageAttachmentSignatureError, MessageAttachmentSignatureResolver,
-    PostUserMessageRecordInput,
+    post_user_message_record, MessageAdmissionError, PostUserMessageRecordInput,
 };
 use ctx_store::Store;
-use sha2::Digest;
 
 use super::command_dispatch;
-use crate::daemon::handle::SessionsHandle;
-use crate::daemon::maintenance::post_message_update_drain_reason;
+use crate::daemon::handle::SessionMessageCommandHandle;
+use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
 use crate::daemon::SessionStoreAccessError;
 
 pub struct PostUserMessageInput {
@@ -34,13 +32,54 @@ pub enum PostUserMessageError {
     Internal(String),
 }
 
-impl SessionsHandle {
+impl SessionMessageCommandHandle {
     pub async fn delete_queued_session_message(
         &self,
         session_id: SessionId,
         message_id: MessageId,
     ) -> Result<(), command_dispatch::SessionSchedulerCommandError> {
-        command_dispatch::delete_queued_session_message(&self.state, session_id, message_id).await
+        let store = self
+            .existing_session_store_for_write(session_id)
+            .await
+            .map_err(session_store_command_error)?;
+        let msg = store
+            .get_message(message_id)
+            .await
+            .map_err(|_| command_dispatch::SessionSchedulerCommandError::StoreUnavailable)?
+            .ok_or(command_dispatch::SessionSchedulerCommandError::NotFound)?;
+        if msg.session_id != session_id {
+            return Err(command_dispatch::SessionSchedulerCommandError::NotFound);
+        }
+
+        if !matches!(msg.delivery, MessageDelivery::Queued) || msg.delivered_at.is_some() {
+            return Err(command_dispatch::SessionSchedulerCommandError::BadRequest);
+        }
+        store
+            .delete_message(message_id)
+            .await
+            .map_err(|_| command_dispatch::SessionSchedulerCommandError::StoreUnavailable)?;
+        if let Some(turn_id) = msg.turn_id {
+            let _ = store.delete_session_turn(msg.session_id, turn_id).await;
+        }
+        let removed = store
+            .append_session_event(
+                msg.session_id,
+                msg.run_id,
+                msg.turn_id,
+                ctx_core::models::SessionEventType::MessageQueueRemoved,
+                serde_json::json!({
+                    "message_id": msg.id.0,
+                    "reason": "user_delete",
+                }),
+            )
+            .await
+            .map_err(|_| command_dispatch::SessionSchedulerCommandError::StoreUnavailable)?;
+        self.publish_event(removed).await;
+
+        if let Some(tx) = self.scheduler_sender(msg.session_id).await {
+            let _ = tx.send(SchedulerCommand::RemoveQueued(message_id)).await;
+        }
+        Ok(())
     }
 
     pub async fn enqueue_user_message_for_scheduler(
@@ -50,14 +89,15 @@ impl SessionsHandle {
         message: Message,
         run_id_header: Option<String>,
     ) {
-        command_dispatch::enqueue_user_message_for_scheduler(
-            &self.state,
-            store,
-            session,
-            message,
-            run_id_header,
-        )
-        .await;
+        let tx = self.ensure_scheduler(session.clone()).await;
+        let queued = QueuedMessage {
+            message: message.clone(),
+            enqueued_at: Instant::now(),
+            run_id: run_id_header,
+        };
+        let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
+        self.maybe_schedule_first_message_title_generation(store, session, &message)
+            .await;
     }
 
     pub async fn post_user_message_for_request(
@@ -118,59 +158,6 @@ impl SessionsHandle {
 
         Ok(admission.message)
     }
-
-    pub async fn post_message_update_drain_reason(&self) -> Option<String> {
-        post_message_update_drain_reason(self.state.as_ref()).await
-    }
-}
-
-#[async_trait::async_trait]
-impl MessageAttachmentSignatureResolver for SessionsHandle {
-    async fn message_attachment_signature(
-        &self,
-        attachment: &MessageAttachment,
-    ) -> Result<MessageAttachmentSignature, MessageAttachmentSignatureError> {
-        match attachment {
-            MessageAttachment::Image {
-                mime_type,
-                data_base64,
-                name,
-            } => {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(data_base64.as_bytes())
-                    .map_err(|_| {
-                        MessageAttachmentSignatureError::BadRequest(
-                            "Invalid image attachment.".to_string(),
-                        )
-                    })?;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&bytes);
-                Ok(MessageAttachmentSignature {
-                    mime_type: mime_type.clone(),
-                    name: name.clone(),
-                    sha256: hex::encode(hasher.finalize()),
-                })
-            }
-            MessageAttachment::ImageRef { blob_id, name, .. } => {
-                let Some((sha256, mime_type, _bytes, _stored_name, _created_at)) =
-                    self.get_blob(blob_id).await.map_err(|_| {
-                        MessageAttachmentSignatureError::Internal(
-                            "Failed to inspect image attachment.".to_string(),
-                        )
-                    })?
-                else {
-                    return Err(MessageAttachmentSignatureError::BadRequest(
-                        "Image attachment blob was not found.".to_string(),
-                    ));
-                };
-                Ok(MessageAttachmentSignature {
-                    mime_type,
-                    name: name.clone(),
-                    sha256,
-                })
-            }
-        }
-    }
 }
 
 fn post_message_store_error(error: SessionStoreAccessError) -> PostUserMessageError {
@@ -181,6 +168,20 @@ fn post_message_store_error(error: SessionStoreAccessError) -> PostUserMessageEr
         SessionStoreAccessError::LookupUnavailable(_)
         | SessionStoreAccessError::StoreUnavailable => {
             PostUserMessageError::Internal("workspace store unavailable".to_string())
+        }
+    }
+}
+
+fn session_store_command_error(
+    error: SessionStoreAccessError,
+) -> command_dispatch::SessionSchedulerCommandError {
+    match error {
+        SessionStoreAccessError::NotFound => {
+            command_dispatch::SessionSchedulerCommandError::NotFound
+        }
+        SessionStoreAccessError::LookupUnavailable(_)
+        | SessionStoreAccessError::StoreUnavailable => {
+            command_dispatch::SessionSchedulerCommandError::StoreUnavailable
         }
     }
 }

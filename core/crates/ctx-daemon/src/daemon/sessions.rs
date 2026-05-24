@@ -8,7 +8,10 @@ mod control_route;
 mod demo_route;
 mod demo_seed;
 mod handle;
+mod message_attachment_signatures;
 mod message_commands;
+#[cfg(test)]
+mod message_commands_tests;
 mod message_route;
 pub mod model_catalog;
 mod model_switch;

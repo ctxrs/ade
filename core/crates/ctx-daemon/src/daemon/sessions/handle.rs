@@ -88,6 +88,29 @@ impl SessionTitleModelModeHandle {
         )
         .await
     }
+
+    pub async fn schedule_session_title_generation(
+        &self,
+        session: Session,
+        prompt: String,
+        force: bool,
+    ) -> bool {
+        let cfg = self.configured_title_generation_settings().await;
+        if cfg.is_some() {
+            let handle = self.clone();
+            tokio::spawn(async move {
+                let _ = handle
+                    .maybe_generate_session_title(session, prompt, force, cfg)
+                    .await;
+            });
+            true
+        } else {
+            let _ = self
+                .maybe_generate_session_title(session, prompt, force, cfg)
+                .await;
+            false
+        }
+    }
 }
 
 impl SessionsHandle {

@@ -240,6 +240,21 @@ const sessionTitleModelModeHandleApiPaths = new Set([
   "core/crates/ctx-http/src/api/sessions/titles_and_modes/mode.rs",
 ]);
 
+const sessionMessageCommandHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+  "core/crates/ctx-http/src/api/sessions/messages/delete.rs",
+]);
+
+const sessionMessageCommandDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/message_route.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/message_commands.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/message_attachment_signatures.rs",
+]);
+
+const sessionMessageCommandDaemonBlockImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
+]);
+
 const sessionControlDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
 ]);
@@ -8411,6 +8426,45 @@ function scanSessionTitleModelModeHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionMessageCommandHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionMessageCommandHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message command route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_message_command\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionMessageCommandHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message command route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -9276,6 +9330,69 @@ function scanSessionTitleModelModeDaemonImplementationRatchet({ filePath, conten
   return violations;
 }
 
+function scanSessionMessageCommandDaemonImplementationRatchet({ filePath, contents }) {
+  if (
+    !sessionMessageCommandDaemonImplementationPaths.has(filePath) &&
+    !sessionMessageCommandDaemonBlockImplementationPaths.has(filePath)
+  ) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session message command daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "session message command daemon implementation uses broad session handle",
+      regex: /\bSessionsHandle\b/gu,
+    },
+    {
+      name: "session message command daemon implementation accepts daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+  ];
+
+  const scanText = ({ text, baseIndex }) => {
+    for (const check of checks) {
+      check.regex.lastIndex = 0;
+      for (let match = check.regex.exec(text); match; match = check.regex.exec(text)) {
+        const offset = baseIndex + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  };
+
+  if (sessionMessageCommandDaemonImplementationPaths.has(filePath)) {
+    scanText({ text: contents, baseIndex: 0 });
+  }
+
+  if (sessionMessageCommandDaemonBlockImplementationPaths.has(filePath)) {
+    for (const block of rustImplBlocksForType({
+      contents,
+      typeName: "SessionMessageCommandHandle",
+    })) {
+      scanText({ text: block.text, baseIndex: block.index });
+    }
+    for (const block of rustTraitImplBlocksForType({
+      contents,
+      traitName: "MessageAttachmentSignatureResolver",
+      typeName: "SessionMessageCommandHandle",
+    })) {
+      scanText({ text: block.text, baseIndex: block.index });
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -9495,6 +9612,106 @@ function scanSessionTitleModelModeHandleFieldRatchet({ filePath, contents }) {
       text: lines[line - 1]?.trim() ?? generic[0],
     });
   }
+  return violations;
+}
+
+function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "SessionMessageCommandHandle",
+  });
+  if (handleStruct) {
+    const broadFieldRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(handleStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message command capability stores broad handle or runtime bag",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    const genericEscapeFieldRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers|effects)\s*:/gmu;
+    for (
+      let generic = genericEscapeFieldRegex.exec(handleStruct.text);
+      generic;
+      generic = genericEscapeFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + generic.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message command capability exposes generic full-state field",
+        text: lines[line - 1]?.trim() ?? generic[0],
+      });
+    }
+  }
+
+  const spawnerStruct = rustStructBlockForType({
+    contents,
+    typeName: "SessionMessageSchedulerSpawner",
+  });
+  if (spawnerStruct) {
+    const allowedWeakDaemonState = "Weak<DaemonState>";
+    const normalizedSpawner = spawnerStruct.text.replaceAll(allowedWeakDaemonState, "");
+    const broadSpawnerRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadSpawnerRegex.exec(normalizedSpawner);
+      broad;
+      broad = broadSpawnerRegex.exec(normalizedSpawner)
+    ) {
+      const prefixWithoutAllowed = spawnerStruct.text
+        .slice(0, broad.index)
+        .replaceAll(allowedWeakDaemonState, "");
+      const offset = spawnerStruct.index + prefixWithoutAllowed.length;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message scheduler spawner stores strong daemon state seam",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  const assemblyBlock = rustFunctionBlockForName({
+    contents,
+    fnName: "session_message_command",
+  });
+  if (assemblyBlock) {
+    const hiddenStrongStateRegex =
+      /\bArc::clone\s*\(\s*&self\.state\s*\)|SessionMessageSchedulerSpawner::new\s*\(\s*Arc::clone\s*\(\s*&self\.state\s*\)/gu;
+    for (
+      let hidden = hiddenStrongStateRegex.exec(assemblyBlock.text);
+      hidden;
+      hidden = hiddenStrongStateRegex.exec(assemblyBlock.text)
+    ) {
+      const offset = assemblyBlock.index + hidden.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session message command assembly hides strong daemon state scheduler seam",
+        text: lines[line - 1]?.trim() ?? hidden[0],
+      });
+    }
+  }
+
   return violations;
 }
 
@@ -12761,6 +12978,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionMessageCommandHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -12945,6 +13166,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionMessageCommandHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionTitleModelModeTitleImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -13121,6 +13346,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionTitleModelModeDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -13912,6 +14141,9 @@ module.exports = {
   scanSessionTitleModelModeHandleFieldRatchet,
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
+  scanSessionMessageCommandDaemonImplementationRatchet,
+  scanSessionMessageCommandHandleFieldRatchet,
+  scanSessionMessageCommandHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,

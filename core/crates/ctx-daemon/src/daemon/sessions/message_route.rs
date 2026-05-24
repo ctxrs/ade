@@ -12,13 +12,13 @@ use ctx_session_message_service::message_delivery::{
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::SessionImageBlobStoreError;
-use crate::daemon::SessionsHandle;
+use crate::daemon::SessionMessageCommandHandle;
 
 const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
 const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_MESSAGE_IMAGE_ATTACHMENT_MIB: usize = MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES / (1024 * 1024);
 
-impl SessionsHandle {
+impl SessionMessageCommandHandle {
     pub async fn post_session_message_for_route(
         &self,
         params: SessionRouteParams,
