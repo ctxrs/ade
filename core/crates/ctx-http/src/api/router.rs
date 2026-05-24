@@ -17,11 +17,12 @@ use ctx_daemon::daemon::{
     TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
     UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
-    WorkspaceAttachmentsHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
-    WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
-    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
-    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
-    WorkspaceVcsStreamHandle, WorkspaceWorktreeHandle, WorkspacesHandle,
+    WorkspaceAttachmentsHandle, WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle,
+    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle,
+    WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
+    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
+    WorkspaceRegistryHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
+    WorkspaceWorktreeHandle,
 };
 
 use super::auth::auth_middleware;
@@ -123,7 +124,7 @@ pub struct RouteHandles {
     pub(in crate::api) task_session_admission: TaskSessionAdmissionHandle,
     pub(in crate::api) task_session_listing: TaskSessionListingHandle,
     pub(in crate::api) task_title: TaskTitleHandle,
-    pub(in crate::api) workspaces: WorkspacesHandle,
+    pub(in crate::api) workspace_deletion: WorkspaceDeletionHandle,
     pub(in crate::api) workspace_active: WorkspaceActiveHandle,
     pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
     pub(in crate::api) workspace_vcs_stream: WorkspaceVcsStreamHandle,
@@ -187,7 +188,7 @@ impl RouteHandles {
             task_session_admission: handle.task_session_admission(),
             task_session_listing: handle.task_session_listing(),
             task_title: handle.task_title(),
-            workspaces: handle.workspaces(),
+            workspace_deletion: handle.workspace_deletion(),
             workspace_active: handle.workspace_active(),
             workspace_stream: handle.workspace_stream(),
             workspace_vcs_stream: handle.workspace_vcs_stream(),
@@ -256,7 +257,7 @@ impl_route_state_extractors! {
     TaskSessionAdmissionHandle, task_session_admission;
     TaskSessionListingHandle, task_session_listing;
     TaskTitleHandle, task_title;
-    WorkspacesHandle, workspaces;
+    WorkspaceDeletionHandle, workspace_deletion;
     WorkspaceActiveHandle, workspace_active;
     WorkspaceStreamHandle, workspace_stream;
     WorkspaceVcsStreamHandle, workspace_vcs_stream;

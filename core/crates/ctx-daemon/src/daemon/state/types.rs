@@ -17,6 +17,10 @@ use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRu
 
 pub(crate) type WorkspaceFileCompletionsCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>>;
+pub(crate) type WorkspaceActiveSnapshotCache =
+    Arc<Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>>;
+pub(crate) type WorkspaceActiveHeadsCache =
+    Arc<Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>>;
 
 pub struct CoreState {
     pub(crate) data_root: PathBuf,
@@ -55,10 +59,8 @@ pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
     pub(crate) git_status_watchers: Mutex<HashSet<WorktreeId>>,
     pub(crate) workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
-    pub(crate) workspace_active_snapshot_cache:
-        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>,
-    pub(crate) workspace_active_heads_cache:
-        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
+    pub(crate) workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    pub(crate) workspace_active_heads_cache: WorkspaceActiveHeadsCache,
     pub(crate) worktree_bootstrap_gates:
         Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
     pub(crate) attachment_materialization: Arc<WorkspaceAttachmentMaterializationRuntime>,

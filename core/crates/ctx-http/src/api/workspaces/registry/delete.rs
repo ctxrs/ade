@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn delete_workspace(
-    State(workspaces): State<WorkspacesHandle>,
+    State(workspaces): State<WorkspaceDeletionHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     workspaces

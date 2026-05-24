@@ -125,6 +125,12 @@ impl DaemonHandle {
         )
     }
 
+    pub fn workspace_deletion(&self) -> WorkspaceDeletionHandle {
+        WorkspaceDeletionHandle::new(crate::daemon::workspaces::deletion_runtime_from_state(
+            &self.state,
+        ))
+    }
+
     pub fn workspace_merge_queue_config(&self) -> WorkspaceMergeQueueConfigHandle {
         WorkspaceMergeQueueConfigHandle::new(
             self.protected_workspace_store_lookup(),
@@ -1603,6 +1609,31 @@ impl WorkspaceRegistryHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceDeletionHandle {
+    runtime: Arc<crate::daemon::workspaces::WorkspaceDeletionRuntime>,
+}
+
+impl WorkspaceDeletionHandle {
+    pub(in crate::daemon) fn new(
+        runtime: Arc<crate::daemon::workspaces::WorkspaceDeletionRuntime>,
+    ) -> Self {
+        Self { runtime }
+    }
+
+    pub(in crate::daemon) async fn delete_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), crate::daemon::workspaces::WorkspaceDeleteError> {
+        self.runtime.delete_workspace(workspace_id).await
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn fail_next_delete_after_begin_for_test(&self) {
+        self.runtime.fail_next_delete_after_begin_for_test();
     }
 }
 

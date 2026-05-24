@@ -235,6 +235,9 @@ const {
   scanWorkspaceWorktreeDaemonImplementationRatchet,
   scanWorkspaceWorktreeHandleFieldRatchet,
   scanWorkspaceWorktreeRouteExtractorRatchet,
+  scanWorkspaceDeletionDaemonImplementationRatchet,
+  scanWorkspaceDeletionHandleFieldRatchet,
+  scanWorkspaceDeletionRouteExtractorRatchet,
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
@@ -3213,6 +3216,216 @@ test("appstate guard rejects workspace registry broad handle fields", () => {
       }
     `,
   });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace deletion extraction outside delete route", () => {
+  const violations = scanWorkspaceDeletionRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      async fn handler(
+        State(state): State<WorkspaceDeletionHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace deletion route extracts WorkspaceDeletionHandle outside registry delete route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceDeletionRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+      contents: `
+        async fn delete_workspace(
+          State(deletion): State<WorkspaceDeletionHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects post-slice workspace deletion WorkspacesHandle HTTP seams", () => {
+  const routeContents = `
+    use ctx_daemon::daemon::WorkspacesHandle;
+    pub(in crate::api) async fn delete_workspace(
+      State(workspaces): State<WorkspacesHandle>,
+    ) {}
+  `;
+
+  assert.deepEqual(
+    scanWorkspaceDeletionRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+      contents: routeContents,
+      workspaceDeletionCapability: false,
+    }),
+    [],
+  );
+
+  const routeViolations = scanWorkspaceDeletionRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+    contents: routeContents,
+    workspaceDeletionCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    routeViolations.includes("workspace deletion route uses broad workspace handle"),
+  );
+
+  const regressedRouteViolations = scanWorkspaceDeletionRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+    contents: routeContents,
+    workspaceDeletionCapability: true,
+    workspaceDeletionRouteMigrated: false,
+  }).map((violation) => violation.name);
+
+  assert(
+    regressedRouteViolations.includes(
+      "workspace deletion route uses broad workspace handle",
+    ),
+  );
+
+  const routerViolations = scanWorkspaceDeletionRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      pub(in crate::api) struct RouteHandles {
+        workspace_deletion: WorkspacesHandle,
+      }
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_deletion: handle.workspaces(),
+          }
+        }
+      }
+    `,
+    workspaceDeletionCapability: true,
+  }).map((violation) => violation.name);
+
+  assert(
+    routerViolations.includes(
+      "ctx-http carries broad workspace handle after workspace deletion slice",
+    ),
+  );
+  assert(
+    routerViolations.includes(
+      "workspace deletion router composed from broad workspace handle",
+    ),
+  );
+});
+
+test("appstate guard rejects workspace deletion route facade on WorkspacesHandle", () => {
+  assert.deepEqual(
+    scanWorkspaceDeletionDaemonImplementationRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry_delete.rs",
+      contents: `
+        impl WorkspacesHandle {
+          pub async fn delete_workspace_for_route(&self) {}
+        }
+      `,
+      workspaceDeletionCapability: false,
+    }),
+    [],
+  );
+
+  const violations = scanWorkspaceDeletionDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry_delete.rs",
+    contents: `
+      impl WorkspacesHandle {
+        pub async fn delete_workspace_for_route(&self) {}
+      }
+    `,
+    workspaceDeletionCapability: true,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace deletion route facade remains on WorkspacesHandle",
+  ]);
+
+  const backdoorViolations = scanWorkspaceDeletionDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/deletion.rs",
+    contents: `
+      pub async fn delete_workspace(
+        state: &Arc<DaemonState>,
+        workspace_id: WorkspaceId,
+      ) {}
+    `,
+    workspaceDeletionCapability: true,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(backdoorViolations, [
+    "workspace deletion exposes public DaemonState delete backdoor",
+  ]);
+});
+
+test("appstate guard rejects workspace deletion broad handle and runtime fields", () => {
+  const handleViolations = scanWorkspaceDeletionHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceDeletionHandle {
+        state: Arc<DaemonState>,
+        daemon: DaemonHandle,
+        workspaces: WorkspacesHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    handleViolations.includes(
+      "workspace deletion capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    handleViolations.includes(
+      "workspace deletion capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const runtimeViolations = scanWorkspaceDeletionHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/deletion/runtime.rs",
+    contents: `
+      pub(crate) struct WorkspaceDeletionRuntime {
+        daemon: DaemonHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    runtimeViolations.includes(
+      "workspace deletion runtime stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    runtimeViolations.includes(
+      "workspace deletion runtime exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = [
+    ...scanWorkspaceDeletionHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        pub struct WorkspaceDeletionHandle {
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          runtime: Arc<WorkspaceDeletionRuntime>,
+        }
+      `,
+    }),
+    ...scanWorkspaceDeletionHandleFieldRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/deletion/runtime.rs",
+      contents: `
+        pub(crate) struct WorkspaceDeletionRuntime {
+          data_root: PathBuf,
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+        }
+      `,
+    }),
+  ];
 
   assert.deepEqual(narrowViolations, []);
 });

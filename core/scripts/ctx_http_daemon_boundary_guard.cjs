@@ -277,6 +277,16 @@ const workspaceRegistryDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
 ]);
 
+const workspaceDeletionRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+]);
+
+const workspaceDeletionDaemonImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/workspaces/deletion.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/deletion/",
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry_delete.rs",
+];
+
 const workspaceMergeQueueConfigRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
 ]);
@@ -7978,6 +7988,24 @@ function mergeQueueApiCapabilityPresent() {
   return /\bMergeQueueApiHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
 }
 
+function workspaceDeletionCapabilityPresent() {
+  if (!fs.existsSync(daemonHandlePath)) {
+    return false;
+  }
+  return /\bWorkspaceDeletionHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+}
+
+function workspaceDeletionRouteExtractorPresent() {
+  const routeModulePath = path.join(apiRoot, "workspaces", "registry", "delete.rs");
+  if (!fs.existsSync(routeModulePath)) {
+    return false;
+  }
+  const contents = fs.readFileSync(routeModulePath, "utf8");
+  return /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceDeletionHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceDeletionHandle\s*>)/u.test(
+    contents,
+  );
+}
+
 function workspaceVcsStreamRouteExtractorPresent() {
   const routeModulePath = path.join(apiRoot, "ws", "workspace_vcs.rs");
   if (!fs.existsSync(routeModulePath)) {
@@ -10671,6 +10699,199 @@ function scanWorkspaceRegistryHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceDeletionRouteExtractorRatchet({
+  filePath,
+  contents,
+  workspaceDeletionCapability = true,
+  workspaceDeletionRouteMigrated = workspaceDeletionCapability,
+}) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const deletionSliceActive =
+    workspaceDeletionCapability || workspaceDeletionRouteMigrated;
+  const extractorRegex =
+    /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceDeletionHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*WorkspaceDeletionHandle\s*>)/gu;
+
+  if (!workspaceDeletionRouteExtractorAllowedPaths.has(filePath)) {
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace deletion route extracts WorkspaceDeletionHandle outside registry delete route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (deletionSliceActive && filePath.startsWith("core/crates/ctx-http/src/")) {
+    const broadWorkspaceRegex = /\bWorkspacesHandle\b/gu;
+    for (
+      let match = broadWorkspaceRegex.exec(contents);
+      match;
+      match = broadWorkspaceRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      const inDeleteRoute = workspaceDeletionRouteExtractorAllowedPaths.has(filePath);
+      violations.push({
+        filePath,
+        line,
+        name: inDeleteRoute
+          ? "workspace deletion route uses broad workspace handle"
+          : "ctx-http carries broad workspace handle after workspace deletion slice",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (deletionSliceActive && filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_deletion\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace deletion router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceDeletionDaemonImplementationRatchet({
+  filePath,
+  contents,
+  workspaceDeletionCapability = true,
+  workspaceDeletionRouteMigrated = workspaceDeletionCapability,
+}) {
+  const deletionSliceActive =
+    workspaceDeletionCapability || workspaceDeletionRouteMigrated;
+  if (
+    !deletionSliceActive ||
+    !pathMatchesAnyRoot(filePath, workspaceDeletionDaemonImplementationRoots)
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const legacyFacadeRegex =
+    /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+delete_workspace_for_route\s*\(/gu;
+  const publicStateBackdoorRegex =
+    /\bpub\s+(?:async\s+)?fn\s+delete_workspace\s*\([^)]*\bDaemonState\b[^)]*\)/gsu;
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "WorkspacesHandle" })) {
+    legacyFacadeRegex.lastIndex = 0;
+    for (
+      let match = legacyFacadeRegex.exec(impl.text);
+      match;
+      match = legacyFacadeRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace deletion route facade remains on WorkspacesHandle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  for (
+    let match = publicStateBackdoorRegex.exec(contents);
+    match;
+    match = publicStateBackdoorRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace deletion exposes public DaemonState delete backdoor",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+
+  return violations;
+}
+
+function scanWorkspaceDeletionHandleFieldRatchet({
+  filePath,
+  contents,
+  workspaceDeletionCapability = true,
+}) {
+  if (!workspaceDeletionCapability) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:DaemonState|DaemonHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const scanStruct = (typeName, capabilityName) => {
+    const block = rustStructBlockForType({ contents, typeName });
+    if (!block) {
+      return;
+    }
+
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(block.text);
+      broad;
+      broad = broadFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: `${capabilityName} stores broad handle or daemon state`,
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    genericEscapeFieldRegex.lastIndex = 0;
+    for (
+      let escape = genericEscapeFieldRegex.exec(block.text);
+      escape;
+      escape = genericEscapeFieldRegex.exec(block.text)
+    ) {
+      const offset = block.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: `${capabilityName} exposes generic full-state escape hatch`,
+        text: lines[line - 1]?.trim() ?? escape[0],
+      });
+    }
+  };
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    scanStruct("WorkspaceDeletionHandle", "workspace deletion capability");
+  }
+  if (pathMatchesAnyRoot(filePath, workspaceDeletionDaemonImplementationRoots)) {
+    scanStruct("WorkspaceDeletionRuntime", "workspace deletion runtime");
+    scanStruct("WorkspaceDeletionRuntimeParts", "workspace deletion runtime");
+  }
+
+  return violations;
+}
+
 function scanWorkspaceMergeQueueConfigRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -11525,6 +11746,8 @@ function scanRepo() {
   const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
   const hasWorkspaceVcsStreamRouteExtractor = workspaceVcsStreamRouteExtractorPresent();
   const hasMergeQueueApiCapability = mergeQueueApiCapabilityPresent();
+  const hasWorkspaceDeletionCapability = workspaceDeletionCapabilityPresent();
+  const hasWorkspaceDeletionRouteMigrated = hasWorkspaceDeletionCapability;
 
   for (const filePath of listRustFiles(apiRoot)) {
     if (isTestRustPath(filePath)) {
@@ -11652,6 +11875,12 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceDeletionRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+        workspaceDeletionRouteMigrated: hasWorkspaceDeletionRouteMigrated,
+      }),
       ...scanWorkspaceMergeQueueConfigRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -11678,6 +11907,22 @@ function scanRepo() {
         filePath: relativePath,
         contents: fs.readFileSync(filePath, "utf8"),
         patterns: providerTestHelperDaemonImportPatternsForPath(relativePath),
+      }),
+    );
+  }
+
+  for (const filePath of listRustFiles(ctxHttpSrcRoot)) {
+    if (filePath.startsWith(apiRoot) || isTestRustPath(filePath)) {
+      continue;
+    }
+    const relativePath = repoRelative(filePath);
+    const contents = stripCfgTestItems(fs.readFileSync(filePath, "utf8"));
+    violations.push(
+      ...scanWorkspaceDeletionRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+        workspaceDeletionRouteMigrated: hasWorkspaceDeletionRouteMigrated,
       }),
     );
   }
@@ -11776,6 +12021,11 @@ function scanRepo() {
       ...scanWorkspaceRegistryHandleFieldRatchet({
         filePath: relativePath,
         contents,
+      }),
+      ...scanWorkspaceDeletionHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
       }),
       ...scanWorkspaceMergeQueueConfigHandleFieldRatchet({
         filePath: relativePath,
@@ -11927,6 +12177,17 @@ function scanRepo() {
       ...scanWorkspaceRegistryDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
+      }),
+      ...scanWorkspaceDeletionDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+        workspaceDeletionRouteMigrated: hasWorkspaceDeletionRouteMigrated,
+      }),
+      ...scanWorkspaceDeletionHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
       }),
       ...scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
         filePath: relativePath,
@@ -12511,6 +12772,7 @@ module.exports = {
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   mergeQueueApiCapabilityPresent,
+  workspaceDeletionCapabilityPresent,
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
@@ -12599,6 +12861,9 @@ module.exports = {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceDeletionDaemonImplementationRatchet,
+  scanWorkspaceDeletionHandleFieldRatchet,
+  scanWorkspaceDeletionRouteExtractorRatchet,
   scanWorkspaceAttachmentsDaemonImplementationRatchet,
   scanWorkspaceAttachmentsHandleFieldRatchet,
   scanWorkspaceAttachmentsRouteExtractorRatchet,

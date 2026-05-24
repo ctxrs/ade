@@ -131,6 +131,72 @@ async fn missing_workspace_registry_route_returns_not_found() {
 }
 
 #[tokio::test]
+async fn invalid_workspace_delete_route_returns_bad_request() {
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri("/api/workspaces/not-a-workspace")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    daemon.request_shutdown();
+}
+
+#[tokio::test]
+async fn missing_workspace_delete_route_returns_not_found() {
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
+    let missing_workspace_id = Uuid::new_v4().to_string();
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/workspaces/{missing_workspace_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    daemon.request_shutdown();
+}
+
+#[tokio::test]
+async fn delete_workspace_route_removes_seeded_workspace() {
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
+    let workspace_root = fixture.data_root().join("delete-route-repo");
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+    let workspace = daemon
+        .seed_workspace_for_test("delete-route", &workspace_root, VcsKind::Git)
+        .await
+        .expect("seed workspace");
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/workspaces/{}", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    daemon.request_shutdown();
+}
+
+#[tokio::test]
 async fn create_workspace_route_persists_detected_primary_branch() {
     let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
     let daemon = fixture.daemon();

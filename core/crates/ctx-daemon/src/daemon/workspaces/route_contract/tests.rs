@@ -282,6 +282,141 @@ async fn registry_route_maps_missing_workspace_to_not_found() {
     assert_eq!(error.message(), "workspace not found");
 }
 
+#[tokio::test]
+async fn delete_workspace_route_params_reject_invalid_workspace_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_deletion();
+    let error = handle
+        .delete_workspace_for_route(WorkspaceRouteParams::new("not-a-workspace"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+}
+
+#[tokio::test]
+async fn delete_workspace_route_maps_missing_workspace_to_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let handle = daemon.handle().workspace_deletion();
+    let error = handle
+        .delete_workspace_for_route(WorkspaceRouteParams::new(uuid::Uuid::new_v4().to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::NotFound);
+    assert_eq!(error.message(), "workspace not found");
+}
+
+#[tokio::test]
+async fn delete_workspace_route_removes_workspace_indexes_and_db_dir() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace_with_store(&daemon, "delete-success").await;
+    let worktree =
+        create_route_contract_worktree(&daemon, &workspace, "delete-success-worktree", None).await;
+    let workspace_db_dir = daemon
+        .data_root()
+        .join("db")
+        .join("workspaces")
+        .join(workspace.id.0.to_string());
+    std::fs::create_dir_all(&workspace_db_dir).expect("create workspace db dir");
+
+    daemon
+        .handle()
+        .workspace_deletion()
+        .delete_workspace_for_route(WorkspaceRouteParams::new(workspace.id.0.to_string()))
+        .await
+        .expect("delete workspace");
+
+    assert!(daemon
+        .global_store()
+        .get_workspace(workspace.id)
+        .await
+        .expect("load workspace")
+        .is_none());
+    assert!(daemon
+        .global_store()
+        .get_workspace_id_for_worktree(worktree.id)
+        .await
+        .expect("load worktree index")
+        .is_none());
+    assert!(!workspace_db_dir.exists());
+    assert!(!daemon.stores().is_workspace_deleting(workspace.id).await);
+}
+
+#[tokio::test]
+async fn delete_workspace_route_continues_when_workspace_store_is_unavailable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace =
+        create_route_contract_workspace_with_store(&daemon, "delete-store-missing").await;
+    let worktree =
+        create_route_contract_worktree(&daemon, &workspace, "delete-store-missing-worktree", None)
+            .await;
+    daemon.stores().begin_workspace_delete(workspace.id).await;
+
+    daemon
+        .handle()
+        .workspace_deletion()
+        .delete_workspace_for_route(WorkspaceRouteParams::new(workspace.id.0.to_string()))
+        .await
+        .expect("delete workspace with blocked store");
+
+    assert!(!daemon.stores().is_workspace_deleting(workspace.id).await);
+    assert!(daemon
+        .global_store()
+        .get_workspace(workspace.id)
+        .await
+        .expect("load workspace")
+        .is_none());
+    assert!(daemon
+        .global_store()
+        .get_workspace_id_for_worktree(worktree.id)
+        .await
+        .expect("load worktree index")
+        .is_none());
+}
+
+#[tokio::test]
+async fn delete_workspace_route_finishes_delete_barrier_after_post_begin_failure() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+    let workspace = create_route_contract_workspace_with_store(&daemon, "delete-failure").await;
+    let handle = daemon.handle().workspace_deletion();
+    handle.fail_next_delete_after_begin_for_test();
+
+    let error = handle
+        .delete_workspace_for_route(WorkspaceRouteParams::new(workspace.id.0.to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::Internal);
+    assert_eq!(error.message(), "failed to delete workspace");
+    assert!(!daemon.stores().is_workspace_deleting(workspace.id).await);
+    assert!(daemon
+        .global_store()
+        .get_workspace(workspace.id)
+        .await
+        .expect("load workspace")
+        .is_some());
+}
+
 #[test]
 fn workspace_route_response_matches_workspace_wire_shape() {
     let workspace = Workspace {

@@ -42,7 +42,10 @@ mod worktree_provision;
 pub use active_snapshot_state::load_workspace_active_snapshot_state;
 pub use attachments::ensure_worktree_attachment_mounts_if_materialized;
 pub use cache_stats::WorkspaceCacheDebugStats;
-pub use deletion::{delete_workspace, WorkspaceDeleteError};
+pub use deletion::WorkspaceDeleteError;
+pub(in crate::daemon) use deletion::{
+    runtime_from_state as deletion_runtime_from_state, WorkspaceDeletionRuntime,
+};
 pub use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
 pub use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
@@ -120,13 +123,6 @@ impl WorkspacesHandle {
             .telemetry
             .emit(TelemetryEvent::workspace_opened())
             .await;
-    }
-
-    pub async fn delete_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<(), WorkspaceDeleteError> {
-        delete_workspace(&self.state, workspace_id).await
     }
 
     pub async fn effective_execution_settings(

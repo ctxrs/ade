@@ -1,9 +1,10 @@
 use ctx_route_contracts::workspaces::WorkspaceRouteParams;
 
-use super::super::{WorkspaceRouteError, WorkspacesHandle};
+use super::super::WorkspaceRouteError;
 use super::common::workspace_delete_route_error;
+use crate::daemon::WorkspaceDeletionHandle;
 
-impl WorkspacesHandle {
+impl WorkspaceDeletionHandle {
     pub async fn delete_workspace_for_route(
         &self,
         params: WorkspaceRouteParams,

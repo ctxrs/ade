@@ -6,8 +6,11 @@ mod sandbox;
 use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{Workspace, Worktree};
+use ctx_worktree_vcs_service::VcsHooksHost;
 
 use crate::daemon::DaemonState;
+
+pub(in crate::daemon) use host::WorkspaceDeletionVcsHookHost;
 
 pub async fn ensure_task_commit_hook(
     state: &DaemonState,
@@ -24,6 +27,14 @@ pub async fn cleanup_worktree_hooks(
     worktree: &Worktree,
 ) -> Result<()> {
     ctx_worktree_vcs_service::cleanup_worktree_hooks(state, workspace, worktree).await
+}
+
+pub async fn cleanup_worktree_hooks_with_host<H: VcsHooksHost>(
+    host: &H,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<()> {
+    ctx_worktree_vcs_service::cleanup_worktree_hooks(host, workspace, worktree).await
 }
 
 pub async fn cleanup_workspace_hooks(state: &DaemonState, workspace_id: WorkspaceId) -> Result<()> {

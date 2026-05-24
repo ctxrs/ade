@@ -40,11 +40,13 @@ use runtime_adapters::{
 };
 
 pub use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
-pub(crate) use types::WorkspaceFileCompletionsCache;
 pub use types::WorktreeBootstrapGate;
 pub use types::{
     AppRuntimeFlags, CoreState, DaemonState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,
+};
+pub(crate) use types::{
+    WorkspaceActiveHeadsCache, WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache,
 };
 
 #[cfg(test)]

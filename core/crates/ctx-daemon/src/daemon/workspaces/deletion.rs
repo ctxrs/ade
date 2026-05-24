@@ -1,10 +1,23 @@
+use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ctx_core::ids::WorkspaceId;
+use async_trait::async_trait;
+use ctx_core::ids::{SessionId, WorkspaceId};
+use ctx_core::models::{Workspace, Worktree};
+use ctx_provider_runtime::ProviderRuntime;
+use ctx_session_runtime::runtime::SessionLifecycleHost;
+use ctx_store::{Store, StoreManager};
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
-use crate::daemon::state::DaemonState;
+use crate::daemon::state::{
+    DaemonState, SessionRuntime, WorkspaceActiveHeadsCache, WorkspaceActiveSnapshotCache,
+    WorkspaceFileCompletionsCache,
+};
 
-use super::{cleanup_workspace_hooks, cleanup_worktree_hooks};
+use super::vcs_hooks::{cleanup_worktree_hooks_with_host, WorkspaceDeletionVcsHookHost};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceDeleteError {
@@ -12,25 +25,133 @@ pub enum WorkspaceDeleteError {
     Internal,
 }
 
-pub async fn delete_workspace(
-    state: &Arc<DaemonState>,
-    workspace_id: WorkspaceId,
-) -> Result<(), WorkspaceDeleteError> {
-    let workspace = state
-        .global_store()
-        .get_workspace(workspace_id)
-        .await
-        .map_err(|_| WorkspaceDeleteError::Internal)?
-        .ok_or(WorkspaceDeleteError::NotFound)?;
-    let worktrees = match state.store_for_workspace(workspace_id).await {
-        Ok(store) => store.list_worktrees(workspace_id).await.unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+#[derive(Clone)]
+pub(in crate::daemon) struct WorkspaceDeletionRuntime {
+    data_root: PathBuf,
+    stores: StoreManager,
+    global_store: Store,
+    sessions: Arc<SessionRuntime>,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+    workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    harness: Arc<HarnessRuntimeManager>,
+    session_lifecycle: WorkspaceDeletionSessionLifecycleHost,
+    vcs_hooks: Arc<WorkspaceDeletionVcsHookHost>,
+    #[cfg(test)]
+    fail_after_begin_for_test: Arc<AtomicBool>,
+}
 
-    state.core.stores.begin_workspace_delete(workspace_id).await;
-    let delete_result = async {
-        for worktree in &worktrees {
-            if let Err(err) = cleanup_worktree_hooks(state.as_ref(), &workspace, worktree).await {
+impl WorkspaceDeletionRuntime {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        daemon_url: String,
+        stores: StoreManager,
+        global_store: Store,
+        sessions: Arc<SessionRuntime>,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+        workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+        workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+        harness: Arc<HarnessRuntimeManager>,
+        providers: Arc<ProviderRuntime>,
+    ) -> Self {
+        let session_lifecycle = WorkspaceDeletionSessionLifecycleHost::new(
+            global_store.clone(),
+            Arc::clone(&active_snapshot),
+            providers,
+        );
+        let vcs_hooks = Arc::new(WorkspaceDeletionVcsHookHost::new(
+            data_root.clone(),
+            daemon_url,
+            global_store.clone(),
+            stores.clone(),
+            Arc::clone(&harness),
+        ));
+        Self {
+            data_root,
+            stores,
+            global_store,
+            sessions,
+            active_snapshot,
+            workspace_active_snapshot_cache,
+            workspace_active_heads_cache,
+            workspace_file_completions_cache,
+            harness,
+            session_lifecycle,
+            vcs_hooks,
+            #[cfg(test)]
+            fail_after_begin_for_test: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn fail_next_delete_after_begin_for_test(&self) {
+        self.fail_after_begin_for_test.store(true, Ordering::SeqCst);
+    }
+
+    pub(in crate::daemon) async fn delete_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceDeleteError> {
+        let workspace = self
+            .global_store
+            .get_workspace(workspace_id)
+            .await
+            .map_err(|_| WorkspaceDeleteError::Internal)?
+            .ok_or(WorkspaceDeleteError::NotFound)?;
+        let worktrees = self.worktrees_for_delete(workspace_id).await;
+
+        self.stores.begin_workspace_delete(workspace_id).await;
+        #[cfg(test)]
+        let delete_result = if self.fail_after_begin_for_test.swap(false, Ordering::SeqCst) {
+            Err(WorkspaceDeleteError::Internal)
+        } else {
+            self.delete_workspace_after_begin(&workspace, &worktrees)
+                .await
+        };
+        #[cfg(not(test))]
+        let delete_result = self
+            .delete_workspace_after_begin(&workspace, &worktrees)
+            .await;
+        self.stores.finish_workspace_delete(workspace_id).await;
+        delete_result?;
+
+        if let Err(err) =
+            ctx_worktree_vcs_service::cleanup_workspace_hooks(&self.data_root, workspace_id).await
+        {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to remove vcs hooks: {err:#}"
+            );
+        }
+
+        let workspace_db_dir = self
+            .data_root
+            .join("db")
+            .join("workspaces")
+            .join(workspace_id.0.to_string());
+        let _ = tokio::fs::remove_dir_all(workspace_db_dir).await;
+        Ok(())
+    }
+
+    async fn worktrees_for_delete(&self, workspace_id: WorkspaceId) -> Vec<Worktree> {
+        match self.stores.workspace(workspace_id).await {
+            Ok(store) => store.list_worktrees(workspace_id).await.unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    async fn delete_workspace_after_begin(
+        &self,
+        workspace: &Workspace,
+        worktrees: &[Worktree],
+    ) -> Result<(), WorkspaceDeleteError> {
+        let workspace_id = workspace.id;
+        for worktree in worktrees {
+            if let Err(err) =
+                cleanup_worktree_hooks_with_host(self.vcs_hooks.as_ref(), workspace, worktree).await
+            {
                 tracing::warn!(
                     workspace_id = %workspace_id.0,
                     worktree_id = %worktree.id.0,
@@ -38,45 +159,113 @@ pub async fn delete_workspace(
                 );
             }
         }
-        state.cleanup_workspace(workspace_id).await;
-        state
-            .core
-            .stores
+        self.cleanup_workspace_runtime(workspace_id).await;
+        self.stores
             .evict_workspace_and_wait_closed(workspace_id)
             .await;
-        state
-            .global_store()
+        self.global_store
             .delete_workspace_indexes(workspace_id)
             .await
             .map_err(|_| WorkspaceDeleteError::Internal)?;
-        state
-            .global_store()
+        self.global_store
             .delete_workspace(workspace_id)
             .await
             .map_err(|_| WorkspaceDeleteError::Internal)?;
-        Ok::<(), WorkspaceDeleteError>(())
-    }
-    .await;
-    state
-        .core
-        .stores
-        .finish_workspace_delete(workspace_id)
-        .await;
-    delete_result?;
-
-    if let Err(err) = cleanup_workspace_hooks(state.as_ref(), workspace_id).await {
-        tracing::warn!(
-            workspace_id = %workspace_id.0,
-            "failed to remove vcs hooks: {err:#}"
-        );
+        Ok(())
     }
 
-    let workspace_db_dir = state
-        .core
-        .data_root
-        .join("db")
-        .join("workspaces")
-        .join(workspace_id.0.to_string());
-    let _ = tokio::fs::remove_dir_all(workspace_db_dir).await;
-    Ok(())
+    async fn cleanup_workspace_runtime(&self, workspace_id: WorkspaceId) {
+        // Best-effort: workspace deletion should attempt to clean up its harness container + volume,
+        // but must not fail deletion if the sandbox container runtime is unavailable.
+        let _ = self.harness.stop_container(workspace_id).await;
+        let _ = self.harness.remove_workspace_volume(workspace_id).await;
+
+        let session_ids = self
+            .sessions
+            .cached_session_ids_for_workspace(workspace_id)
+            .await;
+        for session_id in session_ids {
+            self.sessions
+                .cleanup_session_with_host(&self.session_lifecycle, session_id)
+                .await;
+        }
+        {
+            let mut cache = self.workspace_active_snapshot_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        {
+            let mut cache = self.workspace_active_heads_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        {
+            let mut cache = self.workspace_file_completions_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        self.active_snapshot.remove_workspace(workspace_id).await;
+        self.stores.evict_workspace(workspace_id).await;
+    }
+}
+
+#[derive(Clone)]
+struct WorkspaceDeletionSessionLifecycleHost {
+    global_store: Store,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl WorkspaceDeletionSessionLifecycleHost {
+    fn new(
+        global_store: Store,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        providers: Arc<ProviderRuntime>,
+    ) -> Self {
+        Self {
+            global_store,
+            active_snapshot,
+            providers,
+        }
+    }
+}
+
+#[async_trait]
+impl SessionLifecycleHost for WorkspaceDeletionSessionLifecycleHost {
+    async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
+        self.providers
+            .set_provider_session_pinned(session_id.0.to_string(), pinned)
+            .await;
+    }
+
+    async fn remove_workspace_active_session(&self, session_id: SessionId) {
+        let workspace_id = self
+            .global_store
+            .get_workspace_id_for_session(session_id)
+            .await
+            .ok()
+            .flatten();
+        if let Some(workspace_id) = workspace_id {
+            self.active_snapshot
+                .remove_session_with_workspace_hint(workspace_id, session_id)
+                .await;
+        } else {
+            self.active_snapshot.remove_session(session_id).await;
+        }
+    }
+}
+
+pub(in crate::daemon) fn runtime_from_state(
+    state: &Arc<DaemonState>,
+) -> Arc<WorkspaceDeletionRuntime> {
+    Arc::new(WorkspaceDeletionRuntime::new(
+        state.core.data_root.clone(),
+        state.core.daemon_url.clone(),
+        state.core.stores.clone(),
+        state.global_store().clone(),
+        Arc::clone(&state.sessions),
+        Arc::clone(&state.workspaces.workspace_active_snapshot),
+        Arc::clone(&state.workspaces.workspace_active_snapshot_cache),
+        Arc::clone(&state.workspaces.workspace_active_heads_cache),
+        Arc::clone(&state.workspaces.workspace_file_completions_cache),
+        Arc::clone(&state.execution.harness),
+        Arc::clone(&state.providers),
+    ))
 }

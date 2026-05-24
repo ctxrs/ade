@@ -8,10 +8,8 @@ use ctx_workspace_container::workspace_container_name;
 use ctx_worktree_vcs_service::{SandboxContainerRuntime, WorktreeHookExecution};
 use tokio::process::Command;
 
-use crate::daemon::DaemonState;
-
 pub(super) fn sandbox_command(
-    state: &DaemonState,
+    data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
@@ -27,7 +25,7 @@ pub(super) fn sandbox_command(
         .context("sandbox hook execution missing runtime kind")?;
     match runtime {
         SandboxContainerRuntime::NativeContainer => {
-            let mut cmd = sandbox_container_command(&state.core.data_root)?;
+            let mut cmd = sandbox_container_command(data_root)?;
             cmd.arg("exec")
                 .arg("--interactive")
                 .arg("--workdir")
@@ -39,7 +37,7 @@ pub(super) fn sandbox_command(
         }
         SandboxContainerRuntime::SharedVmContainer => {
             ctx_avf_linux_runtime::build_guest_exec_command(
-                &state.core.data_root,
+                data_root,
                 workspace.id,
                 worktree.id,
                 Path::new(live_worktree_root),

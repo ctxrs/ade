@@ -1,19 +1,19 @@
 use anyhow::{bail, Context, Result};
 use ctx_core::models::{Workspace, Worktree};
 use ctx_worktree_vcs_service::WorktreeHookExecution;
+use std::path::Path;
 
 use super::super::sandbox::sandbox_command;
-use crate::daemon::DaemonState;
 
 pub(super) async fn sandbox_git_config_get(
-    state: &DaemonState,
+    data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
     key: &str,
 ) -> Result<Option<String>> {
     let mut cmd = sandbox_command(
-        state,
+        data_root,
         workspace,
         worktree,
         execution,
@@ -44,7 +44,7 @@ pub(super) async fn sandbox_git_config_get(
 }
 
 pub(super) async fn sandbox_git_config_set(
-    state: &DaemonState,
+    data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
@@ -52,7 +52,7 @@ pub(super) async fn sandbox_git_config_set(
     value: &str,
 ) -> Result<()> {
     let mut cmd = sandbox_command(
-        state,
+        data_root,
         workspace,
         worktree,
         execution,
@@ -75,14 +75,14 @@ pub(super) async fn sandbox_git_config_set(
 }
 
 pub(super) async fn sandbox_git_config_unset(
-    state: &DaemonState,
+    data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
     key: &str,
 ) -> Result<()> {
     let mut cmd = sandbox_command(
-        state,
+        data_root,
         workspace,
         worktree,
         execution,
