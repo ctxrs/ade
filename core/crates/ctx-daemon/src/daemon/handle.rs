@@ -1036,6 +1036,15 @@ impl DaemonHandle {
     }
 
     pub fn workspace_vcs_stream(&self) -> WorkspaceVcsStreamHandle {
+        let ensure_worktree_vcs_watcher = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state.ensure_git_status_watcher(worktree).await;
+                }) as WorkspaceVcsStreamWatcherFuture
+            }
+        });
         let refresh_worktree_vcs = Arc::new({
             let state = Arc::clone(&self.state);
             move |worktree: Worktree, summary: bool, touched_files: bool| {
@@ -1059,6 +1068,7 @@ impl DaemonHandle {
                 &self.state.workspaces,
             ),
             self.state.telemetry.perf_telemetry.clone(),
+            ensure_worktree_vcs_watcher,
             refresh_worktree_vcs,
         )
     }
@@ -1068,6 +1078,15 @@ impl DaemonHandle {
         &self,
         refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
     ) -> WorkspaceVcsStreamHandle {
+        let ensure_worktree_vcs_watcher = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree: Worktree| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state.ensure_git_status_watcher(worktree).await;
+                }) as WorkspaceVcsStreamWatcherFuture
+            }
+        });
         WorkspaceVcsStreamHandle::new(
             self.state.global_store().clone(),
             self.protected_workspace_store_lookup(),
@@ -1075,6 +1094,7 @@ impl DaemonHandle {
                 &self.state.workspaces,
             ),
             self.state.telemetry.perf_telemetry.clone(),
+            ensure_worktree_vcs_watcher,
             refresh_worktree_vcs,
         )
     }
@@ -4786,6 +4806,10 @@ pub(in crate::daemon) type WorkspaceVcsStreamRefreshFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
 pub(in crate::daemon) type WorkspaceVcsStreamRefreshEffect =
     Arc<dyn Fn(Worktree, bool, bool) -> WorkspaceVcsStreamRefreshFuture + Send + Sync>;
+pub(in crate::daemon) type WorkspaceVcsStreamWatcherFuture =
+    Pin<Box<dyn Future<Output = ()> + Send>>;
+pub(in crate::daemon) type WorkspaceVcsStreamWatcherEffect =
+    Arc<dyn Fn(Worktree) -> WorkspaceVcsStreamWatcherFuture + Send + Sync>;
 
 #[derive(Clone)]
 pub struct WorkspaceVcsStreamHandle {
@@ -4793,6 +4817,7 @@ pub struct WorkspaceVcsStreamHandle {
     workspace_stores: ProtectedWorkspaceStoreLookup,
     runtime: crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime,
     perf_telemetry: PerfTelemetry,
+    ensure_worktree_vcs_watcher: WorkspaceVcsStreamWatcherEffect,
     refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
 }
 
@@ -4802,6 +4827,7 @@ impl WorkspaceVcsStreamHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
         runtime: crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime,
         perf_telemetry: PerfTelemetry,
+        ensure_worktree_vcs_watcher: WorkspaceVcsStreamWatcherEffect,
         refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
     ) -> Self {
         Self {
@@ -4809,6 +4835,7 @@ impl WorkspaceVcsStreamHandle {
             workspace_stores,
             runtime,
             perf_telemetry,
+            ensure_worktree_vcs_watcher,
             refresh_worktree_vcs,
         }
     }
@@ -4832,6 +4859,10 @@ impl WorkspaceVcsStreamHandle {
 
     pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
         &self.perf_telemetry
+    }
+
+    pub(in crate::daemon) async fn ensure_loaded_worktree_vcs_watcher(&self, worktree: Worktree) {
+        (self.ensure_worktree_vcs_watcher)(worktree).await
     }
 
     pub(in crate::daemon) async fn refresh_loaded_worktree_vcs(

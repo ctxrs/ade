@@ -64,6 +64,13 @@ async fn replace_workspace_vcs_subscription(
         .await;
     *runtime = plan.state;
 
+    state
+        .ensure_worktree_vcs_watchers_for_worktrees(
+            &plan.summary_subscribed_worktree_ids,
+            &plan.detail_subscribed_worktree_ids,
+        )
+        .await;
+
     pending
         .push_control(WorktreeVcsStreamMessage::Subscribed {
             workspace_id,

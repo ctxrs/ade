@@ -290,6 +290,9 @@ pub async fn refresh_worktree_vcs_for_worktrees(
     }
 
     for (worktree_id, (worktree, details)) in worktrees {
+        handle
+            .ensure_loaded_worktree_vcs_watcher(worktree.clone())
+            .await;
         let should_refresh = !matches!(
             handle.get_worktree_vcs_snapshot(worktree.id).await,
             Some(snapshot)
@@ -312,6 +315,33 @@ pub async fn refresh_worktree_vcs_for_worktrees(
                 );
             }
         }
+    }
+}
+
+pub async fn ensure_worktree_vcs_watchers_for_worktrees(
+    handle: &WorkspaceVcsStreamHandle,
+    summary_worktree_ids: &[WorktreeId],
+    detail_worktree_ids: &[WorktreeId],
+) {
+    if !handle.runtime().worktree_vcs_enabled() {
+        return;
+    }
+    if summary_worktree_ids.is_empty() && detail_worktree_ids.is_empty() {
+        return;
+    }
+    let mut worktrees: HashMap<WorktreeId, Worktree> = HashMap::new();
+    for worktree_id in summary_worktree_ids {
+        if let Some(worktree) = load_worktree(handle, *worktree_id).await {
+            worktrees.entry(worktree.id).or_insert(worktree);
+        }
+    }
+    for worktree_id in detail_worktree_ids {
+        if let Some(worktree) = load_worktree(handle, *worktree_id).await {
+            worktrees.entry(worktree.id).or_insert(worktree);
+        }
+    }
+    for worktree in worktrees.into_values() {
+        handle.ensure_loaded_worktree_vcs_watcher(worktree).await;
     }
 }
 
@@ -410,6 +440,15 @@ impl WorkspaceVcsStreamHandle {
         detail_worktree_ids: &[WorktreeId],
     ) {
         refresh_worktree_vcs_for_worktrees(self, summary_worktree_ids, detail_worktree_ids).await;
+    }
+
+    pub async fn ensure_worktree_vcs_watchers_for_worktrees(
+        &self,
+        summary_worktree_ids: &[WorktreeId],
+        detail_worktree_ids: &[WorktreeId],
+    ) {
+        ensure_worktree_vcs_watchers_for_worktrees(self, summary_worktree_ids, detail_worktree_ids)
+            .await;
     }
 
     pub async fn update_worktree_vcs_activity(

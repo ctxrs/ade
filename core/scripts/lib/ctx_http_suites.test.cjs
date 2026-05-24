@@ -181,9 +181,8 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:replay_properties`,
     `${CTX_HTTP_BAZEL_PACKAGE}:task_default_session_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_stream_context_window_metrics`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_stream_no_gaps_under_activity`,
@@ -198,6 +197,7 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_status_and_staging`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_validate_destination`,
     `${CTX_HTTP_BAZEL_PACKAGE}:session_diff_unavailable`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_file_completions_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_bootstrap_config_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_merge_queue_config_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_archive_http`,
@@ -296,7 +296,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
   assert.equal(workspaceStreamFanout.includes(`${CTX_HTTP_BAZEL_PACKAGE}:cache_rehydration`), true);
   assert.equal(
     workspaceStreamFanout.includes(
-      `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
     ),
     true,
   );
