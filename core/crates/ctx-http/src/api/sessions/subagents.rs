@@ -63,7 +63,7 @@ mod tests {
     #[tokio::test]
     async fn public_listing_routes_preserve_bare_status_errors() {
         let fixture = sessions_fixture().await;
-        let handle = fixture.daemon().handle().sessions();
+        let handle = fixture.daemon().handle().session_subagent_read();
 
         assert_eq!(
             list_session_subagents(State(handle.clone()), Path("not-a-session".to_string()))

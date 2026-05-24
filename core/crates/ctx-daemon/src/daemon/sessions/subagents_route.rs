@@ -14,9 +14,9 @@ use ctx_subagent_service::route_contract::{
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
-use crate::daemon::{ScopedMcpSessionAccessError, SessionsHandle};
+use crate::daemon::{ScopedMcpSessionAccessError, SessionSubagentReadHandle, SessionsHandle};
 
-impl SessionsHandle {
+impl SessionSubagentReadHandle {
     pub async fn list_session_subagents_for_route(
         &self,
         params: SessionRouteParams,
@@ -58,7 +58,9 @@ impl SessionsHandle {
             .ok_or_else(|| SessionSubagentRouteError::not_found("session not found"))?;
         Ok(SessionSubagentInvocationRouteResponse::new(invocation))
     }
+}
 
+impl SessionsHandle {
     pub async fn spawn_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
@@ -215,7 +217,82 @@ fn subagent_route_error(error: SubagentError) -> SessionSubagentRouteError {
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use chrono::Utc;
+    use ctx_core::ids::{RunId, SessionId, TurnId};
+    use ctx_core::models::{Session, SessionTurn, SessionTurnStatus, SubagentInvocation};
+    use ctx_store::Store;
     use ctx_subagent_service::route_contract::SessionSubagentRouteErrorKind;
+    use serde_json::json;
+
+    use crate::test_support::TestDaemon;
+
+    async fn seeded_subagent_read_parent(
+    ) -> anyhow::Result<(tempfile::TempDir, TestDaemon, Session)> {
+        let temp = tempfile::tempdir()?;
+        let data_root = temp.path().join("data");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root)?;
+        let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:0".to_string()).await?;
+        let parent = daemon
+            .seed_mcp_parent_session_for_test(&repo_root, "base".to_string(), "fake", "fake-model")
+            .await?;
+        Ok((temp, daemon, parent))
+    }
+
+    async fn seed_invocation(
+        store: &Store,
+        id: &str,
+        parent_session_id: SessionId,
+        parent_turn_id: Option<TurnId>,
+    ) -> anyhow::Result<SubagentInvocation> {
+        let now = Utc::now();
+        Ok(store
+            .upsert_subagent_invocation(SubagentInvocation {
+                id: id.to_string(),
+                tool_call_id: format!("{id}-tool"),
+                parent_session_id,
+                parent_turn_id,
+                requested_count: 1,
+                request_json: Some(json!({ "id": id })),
+                status: "running".to_string(),
+                created_at: now,
+                updated_at: now,
+                children: Vec::new(),
+            })
+            .await?)
+    }
+
+    async fn seed_parent_turn(
+        store: &Store,
+        session: &Session,
+        order: i64,
+    ) -> anyhow::Result<TurnId> {
+        let now = Utc::now();
+        let turn_id = TurnId::new();
+        store
+            .insert_session_turn(SessionTurn {
+                turn_id,
+                session_id: session.id,
+                run_id: Some(RunId::new()),
+                user_message_id: None,
+                status: SessionTurnStatus::Completed,
+                start_seq: Some(order),
+                end_seq: Some(order + 1),
+                started_at: now,
+                updated_at: now,
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                failure: None,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+            })
+            .await?;
+        Ok(turn_id)
+    }
 
     #[test]
     fn invalid_session_id_uses_existing_route_message() {
@@ -276,5 +353,127 @@ mod tests {
         assert_eq!(internal.kind(), SessionSubagentRouteErrorKind::Internal);
         assert_eq!(internal.message(), logs::redact_sensitive(raw_message));
         assert!(!internal.message().contains("secret-token-123"));
+    }
+
+    #[tokio::test]
+    async fn read_handle_lists_subagents_for_existing_parent() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let child = daemon
+            .seed_subagent_mcp_existing_label_child_for_test(parent.id, "Reader")
+            .await?;
+
+        let response = daemon
+            .handle()
+            .session_subagent_read()
+            .list_session_subagents_for_route(SessionRouteParams::new(parent.id.0.to_string()))
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        let payload = serde_json::to_value(response)?;
+        let subagents = payload.as_array().expect("subagents response is an array");
+        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents[0]["id"], child.session_id.0.to_string());
+        assert_eq!(subagents[0]["title"], "Reader");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_handle_lists_invocations_with_and_without_turn_filter() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let store = daemon
+            .handle()
+            .sessions()
+            .store_for_session(parent.id)
+            .await?;
+        let turn_a = seed_parent_turn(&store, &parent, 1).await?;
+        let turn_b = seed_parent_turn(&store, &parent, 3).await?;
+        seed_invocation(&store, "inv-a", parent.id, Some(turn_a)).await?;
+        seed_invocation(&store, "inv-b", parent.id, Some(turn_b)).await?;
+
+        let all = daemon
+            .handle()
+            .session_subagent_read()
+            .list_session_subagent_invocations_for_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                SessionSubagentInvocationsRouteQuery::default(),
+            )
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        let all_payload = serde_json::to_value(all)?;
+        assert_eq!(
+            all_payload
+                .as_array()
+                .expect("invocations response array")
+                .len(),
+            2
+        );
+
+        let filtered_query: SessionSubagentInvocationsRouteQuery =
+            serde_json::from_value(json!({ "turn_id": turn_a.0.to_string() }))?;
+        let filtered = daemon
+            .handle()
+            .session_subagent_read()
+            .list_session_subagent_invocations_for_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                filtered_query,
+            )
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        let filtered_payload = serde_json::to_value(filtered)?;
+        let filtered_invocations = filtered_payload
+            .as_array()
+            .expect("filtered invocations response array");
+        assert_eq!(filtered_invocations.len(), 1);
+        assert_eq!(filtered_invocations[0]["id"], "inv-a");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_handle_gets_invocation_and_rejects_parent_mismatch() -> anyhow::Result<()> {
+        let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
+        let store = daemon
+            .handle()
+            .sessions()
+            .store_for_session(parent.id)
+            .await?;
+        seed_invocation(&store, "owned-invocation", parent.id, None).await?;
+        let foreign_parent = store
+            .create_session(
+                parent.task_id,
+                parent.workspace_id,
+                parent.worktree_id,
+                parent.execution_environment,
+                "fake".to_string(),
+                "fake-model".to_string(),
+                "assistant".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        seed_invocation(&store, "foreign-invocation", foreign_parent.id, None).await?;
+
+        let owned = daemon
+            .handle()
+            .session_subagent_read()
+            .get_session_subagent_invocation_for_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                "owned-invocation".to_string(),
+            )
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+        assert_eq!(serde_json::to_value(owned)?["id"], "owned-invocation");
+
+        let mismatch = daemon
+            .handle()
+            .session_subagent_read()
+            .get_session_subagent_invocation_for_route(
+                SessionRouteParams::new(parent.id.0.to_string()),
+                "foreign-invocation".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.kind(), SessionSubagentRouteErrorKind::NotFound);
+        assert_eq!(mismatch.message(), "session not found");
+        Ok(())
     }
 }

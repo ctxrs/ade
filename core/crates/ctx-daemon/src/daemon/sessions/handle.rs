@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use ctx_core::ids::{SessionId, TaskId, TurnId};
-use ctx_core::models::{Session, SessionEvent, SessionSummary, SubagentInvocation, Task, Worktree};
+use ctx_core::ids::{SessionId, TaskId};
+use ctx_core::models::{Session, SessionEvent, Task, Worktree};
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_session_title_service::title_generation::TitleGenerationOutcome;
@@ -114,53 +114,6 @@ impl SessionTitleModelModeHandle {
 }
 
 impl SessionsHandle {
-    pub async fn list_session_subagents_for_request(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<Vec<SessionSummary>>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(session) = store.get_session(session_id).await? else {
-            return Ok(None);
-        };
-        store.list_subagent_sessions(session.id).await.map(Some)
-    }
-
-    pub async fn list_session_subagent_invocations_for_request(
-        &self,
-        session_id: SessionId,
-        turn_id: Option<TurnId>,
-    ) -> Result<Option<Vec<SubagentInvocation>>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(session) = store.get_session(session_id).await? else {
-            return Ok(None);
-        };
-        store
-            .list_subagent_invocations_for_session(session.id, turn_id)
-            .await
-            .map(Some)
-    }
-
-    pub async fn get_session_subagent_invocation_for_request(
-        &self,
-        session_id: SessionId,
-        invocation_id: &str,
-    ) -> Result<Option<SubagentInvocation>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(invocation) = store.get_subagent_invocation(invocation_id).await? else {
-            return Ok(None);
-        };
-        if invocation.parent_session_id != session_id {
-            return Ok(None);
-        }
-        Ok(Some(invocation))
-    }
-
     pub async fn emit_session_started_observability_for_task(
         &self,
         session: &Session,

@@ -255,6 +255,14 @@ const sessionMessageCommandDaemonBlockImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/artifact_access.rs",
 ]);
 
+const sessionSubagentReadHandleApiPaths = new Set([
+  "core/crates/ctx-http/src/api/sessions/subagents/listings.rs",
+]);
+
+const sessionSubagentReadDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
+]);
+
 const sessionControlDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
 ]);
@@ -8465,6 +8473,45 @@ function scanSessionMessageCommandHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanSessionSubagentReadHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (sessionSubagentReadHandleApiPaths.has(filePath)) {
+    const sessionsHandleRegex = /\bSessionsHandle\b|State\s*<\s*SessionsHandle\s*>/gu;
+    for (
+      let match = sessionsHandleRegex.exec(contents);
+      match;
+      match = sessionsHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read route extracts broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const routeWiringRegex =
+      /\bsession_subagent_read\s*:\s*handle\.sessions\s*\(\s*\)|\bSessionSubagentReadHandle\s*,\s*sessions\s*;/gu;
+    for (
+      let match = routeWiringRegex.exec(contents);
+      match;
+      match = routeWiringRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read route exposes broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
     return [];
@@ -9393,6 +9440,57 @@ function scanSessionMessageCommandDaemonImplementationRatchet({ filePath, conten
   return violations;
 }
 
+function scanSessionSubagentReadDaemonImplementationRatchet({ filePath, contents }) {
+  if (!sessionSubagentReadDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const readFacadeRegex =
+    /\b(?:list_session_subagents_for_route|list_session_subagent_invocations_for_route|get_session_subagent_invocation_for_route)\b/gu;
+
+  for (const impl of rustImplBlocksForType({ contents, typeName: "SessionsHandle" })) {
+    for (
+      let match = readFacadeRegex.exec(impl.text);
+      match;
+      match = readFacadeRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read facade remains on broad sessions handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  const broadSeamRegex =
+    /\b(?:DaemonHandle|SessionsHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  for (const impl of rustImplBlocksForType({
+    contents,
+    typeName: "SessionSubagentReadHandle",
+  })) {
+    broadSeamRegex.lastIndex = 0;
+    for (
+      let match = broadSeamRegex.exec(impl.text);
+      match;
+      match = broadSeamRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read daemon implementation uses broad seam",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
 function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
   if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
     return [];
@@ -9708,6 +9806,77 @@ function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
         line,
         name: "session message command assembly hides strong daemon state scheduler seam",
         text: lines[line - 1]?.trim() ?? hidden[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "SessionSubagentReadHandle",
+  });
+  if (handleStruct) {
+    const broadFieldRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadFieldRegex.exec(handleStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read capability stores broad handle or runtime bag",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    const genericEscapeFieldRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers|effects)\s*:/gmu;
+    for (
+      let generic = genericEscapeFieldRegex.exec(handleStruct.text);
+      generic;
+      generic = genericEscapeFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + generic.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read capability exposes generic full-state field",
+        text: lines[line - 1]?.trim() ?? generic[0],
+      });
+    }
+  }
+
+  for (const impl of rustImplBlocksForType({
+    contents,
+    typeName: "SessionSubagentReadHandle",
+  })) {
+    const storeEscapeRegex =
+      /\bpub(?:\s*\([^)]*\))?\s+(?:async\s+)?fn\s+(?:store_for_session|existing_session_store|existing_session_store_for_write|session_store_or_none|session_stores)\b|\bpub(?:\s*\([^)]*\))?\s+(?:async\s+)?fn\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*->[^;\n{]*\bStore\b/gu;
+    for (
+      let escape = storeEscapeRegex.exec(impl.text);
+      escape;
+      escape = storeEscapeRegex.exec(impl.text)
+    ) {
+      const offset = impl.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session subagent read capability exposes store escape hatch",
+        text: lines[line - 1]?.trim() ?? escape[0],
       });
     }
   }
@@ -12982,6 +13151,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionSubagentReadHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionVcsHandleRatchet({
         filePath: relativePath,
         contents,
@@ -13170,6 +13343,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionSubagentReadHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionTitleModelModeTitleImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -13350,6 +13527,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionSubagentReadDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -14144,6 +14325,9 @@ module.exports = {
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
+  scanSessionSubagentReadDaemonImplementationRatchet,
+  scanSessionSubagentReadHandleFieldRatchet,
+  scanSessionSubagentReadHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,

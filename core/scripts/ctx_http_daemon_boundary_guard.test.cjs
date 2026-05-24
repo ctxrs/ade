@@ -285,6 +285,9 @@ const {
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
+  scanSessionSubagentReadDaemonImplementationRatchet,
+  scanSessionSubagentReadHandleFieldRatchet,
+  scanSessionSubagentReadHandleRatchet,
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
@@ -2254,6 +2257,85 @@ test("appstate guard rejects session message command broad handle fields", () =>
     "session message command capability exposes generic full-state field",
     "session message scheduler spawner stores strong daemon state seam",
     "session message command assembly hides strong daemon state scheduler seam",
+  ]));
+});
+
+test("appstate guard rejects session subagent read broad route handles", () => {
+  const handlerViolations = scanSessionSubagentReadHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/sessions/subagents/listings.rs",
+    contents: `
+      use ctx_daemon::daemon::SessionsHandle;
+      async fn list_session_subagents(
+        State(sessions): State<SessionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(handlerViolations, [
+    "session subagent read route extracts broad sessions handle",
+    "session subagent read route extracts broad sessions handle",
+  ]);
+
+  const routerViolations = scanSessionSubagentReadHandleRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self { session_subagent_read: handle.sessions() }
+      }
+      impl_route_state_extractors! {
+        SessionSubagentReadHandle, sessions;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(routerViolations), new Set([
+    "session subagent read route exposes broad sessions handle",
+  ]));
+});
+
+test("appstate guard rejects session subagent read broad daemon seams", () => {
+  const violations = scanSessionSubagentReadDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
+    contents: `
+      impl SessionsHandle {
+        pub async fn list_session_subagents_for_route(&self) {}
+      }
+      impl SessionSubagentReadHandle {
+        fn bad(&self, handle: DaemonHandle, state: Arc<DaemonState>, sessions: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session subagent read facade remains on broad sessions handle",
+    "session subagent read daemon implementation uses broad seam",
+  ]));
+});
+
+test("appstate guard rejects session subagent read broad fields and store escapes", () => {
+  const violations = scanSessionSubagentReadHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct SessionSubagentReadHandle {
+        sessions: SessionsHandle,
+        workspaces: WorkspacesHandle,
+        providers: ProvidersHandle,
+        state: Arc<DaemonState>,
+        store_manager: StoreManager,
+        workspace_runtime: WorkspaceRuntime,
+        effects: SessionSubagentReadEffects,
+      }
+      impl SessionSubagentReadHandle {
+        pub(in crate::daemon) async fn existing_session_store(&self, id: SessionId) -> Result<Store> {}
+        pub(in crate::daemon) fn session_stores(&self) -> &SessionStoreLookup {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session subagent read capability stores broad handle or runtime bag",
+    "session subagent read capability exposes generic full-state field",
+    "session subagent read capability exposes store escape hatch",
   ]));
 });
 

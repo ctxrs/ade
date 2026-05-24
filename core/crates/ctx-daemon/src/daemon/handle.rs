@@ -5,12 +5,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
 use anyhow::Context;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, SandboxBinding, Session, SessionEvent, SessionEventType,
-    SessionHeadDelta, SessionSummaryDelta, SessionTurn, SessionTurnToolSummary, Task,
-    TaskDeltaKind, TerminalSession, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    Worktree, WorktreeVcsSnapshot,
+    SessionHeadDelta, SessionSummary, SessionSummaryDelta, SessionTurn, SessionTurnToolSummary,
+    SubagentInvocation, Task, TaskDeltaKind, TerminalSession, Workspace, WorkspaceActiveHeadBatch,
+    WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
@@ -443,6 +443,10 @@ impl DaemonHandle {
             self.session_title_model_mode(),
             SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.state)),
         )
+    }
+
+    pub fn session_subagent_read(&self) -> SessionSubagentReadHandle {
+        SessionSubagentReadHandle::new(self.session_store_lookup())
     }
 
     pub fn session_read_models(&self) -> SessionReadModelsHandle {
@@ -3676,6 +3680,73 @@ impl SessionTaskDeltaRefreshHost for SessionTitleModelModeTaskDeltaRefreshHost {
                 );
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionSubagentReadHandle {
+    session_stores: SessionStoreLookup,
+}
+
+impl SessionSubagentReadHandle {
+    pub(in crate::daemon) fn new(session_stores: SessionStoreLookup) -> Self {
+        Self { session_stores }
+    }
+
+    async fn load_session_store_and_parent(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Option<(Store, Session)>> {
+        let store = match self.session_stores.existing_session_store(session_id).await {
+            Ok(store) => store,
+            Err(crate::daemon::SessionStoreAccessError::NotFound) => return Ok(None),
+            Err(error) => return Err(session_store_access_anyhow(error)),
+        };
+        let Some(session) = store.get_session(session_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some((store, session)))
+    }
+
+    pub(in crate::daemon) async fn list_session_subagents_for_request(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Option<Vec<SessionSummary>>> {
+        let Some((store, session)) = self.load_session_store_and_parent(session_id).await? else {
+            return Ok(None);
+        };
+        store.list_subagent_sessions(session.id).await.map(Some)
+    }
+
+    pub(in crate::daemon) async fn list_session_subagent_invocations_for_request(
+        &self,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+    ) -> anyhow::Result<Option<Vec<SubagentInvocation>>> {
+        let Some((store, session)) = self.load_session_store_and_parent(session_id).await? else {
+            return Ok(None);
+        };
+        store
+            .list_subagent_invocations_for_session(session.id, turn_id)
+            .await
+            .map(Some)
+    }
+
+    pub(in crate::daemon) async fn get_session_subagent_invocation_for_request(
+        &self,
+        session_id: SessionId,
+        invocation_id: &str,
+    ) -> anyhow::Result<Option<SubagentInvocation>> {
+        let Some((store, _session)) = self.load_session_store_and_parent(session_id).await? else {
+            return Ok(None);
+        };
+        let Some(invocation) = store.get_subagent_invocation(invocation_id).await? else {
+            return Ok(None);
+        };
+        if invocation.parent_session_id != session_id {
+            return Ok(None);
+        }
+        Ok(Some(invocation))
     }
 }
 

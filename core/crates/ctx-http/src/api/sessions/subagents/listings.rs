@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn list_session_subagents(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentReadHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionSubagentsRouteResponse>, StatusCode> {
     state
@@ -12,7 +12,7 @@ pub(crate) async fn list_session_subagents(
 }
 
 pub(crate) async fn list_session_subagent_invocations(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentReadHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionSubagentInvocationsRouteQuery>,
 ) -> Result<Json<SessionSubagentInvocationsRouteResponse>, StatusCode> {
@@ -24,7 +24,7 @@ pub(crate) async fn list_session_subagent_invocations(
 }
 
 pub(crate) async fn get_session_subagent_invocation(
-    State(state): State<SessionsHandle>,
+    State(state): State<SessionSubagentReadHandle>,
     Path((session_id, id)): Path<(String, String)>,
 ) -> Result<Json<SessionSubagentInvocationRouteResponse>, StatusCode> {
     state
