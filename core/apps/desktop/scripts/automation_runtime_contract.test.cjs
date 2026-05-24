@@ -13,6 +13,8 @@ const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
 const WORKSPACE_WIZARD_SPEC = path.join(ROOT, "automation", "specs", "workspace-wizard.spec.cjs");
 const WORKSPACE_WIZARD_FLOW_HELPER = path.join(ROOT, "automation", "specs", "helpers", "workspace_wizard_flow.cjs");
+const REMOTE_BOOTSTRAP_SPEC = path.join(ROOT, "automation", "specs", "remote-bootstrap-install.spec.cjs");
+const REMOTE_CONTAINER_SPEC = path.join(ROOT, "automation", "specs", "remote-container-contract.spec.cjs");
 const DAEMON_RECONNECT_SPEC = path.join(ROOT, "automation", "specs", "daemon-reconnect.spec.cjs");
 const RECENT_WORKSPACE_SPEC = path.join(ROOT, "automation", "specs", "recent-workspace-open.spec.cjs");
 const LINUX_SANDBOX_LOCAL = path.join(ROOT, "src-tauri", "src", "linux_sandbox", "local.rs");
@@ -584,6 +586,22 @@ test("docker remote contract wrapper defaults to the real remote sandbox wizard 
   assert.match(wrapper, /CMD\+=\("--run-host" "\$\{RUN_HOST\}"\)/);
 });
 
+test("remote acceptance keeps live first-turn generation opt-in", () => {
+  const dockerWrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  const realWrapper = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  const bootstrapSpec = fs.readFileSync(REMOTE_BOOTSTRAP_SPEC, "utf8");
+  const containerSpec = fs.readFileSync(REMOTE_CONTAINER_SPEC, "utf8");
+  assert.match(dockerWrapper, /CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS="\$\{CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS:-0\}"/);
+  assert.match(realWrapper, /RUN_FIRST_TURN="\$\{CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN:-0\}"/);
+  assert.match(realWrapper, /CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN=1\|0/);
+  assert.equal(realWrapper.match(/"CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN=\$\{RUN_FIRST_TURN\}"/g)?.length, 2);
+  assert.match(realWrapper, /echo "run_first_turn=\$\{RUN_FIRST_TURN\}"/);
+  assert.match(bootstrapSpec, /CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN/);
+  assert.match(containerSpec, /CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN/);
+  assert.match(bootstrapSpec, /live model completion disabled for deterministic remote acceptance/);
+  assert.match(containerSpec, /live model completion disabled for deterministic remote acceptance/);
+});
+
 test("linux local install truth wrapper validates the installed AppImage through the real workspace wizard lane", () => {
   const wrapper = fs.readFileSync(LINUX_LOCAL_TRUTH_WRAPPER, "utf8");
   assert.match(wrapper, /curl -fsSL '\$\{INSTALL_URL\}' \| sh/);
@@ -609,7 +627,7 @@ test("release candidate remote workspace runs standalone Linux launch smoke by d
 
 test("mac remote truth wrapper runs the real remote matrix and rejects docker-backed proof scopes", () => {
   const wrapper = fs.readFileSync(MAC_REMOTE_TRUTH_WRAPPER, "utf8");
-  assert.match(wrapper, /CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=1/);
+  assert.match(wrapper, /CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS="\$\{CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS:-0\}"/);
   assert.match(wrapper, /CTX_AUTOMATION_CN_SHARED_BACKEND=0/);
   assert.match(wrapper, /REMOTE_MATRIX_SCRIPT="\$\{ROOT\}\/scripts\/updater_e2e_remote_matrix\.sh"/);
   assert.match(wrapper, /"\$\{REMOTE_MATRIX_SCRIPT\}" run --/);

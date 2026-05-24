@@ -30,10 +30,16 @@ const CONTRACT_REPORT_PATH = String(
   process.env.CTX_REMOTE_BOOTSTRAP_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-bootstrap-contract.json"),
 ).trim();
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
+const RUN_FIRST_TURN = REQUIRE_FIRST_TURN_SUCCESS || parseBoolean(process.env.CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN || "0");
 const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
 const REQUIRE_ALL_HARNESS_INSTALLS = parseBoolean(process.env.CTX_REMOTE_WORKSPACE_E2E_REQUIRE_ALL_HARNESS_INSTALLS || "0");
 const fixture = resolveRemoteFixtureEnv({ lane: "host" });
 const perfBudgets = resolveRemotePerformanceBudgets({ fixture });
+const FIRST_TURN_SKIPPED = {
+  attempted: false,
+  status: "skipped",
+  reason: "live model completion disabled for deterministic remote acceptance",
+};
 
 let contractRecorder = null;
 
@@ -488,6 +494,7 @@ describe("remote bootstrap install e2e", () => {
       auth_test_mode: AUTH_TEST_MODE,
       expect_connect_failure: EXPECT_CONNECT_FAILURE,
       require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+      run_first_turn: RUN_FIRST_TURN,
       skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
       require_all_harness_installs: REQUIRE_ALL_HARNESS_INSTALLS,
       managed_provider_ids: REQUIRE_ALL_HARNESS_INSTALLS ? resolveManagedProviderInstallIds() : [],
@@ -584,27 +591,29 @@ describe("remote bootstrap install e2e", () => {
         });
         contractRecorder.recordArtifact("provider_verify_payload", firstTurnProvider.verifyPayload || null);
       } catch (error) {
-        if (REQUIRE_FIRST_TURN_SUCCESS) {
-          throw new Error(`failed to configure remote first-turn provider auth: ${String(error)}`);
-        }
-        firstTurn = {
-          status: "failed",
-          stage: "provider_setup",
-          detail: String(error),
-        };
-        contractRecorder.recordAssertion("provider_setup", "warn", String(error));
+        throw new Error(`failed to configure remote provider auth: ${String(error)}`);
       }
 
-      if (!firstTurn) {
-        firstTurn = await runDeterministicFirstTurnOutcome(
-          workspaceLaunch.workspaceId,
-          {
-            providerId: firstTurnProvider?.providerId || "codex",
-            modelId: firstTurnProvider?.modelId || "default",
-            prompt: "hello",
-            timeoutMs: 180000,
-          },
-        );
+      if (RUN_FIRST_TURN) {
+        try {
+          firstTurn = await runDeterministicFirstTurnOutcome(
+            workspaceLaunch.workspaceId,
+            {
+              providerId: firstTurnProvider?.providerId || "codex",
+              modelId: firstTurnProvider?.modelId || "default",
+              prompt: "hello",
+              timeoutMs: 180000,
+            },
+          );
+        } catch (error) {
+          firstTurn = {
+            attempted: true,
+            status: "failed",
+            error: String(error),
+          };
+        }
+      } else {
+        firstTurn = FIRST_TURN_SKIPPED;
       }
       contractRecorder.recordArtifact("first_turn", firstTurn);
       contractRecorder.recordAssertion(
@@ -761,6 +770,7 @@ describe("remote bootstrap install e2e", () => {
           auth_test_mode: AUTH_TEST_MODE,
           expect_connect_failure: EXPECT_CONNECT_FAILURE,
           require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+          run_first_turn: RUN_FIRST_TURN,
           perf_budgets: perfBudgets,
           first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
           workspace_launch: workspaceLaunch,

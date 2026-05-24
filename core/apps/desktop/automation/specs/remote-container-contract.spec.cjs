@@ -34,10 +34,16 @@ const reportPath = String(
   process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json"),
 ).trim();
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
+const RUN_FIRST_TURN = REQUIRE_FIRST_TURN_SUCCESS || parseBoolean(process.env.CTX_AUTOMATION_REMOTE_RUN_FIRST_TURN || "0");
 const REQUIRE_ALL_HARNESS_INSTALLS = parseBoolean(process.env.CTX_REMOTE_WORKSPACE_E2E_REQUIRE_ALL_HARNESS_INSTALLS || "0");
 const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
 const fixture = resolveRemoteFixtureEnv({ lane: "sandbox" });
 const perfBudgets = resolveRemotePerformanceBudgets({ fixture });
+const FIRST_TURN_SKIPPED = {
+  attempted: false,
+  status: "skipped",
+  reason: "live model completion disabled for deterministic remote acceptance",
+};
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
     .split(",")
@@ -460,6 +466,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
     contractRecorder.recordArtifact("fixture_preflight", {
       report_path: reportPath,
       require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+      run_first_turn: RUN_FIRST_TURN,
       require_all_harness_installs: REQUIRE_ALL_HARNESS_INSTALLS,
       skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
       managed_provider_ids: REQUIRE_ALL_HARNESS_INSTALLS ? resolveManagedProviderInstallIds() : [],
@@ -565,36 +572,37 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         throw new Error(`expected /api/health 200 after remote sandbox launch, got ${daemonHealth.status}`);
       }
 
-      try {
-        provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
-          installTarget: "container",
-          endpointName: `remote-container-openrouter-${runId}`,
-        });
-        contractRecorder.recordArtifact("provider_verify_payload", provider.verifyPayload || null);
-        firstTurn = await runDeterministicFirstTurnOutcome(
-          workspaceId,
-          {
-            providerId: provider.providerId,
-            modelId: provider.modelId,
-            prompt: "hello",
-            timeoutMs: 180000,
-          },
-        );
-        firstTurn = { attempted: true, ...firstTurn, provider };
-        if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
-          const failure = new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
-          failure.firstTurnOutcome = firstTurn;
-          throw failure;
+      provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
+        installTarget: "container",
+        endpointName: `remote-container-openrouter-${runId}`,
+      });
+      contractRecorder.recordArtifact("provider_verify_payload", provider.verifyPayload || null);
+      if (RUN_FIRST_TURN) {
+        try {
+          firstTurn = await runDeterministicFirstTurnOutcome(
+            workspaceId,
+            {
+              providerId: provider.providerId,
+              modelId: provider.modelId,
+              prompt: "hello",
+              timeoutMs: 180000,
+            },
+          );
+          firstTurn = { attempted: true, ...firstTurn, provider };
+          if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
+            const failure = new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
+            failure.firstTurnOutcome = firstTurn;
+            throw failure;
+          }
+        } catch (error) {
+          firstTurn = error?.firstTurnOutcome || {
+            attempted: true,
+            status: "failed",
+            error: String(error),
+          };
         }
-      } catch (error) {
-        firstTurn = error?.firstTurnOutcome || {
-          attempted: true,
-          status: "failed",
-          error: String(error),
-        };
-        if (REQUIRE_FIRST_TURN_SUCCESS) {
-          throw error;
-        }
+      } else {
+        firstTurn = { ...FIRST_TURN_SKIPPED, provider };
       }
 
       contractRecorder.recordArtifact("first_turn", firstTurn);
@@ -603,6 +611,9 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         firstTurn.status === "success" ? "pass" : "warn",
         firstTurn.status === "success" ? "remote sandbox first turn succeeded" : JSON.stringify(firstTurn),
       );
+      if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
+        throw new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
+      }
 
       if (REQUIRE_ALL_HARNESS_INSTALLS) {
         const managedProviderInstalls = await installManagedProvidersAndAssertInstalled("container", {
