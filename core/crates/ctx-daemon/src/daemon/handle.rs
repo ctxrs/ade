@@ -8,8 +8,8 @@ use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SandboxBinding, Session, SessionEvent, SessionEventType, Task,
-    TaskDeltaKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
-    WorktreeVcsSnapshot,
+    TaskDeltaKind, TerminalSession, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    Worktree, WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
@@ -31,6 +31,7 @@ use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::manager::WorkspaceStoreAccessOutcome;
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
+use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
@@ -44,6 +45,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use super::{
     blobs::BlobHandle,
     state::{DaemonState, TelemetryRuntime, WorkspaceFileCompletionsCache},
+    terminals::CreateTerminalLaunchRequest,
 };
 
 #[derive(Clone)]
@@ -1206,6 +1208,19 @@ impl DaemonHandle {
 
     pub fn transport(&self) -> TransportHandle {
         TransportHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn terminal_route(&self) -> TerminalRouteHandle {
+        let create_terminal = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |req: CreateTerminalLaunchRequest| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::terminals::create_workspace_terminal(&state, req).await
+                }) as CreateTerminalFuture
+            }
+        });
+        TerminalRouteHandle::new(Arc::clone(&self.state.transport.terminals), create_terminal)
     }
 
     pub fn execution_launch(&self) -> ExecutionLaunchHandle {
@@ -4355,6 +4370,40 @@ impl LinuxSandboxRuntimeHandle {
 
     pub(in crate::daemon) fn harness(&self) -> &HarnessRuntimeManager {
         self.harness.as_ref()
+    }
+}
+
+pub(in crate::daemon) type CreateTerminalFuture =
+    Pin<Box<dyn Future<Output = Result<TerminalSession, TerminalLaunchError>> + Send + 'static>>;
+pub(in crate::daemon) type CreateTerminalEffect =
+    Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct TerminalRouteHandle {
+    terminals: Arc<TerminalManager>,
+    create_terminal: CreateTerminalEffect,
+}
+
+impl TerminalRouteHandle {
+    pub(in crate::daemon) fn new(
+        terminals: Arc<TerminalManager>,
+        create_terminal: CreateTerminalEffect,
+    ) -> Self {
+        Self {
+            terminals,
+            create_terminal,
+        }
+    }
+
+    pub(in crate::daemon) fn terminals(&self) -> &TerminalManager {
+        self.terminals.as_ref()
+    }
+
+    pub(in crate::daemon) async fn create_terminal(
+        &self,
+        req: CreateTerminalLaunchRequest,
+    ) -> Result<TerminalSession, TerminalLaunchError> {
+        (self.create_terminal)(req).await
     }
 }
 

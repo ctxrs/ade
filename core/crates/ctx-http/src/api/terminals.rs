@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::TransportHandle;
+use ctx_daemon::daemon::TerminalRouteHandle;
 use ctx_route_contracts::terminals::{
     CreateTerminalRouteRequest, DeleteTerminalRouteParams, ListWorkspaceTerminalsRouteParams,
     MintTerminalStreamTokenRouteParams, TerminalRouteError, TerminalRouteErrorKind,
@@ -11,7 +11,7 @@ use ctx_route_contracts::terminals::{
 };
 
 pub(super) async fn list_workspace_terminals(
-    State(state): State<TransportHandle>,
+    State(state): State<TerminalRouteHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TerminalSessionRouteResponse>>, StatusCode> {
     state
@@ -22,7 +22,7 @@ pub(super) async fn list_workspace_terminals(
 }
 
 pub(super) async fn create_workspace_terminal(
-    State(state): State<TransportHandle>,
+    State(state): State<TerminalRouteHandle>,
     Path(id): Path<String>,
     Json(req): Json<CreateTerminalRouteRequest>,
 ) -> Result<Json<TerminalSessionRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -45,7 +45,7 @@ fn terminal_route_error_response(error: TerminalRouteError) -> (StatusCode, Json
 }
 
 pub(super) async fn delete_terminal(
-    State(state): State<TransportHandle>,
+    State(state): State<TerminalRouteHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     state
@@ -56,7 +56,7 @@ pub(super) async fn delete_terminal(
 }
 
 pub(super) async fn mint_terminal_stream_token(
-    State(state): State<TransportHandle>,
+    State(state): State<TerminalRouteHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<TerminalStreamConnectRouteResponse>, StatusCode> {
     state

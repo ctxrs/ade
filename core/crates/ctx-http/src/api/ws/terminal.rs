@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::TransportHandle;
+use ctx_daemon::daemon::TerminalRouteHandle;
 use ctx_route_contracts::terminals::{
     TerminalRouteError, TerminalRouteErrorKind, TerminalStreamRouteParams,
 };
@@ -13,7 +13,7 @@ pub(super) use queue::{
 };
 
 pub(in crate::api) async fn terminal_stream_ws(
-    State(state): State<TransportHandle>,
+    State(state): State<TerminalRouteHandle>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,

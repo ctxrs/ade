@@ -190,6 +190,7 @@ const {
   scanDaemonHandleConstructionRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
+  scanTerminalRouteHandleRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
   scanProviderAuthImportDaemonFacadeRatchet,
@@ -644,6 +645,75 @@ test("appstate daemon shutdown handle ratchet rejects broad fields and wrong rou
     fieldViolations.includes(
       "daemon shutdown capability exposes generic full-state escape hatch",
     ),
+  );
+});
+
+test("appstate terminal route handle ratchet rejects broad terminal route seams", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/tasks.rs",
+      contents: `
+        async fn route(State(terminals): State<TerminalRouteHandle>) {}
+      `,
+    }).map((violation) => violation.name),
+    ["terminal route extracts TerminalRouteHandle outside terminal routes"],
+  );
+
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/terminals.rs",
+      contents: `
+        use ctx_daemon::daemon::TransportHandle;
+        async fn route(State(transport): State<TransportHandle>) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "terminal route extracts broad transport handle",
+      "terminal route extracts broad transport handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/route_contract.rs",
+      contents: `
+        impl TransportHandle {
+          pub async fn delete_terminal_for_route(&self) {}
+        }
+      `,
+    }).map((violation) => violation.name),
+    ["terminal route contract remains on broad transport handle"],
+  );
+
+  const fieldViolations = scanTerminalRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct TerminalRouteHandle {
+        state: Arc<DaemonState>,
+        transport: TransportHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "terminal route capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "terminal route capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-http/src/api/ws/terminal.rs",
+      contents: `
+        async fn route(State(terminals): State<TerminalRouteHandle>) {}
+      `,
+    }),
+    [],
   );
 });
 
@@ -7733,7 +7803,7 @@ test("daemon boundary guard scopes terminal REST route contracts", () => {
     scanText({
       filePath: "core/crates/ctx-http/src/api/terminals.rs",
       contents: `
-        async fn handler(state: TransportHandle) -> Json<TerminalSessionRouteResponse> {
+        async fn handler(state: TerminalRouteHandle) -> Json<TerminalSessionRouteResponse> {
           state.create_workspace_terminal_for_route(&id, req).await?;
           state.delete_terminal_for_route(DeleteTerminalRouteParams::new(id)).await?;
           state.mint_terminal_stream_token_for_route(MintTerminalStreamTokenRouteParams::new(id)).await?;

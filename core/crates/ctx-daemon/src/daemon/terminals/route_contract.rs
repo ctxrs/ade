@@ -6,7 +6,7 @@ use ctx_route_contracts::terminals::{
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
 use ctx_transport_runtime::terminals::TerminalStreamAccessError;
 
-use crate::daemon::TransportHandle;
+use crate::daemon::TerminalRouteHandle;
 
 use super::{launch::CreateTerminalLaunchRequest, TerminalStreamRouteAdmission};
 
@@ -29,13 +29,13 @@ fn terminal_launch_route_error(error: TerminalLaunchError) -> TerminalRouteError
     }
 }
 
-impl TransportHandle {
+impl TerminalRouteHandle {
     pub async fn list_workspace_terminal_responses_for_route(
         &self,
         params: ListWorkspaceTerminalsRouteParams,
     ) -> Result<Vec<TerminalSessionRouteResponse>, TerminalRouteError> {
         let workspace_id = params.parse_workspace_id()?;
-        let sessions = super::list_workspace_terminals(&self.state, workspace_id).await;
+        let sessions = super::list_workspace_terminals(self.terminals(), workspace_id).await;
         Ok(sessions.into_iter().map(Into::into).collect())
     }
 
@@ -45,7 +45,7 @@ impl TransportHandle {
         req: CreateTerminalRouteRequest,
     ) -> Result<TerminalSessionRouteResponse, TerminalRouteError> {
         let launch_req = create_terminal_launch_request(req.parse(raw_workspace_id)?);
-        super::create_workspace_terminal(&self.state, launch_req)
+        self.create_terminal(launch_req)
             .await
             .map(Into::into)
             .map_err(terminal_launch_route_error)
@@ -56,7 +56,7 @@ impl TransportHandle {
         params: DeleteTerminalRouteParams,
     ) -> Result<(), TerminalRouteError> {
         let terminal_id = params.parse_terminal_id()?;
-        if super::delete_terminal(&self.state, terminal_id).await {
+        if super::delete_terminal(self.terminals(), terminal_id).await {
             return Ok(());
         }
         Err(TerminalRouteError::not_found("terminal not found"))
@@ -67,7 +67,7 @@ impl TransportHandle {
         params: MintTerminalStreamTokenRouteParams,
     ) -> Result<TerminalStreamConnectRouteResponse, TerminalRouteError> {
         let terminal_id = params.parse_terminal_id()?;
-        let token = super::mint_terminal_stream_token(&self.state, terminal_id)
+        let token = super::mint_terminal_stream_token(self.terminals(), terminal_id)
             .await
             .ok_or_else(|| TerminalRouteError::not_found("terminal not found"))?;
         Ok(TerminalStreamConnectRouteResponse {
@@ -86,9 +86,7 @@ impl TransportHandle {
             .token()
             .ok_or_else(terminal_stream_missing_token_route_error)?;
         let session = self
-            .state
-            .transport
-            .terminals
+            .terminals()
             .require_stream_access(terminal_id, token)
             .await
             .map_err(terminal_stream_access_route_error)?;
@@ -116,8 +114,34 @@ fn terminal_stream_access_route_error(error: TerminalStreamAccessError) -> Termi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctx_core::ids::TerminalId;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use ctx_core::ids::{TerminalId, WorkspaceId};
+    use ctx_core::models::TerminalStatus;
     use ctx_route_contracts::terminals::TerminalRouteErrorKind;
+    use ctx_transport_runtime::terminals::{TerminalCreateRequest, TerminalManager};
+
+    fn route_handle_with_create_effect(
+        terminals: Arc<TerminalManager>,
+        create_terminal: impl Fn(CreateTerminalLaunchRequest) -> crate::daemon::handle::CreateTerminalFuture
+            + Send
+            + Sync
+            + 'static,
+    ) -> TerminalRouteHandle {
+        TerminalRouteHandle::new(terminals, Arc::new(create_terminal))
+    }
+
+    fn route_handle(terminals: Arc<TerminalManager>) -> TerminalRouteHandle {
+        route_handle_with_create_effect(terminals, |_req| {
+            Box::pin(async {
+                Err(TerminalLaunchError::internal(
+                    "test route handle should not launch terminals",
+                ))
+            }) as crate::daemon::handle::CreateTerminalFuture
+        })
+    }
 
     #[test]
     fn terminal_stream_access_errors_map_to_route_errors() {
@@ -137,18 +161,10 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_stream_route_checks_missing_token_before_terminal_lookup() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let daemon = crate::test_support::TestDaemon::new_for_test(
-            temp.path().to_path_buf(),
-            "http://127.0.0.1:4567".to_string(),
-        )
-        .await
-        .expect("test daemon");
+        let handle = route_handle(Arc::new(TerminalManager::default()));
         let missing_terminal_id = TerminalId::new();
 
-        let result = daemon
-            .handle()
-            .transport()
+        let result = handle
             .admit_terminal_stream_for_route(TerminalStreamRouteParams::new(
                 missing_terminal_id.0.to_string(),
                 None,
@@ -162,5 +178,103 @@ mod tests {
 
         assert_eq!(error.kind(), TerminalRouteErrorKind::Unauthorized);
         assert_eq!(error.message(), "terminal stream token required");
+    }
+
+    #[tokio::test]
+    async fn create_terminal_rejects_invalid_workspace_before_launch_effect() {
+        let launch_calls = Arc::new(AtomicUsize::new(0));
+        let handle = route_handle_with_create_effect(Arc::new(TerminalManager::default()), {
+            let launch_calls = Arc::clone(&launch_calls);
+            move |_req| {
+                launch_calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Err(TerminalLaunchError::internal(
+                        "invalid route params should reject before launch",
+                    ))
+                }) as crate::daemon::handle::CreateTerminalFuture
+            }
+        });
+
+        let result = handle
+            .create_workspace_terminal_for_route(
+                "not-a-workspace-id",
+                CreateTerminalRouteRequest {
+                    task_id: None,
+                    session_id: None,
+                    worktree_id: None,
+                    cwd: None,
+                    shell: None,
+                },
+            )
+            .await;
+        let error = match result {
+            Ok(_) => panic!("invalid workspace id should reject"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), TerminalRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+        assert_eq!(launch_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn create_terminal_launch_errors_map_to_route_errors() {
+        let handle =
+            route_handle_with_create_effect(Arc::new(TerminalManager::default()), |_req| {
+                Box::pin(async { Err(TerminalLaunchError::not_found("workspace missing")) })
+                    as crate::daemon::handle::CreateTerminalFuture
+            });
+
+        let result = handle
+            .create_workspace_terminal_for_route(
+                &WorkspaceId::new().0.to_string(),
+                CreateTerminalRouteRequest {
+                    task_id: None,
+                    session_id: None,
+                    worktree_id: None,
+                    cwd: None,
+                    shell: None,
+                },
+            )
+            .await;
+        let error = match result {
+            Ok(_) => panic!("launch error should map to route error"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), TerminalRouteErrorKind::NotFound);
+        assert_eq!(error.message(), "workspace missing");
+    }
+
+    #[tokio::test]
+    async fn delete_terminal_removes_kills_and_marks_session_exited() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let terminals = Arc::new(TerminalManager::default());
+        let handle = route_handle(Arc::clone(&terminals));
+        let session = terminals
+            .create(TerminalCreateRequest {
+                workspace_id: WorkspaceId::new(),
+                task_id: None,
+                session_id: None,
+                worktree_id: None,
+                cwd: temp.path().to_path_buf(),
+                shell: "/bin/sh".to_string(),
+                cols: None,
+                rows: None,
+                env: HashMap::new(),
+                native_container: None,
+                shared_vm_container: None,
+            })
+            .await
+            .expect("terminal session");
+        let terminal_id = session.snapshot().id;
+
+        handle
+            .delete_terminal_for_route(DeleteTerminalRouteParams::new(terminal_id.0.to_string()))
+            .await
+            .expect("delete terminal");
+
+        assert!(terminals.get(terminal_id).await.is_none());
+        assert!(matches!(session.snapshot().status, TerminalStatus::Exited));
     }
 }

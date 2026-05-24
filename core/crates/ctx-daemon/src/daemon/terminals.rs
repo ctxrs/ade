@@ -4,31 +4,31 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
-use ctx_transport_runtime::terminals::TerminalStreamSession;
+use ctx_transport_runtime::terminals::{TerminalManager, TerminalStreamSession};
 
 use crate::daemon::DaemonState;
 
 mod launch;
 mod route_contract;
 
-use self::launch::CreateTerminalLaunchRequest;
+pub(in crate::daemon) use self::launch::CreateTerminalLaunchRequest;
 
 async fn list_workspace_terminals(
-    state: &Arc<DaemonState>,
+    terminals: &TerminalManager,
     workspace_id: WorkspaceId,
 ) -> Vec<TerminalSession> {
-    state.transport.terminals.list(workspace_id).await
+    terminals.list(workspace_id).await
 }
 
-async fn create_workspace_terminal(
+pub(in crate::daemon) async fn create_workspace_terminal(
     state: &Arc<DaemonState>,
     req: CreateTerminalLaunchRequest,
 ) -> Result<TerminalSession, TerminalLaunchError> {
     launch::create_workspace_terminal(state, req).await
 }
 
-async fn delete_terminal(state: &Arc<DaemonState>, terminal_id: TerminalId) -> bool {
-    let session = state.transport.terminals.remove(terminal_id).await;
+async fn delete_terminal(terminals: &TerminalManager, terminal_id: TerminalId) -> bool {
+    let session = terminals.remove(terminal_id).await;
     if let Some(session) = session {
         let _ = session.kill();
         session.mark_exited(None);
@@ -48,10 +48,10 @@ pub struct TerminalStreamRouteAdmission {
 }
 
 async fn mint_terminal_stream_token(
-    state: &Arc<DaemonState>,
+    terminals: &TerminalManager,
     terminal_id: TerminalId,
 ) -> Option<TerminalStreamConnectPath> {
-    let handle = state.transport.terminals.get(terminal_id).await?;
+    let handle = terminals.get(terminal_id).await?;
     let (stream_path, expires_at) = handle.issue_stream_connect_path();
     Some(TerminalStreamConnectPath {
         stream_path,

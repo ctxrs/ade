@@ -374,6 +374,11 @@ const terminalRestRouteApiRoots = [
   "core/crates/ctx-http/src/api/terminals/",
 ];
 
+const terminalRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/terminals.rs",
+  "core/crates/ctx-http/src/api/ws/terminal.rs",
+]);
+
 const taskCreationPlaceholderExtractorApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_task.rs",
 ];
@@ -7133,6 +7138,109 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanTerminalRouteHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (filePath.startsWith("core/crates/ctx-http/src/")) {
+    const extractorRegex =
+      /(?:\bState\s*(?:\(\s*(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*TerminalRouteHandle\s*>|\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*State\s*<\s*TerminalRouteHandle\s*>)/gu;
+    if (!terminalRouteExtractorAllowedPaths.has(filePath)) {
+      for (
+        let match = extractorRegex.exec(contents);
+        match;
+        match = extractorRegex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route extracts TerminalRouteHandle outside terminal routes",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    if (terminalRouteExtractorAllowedPaths.has(filePath)) {
+      const broadTransportRegex =
+        /\bTransportHandle\b|State\s*<\s*TransportHandle\s*>/gu;
+      for (
+        let match = broadTransportRegex.exec(contents);
+        match;
+        match = broadTransportRegex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route extracts broad transport handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/terminals/route_contract.rs") {
+    const broadImplRegex =
+      /\bimpl\s+TransportHandle\b|\b(?:list_workspace_terminal_responses|create_workspace_terminal|delete_terminal|mint_terminal_stream_token|admit_terminal_stream)_for_route\s*\([^)]*&\s*TransportHandle/gu;
+    for (
+      let match = broadImplRegex.exec(contents);
+      match;
+      match = broadImplRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "terminal route contract remains on broad transport handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const block = rustStructBlockForType({ contents, typeName: "TerminalRouteHandle" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport)\s*:/gmu;
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route capability stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanProviderAccountHandleRatchet({ filePath, contents }) {
   if (!providerAccountCrudApiRoots.some((root) => filePath.startsWith(root))) {
     return [];
@@ -11835,6 +11943,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTerminalRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanProviderAccountHandleRatchet({
         filePath: relativePath,
         contents,
@@ -11998,6 +12110,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTerminalRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -12025,6 +12141,10 @@ function scanRepo() {
         contents,
       }),
       ...scanDaemonShutdownHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTerminalRouteHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -12144,6 +12264,10 @@ function scanRepo() {
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
       }),
       ...scanDaemonHandleConstructionRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTerminalRouteHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -12891,6 +13015,7 @@ module.exports = {
   scanDaemonHandleConstructionRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
+  scanTerminalRouteHandleRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
   scanProviderAuthImportDaemonFacadeRatchet,
