@@ -34,6 +34,19 @@ pub struct WebSessionLaunchError {
 }
 
 impl WebSessionLaunchError {
+    pub(in crate::daemon) fn bad_request(error: impl Into<String>) -> Self {
+        launch_error(WebSessionLaunchErrorKind::BadRequest, error)
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn forbidden(error: impl Into<String>) -> Self {
+        launch_error(WebSessionLaunchErrorKind::Forbidden, error)
+    }
+
+    pub(in crate::daemon) fn internal(error: impl Into<String>) -> Self {
+        launch_error(WebSessionLaunchErrorKind::Internal, error)
+    }
+
     pub fn kind(&self) -> WebSessionLaunchErrorKind {
         self.kind
     }
@@ -89,7 +102,7 @@ fn launch_error(
 }
 
 fn bad_request(error: impl Into<String>) -> WebSessionLaunchError {
-    launch_error(WebSessionLaunchErrorKind::BadRequest, error)
+    WebSessionLaunchError::bad_request(error)
 }
 
 fn request_or_policy_error(error: anyhow::Error) -> WebSessionLaunchError {
@@ -107,7 +120,7 @@ fn request_or_policy_error(error: anyhow::Error) -> WebSessionLaunchError {
 }
 
 fn internal_error(error: impl Into<String>) -> WebSessionLaunchError {
-    launch_error(WebSessionLaunchErrorKind::Internal, error)
+    WebSessionLaunchError::internal(error)
 }
 
 #[cfg(test)]

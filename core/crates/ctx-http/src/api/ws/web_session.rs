@@ -7,13 +7,13 @@ use tokio_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
 
-use ctx_daemon::daemon::TransportHandle;
+use ctx_daemon::daemon::WebSessionRouteHandle;
 use ctx_transport_runtime::web_sessions::WebSessionAccessError;
 
 use super::super::web_sessions::WebSessionStreamAccessQuery;
 
 pub(crate) async fn web_session_signal(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
     Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
@@ -37,7 +37,11 @@ fn web_session_access_status(error: WebSessionAccessError) -> StatusCode {
     }
 }
 
-async fn handle_web_session_socket(socket: WebSocket, state: TransportHandle, session_id: String) {
+async fn handle_web_session_socket(
+    socket: WebSocket,
+    state: WebSessionRouteHandle,
+    session_id: String,
+) {
     let (upstream, mut viewer_guard) =
         match state.connect_web_session_signal_bridge(session_id).await {
             Ok(parts) => parts,

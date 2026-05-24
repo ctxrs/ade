@@ -3,7 +3,7 @@ use super::*;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use ctx_daemon::daemon::{RequestBaseHandle, TransportHandle};
+use ctx_daemon::daemon::{RequestBaseHandle, WebSessionRouteHandle};
 use ctx_transport_runtime::web_sessions::WebSessionAccessError;
 
 #[derive(Debug, Serialize)]
@@ -15,7 +15,7 @@ pub(in crate::api) struct WebSessionStreamConnectInfo {
 
 pub(in crate::api) async fn mint_web_session_stream_token(
     State(request_base): State<RequestBaseHandle>,
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WebSessionStreamConnectInfo>, StatusCode> {
@@ -40,7 +40,7 @@ pub(in crate::api) async fn mint_web_session_stream_token(
 
 pub(in crate::api) async fn web_session_view(
     State(request_base): State<RequestBaseHandle>,
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
     Query(query): Query<WebSessionStreamAccessQuery>,
 ) -> Result<Response, StatusCode> {

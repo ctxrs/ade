@@ -1,11 +1,11 @@
 use super::*;
-use ctx_daemon::daemon::TransportHandle;
+use ctx_daemon::daemon::WebSessionRouteHandle;
 use ctx_route_contracts::web_sessions::{
     WebSessionCreateRouteRequest, WebSessionRouteError, WebSessionRouteErrorKind,
 };
 
 pub(in crate::api) async fn create_web_session(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Json(payload): Json<WebSessionCreateRouteRequest>,
 ) -> Result<Json<WebSessionInfo>, (StatusCode, Json<ApiErrorResp>)> {
     let info = state

@@ -16,7 +16,7 @@ use ctx_daemon::daemon::{
     SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
     TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
     TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TerminalRouteHandle,
-    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WebSessionRouteHandle,
     WorkspaceActiveHandle, WorkspaceAttachmentsHandle, WorkspaceDeletionHandle,
     WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
@@ -139,8 +139,8 @@ pub struct RouteHandles {
     pub(in crate::api) provider_options: ProviderOptionsHandle,
     pub(in crate::api) provider_workspace_auth: ProviderWorkspaceAuthHandle,
     pub(in crate::api) telemetry: TelemetryHandle,
-    pub(in crate::api) transport: TransportHandle,
     pub(in crate::api) terminal_route: TerminalRouteHandle,
+    pub(in crate::api) web_session_route: WebSessionRouteHandle,
     pub(in crate::api) execution_launch: ExecutionLaunchHandle,
     pub(in crate::api) linux_sandbox_runtime: LinuxSandboxRuntimeHandle,
     pub(in crate::api) update_drain: UpdateDrainHandle,
@@ -204,8 +204,8 @@ impl RouteHandles {
             provider_options: handle.provider_options(),
             provider_workspace_auth: handle.provider_workspace_auth(),
             telemetry: handle.telemetry(),
-            transport: handle.transport(),
             terminal_route: handle.terminal_route(),
+            web_session_route: handle.web_session_route(),
             execution_launch: handle.execution_launch(),
             linux_sandbox_runtime: handle.linux_sandbox_runtime(),
             update_drain: handle.update_drain(),
@@ -274,8 +274,8 @@ impl_route_state_extractors! {
     ProviderOptionsHandle, provider_options;
     ProviderWorkspaceAuthHandle, provider_workspace_auth;
     TelemetryHandle, telemetry;
-    TransportHandle, transport;
     TerminalRouteHandle, terminal_route;
+    WebSessionRouteHandle, web_session_route;
     ExecutionLaunchHandle, execution_launch;
     LinuxSandboxRuntimeHandle, linux_sandbox_runtime;
     UpdateDrainHandle, update_drain;

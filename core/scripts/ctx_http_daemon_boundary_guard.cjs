@@ -7241,6 +7241,100 @@ function scanTerminalRouteHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanTransportHandleRouteExtractorRatchet({ filePath, contents }) {
+  if (!filePath.startsWith("core/crates/ctx-http/src/api/")) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const transportHandleRegex =
+    /\bTransportHandle\b|State\s*<\s*TransportHandle\s*>/gu;
+
+  for (
+    let match = transportHandleRegex.exec(contents);
+    match;
+    match = transportHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "HTTP API route exposes broad transport handle",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+
+  return violations;
+}
+
+function scanWebSessionRouteHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath === "core/crates/ctx-daemon/src/daemon/web_sessions.rs" ||
+    filePath === "core/crates/ctx-daemon/src/daemon/web_sessions/route_contract.rs"
+  ) {
+    const broadMethodRegex =
+      /\bimpl\s+TransportHandle\b|\b(?:create_web_session|list_web_sessions|get_web_session|run_web_session|eval_web_session|close_web_session|mint_web_session_view_connect_path|prepare_web_session_view_page|authorize_web_session_signal_bridge|connect_web_session_signal_bridge)(?:_for_route)?\s*\([^)]*&\s*TransportHandle/gu;
+    for (
+      let match = broadMethodRegex.exec(contents);
+      match;
+      match = broadMethodRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "web-session route contract remains on broad transport handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const block = rustStructBlockForType({ contents, typeName: "WebSessionRouteHandle" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport|effects|callbacks|handler)\s*:/gmu;
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route capability stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanProviderAccountHandleRatchet({ filePath, contents }) {
   if (!providerAccountCrudApiRoots.some((root) => filePath.startsWith(root))) {
     return [];
@@ -11943,6 +12037,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTransportHandleRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanTerminalRouteHandleRatchet({
         filePath: relativePath,
         contents,
@@ -12148,6 +12246,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWebSessionRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanTaskAdmissionHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -12268,6 +12370,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTerminalRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWebSessionRouteHandleRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -13016,6 +13122,8 @@ module.exports = {
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
+  scanTransportHandleRouteExtractorRatchet,
+  scanWebSessionRouteHandleRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
   scanProviderAuthImportDaemonFacadeRatchet,

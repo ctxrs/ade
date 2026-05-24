@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::TransportHandle;
+use ctx_daemon::daemon::WebSessionRouteHandle;
 use ctx_route_contracts::web_sessions::{
     WebSessionActionRouteRequest, WebSessionListRouteQuery, WebSessionRouteError,
     WebSessionRouteErrorKind,
@@ -15,7 +15,7 @@ fn web_session_route_status(error: WebSessionRouteError) -> StatusCode {
 }
 
 pub(in crate::api) async fn list_web_sessions(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Query(query): Query<WebSessionListRouteQuery>,
 ) -> Result<Json<Vec<WebSessionInfo>>, StatusCode> {
     let sessions = state
@@ -26,7 +26,7 @@ pub(in crate::api) async fn list_web_sessions(
 }
 
 pub(in crate::api) async fn get_web_session(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WebSessionInfo>, StatusCode> {
     let info = state
@@ -37,7 +37,7 @@ pub(in crate::api) async fn get_web_session(
 }
 
 pub(in crate::api) async fn run_web_session(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
     Json(payload): Json<WebSessionActionRouteRequest>,
 ) -> Result<Json<WebSessionRunResponse>, StatusCode> {
@@ -49,7 +49,7 @@ pub(in crate::api) async fn run_web_session(
 }
 
 pub(in crate::api) async fn eval_web_session(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
     Json(payload): Json<WebSessionActionRouteRequest>,
 ) -> Result<Json<WebSessionRunResponse>, StatusCode> {
@@ -61,7 +61,7 @@ pub(in crate::api) async fn eval_web_session(
 }
 
 pub(in crate::api) async fn close_web_session(
-    State(state): State<TransportHandle>,
+    State(state): State<WebSessionRouteHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     state

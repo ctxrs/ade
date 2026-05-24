@@ -33,6 +33,7 @@ use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
 use ctx_transport_runtime::terminals::TerminalManager;
+use ctx_transport_runtime::web_sessions::{WebSessionInfo, WebSessionManager};
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
@@ -46,6 +47,7 @@ use super::{
     blobs::BlobHandle,
     state::{DaemonState, TelemetryRuntime, WorkspaceFileCompletionsCache},
     terminals::CreateTerminalLaunchRequest,
+    web_sessions::{WebSessionLaunchError, WebSessionLaunchRequest},
 };
 
 #[derive(Clone)]
@@ -1221,6 +1223,22 @@ impl DaemonHandle {
             }
         });
         TerminalRouteHandle::new(Arc::clone(&self.state.transport.terminals), create_terminal)
+    }
+
+    pub fn web_session_route(&self) -> WebSessionRouteHandle {
+        let create_web_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |req: WebSessionLaunchRequest| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::web_sessions::create_web_session(&state, req).await
+                }) as CreateWebSessionFuture
+            }
+        });
+        WebSessionRouteHandle::new(
+            Arc::clone(&self.state.transport.web_sessions),
+            create_web_session,
+        )
     }
 
     pub fn execution_launch(&self) -> ExecutionLaunchHandle {
@@ -4404,6 +4422,44 @@ impl TerminalRouteHandle {
         req: CreateTerminalLaunchRequest,
     ) -> Result<TerminalSession, TerminalLaunchError> {
         (self.create_terminal)(req).await
+    }
+}
+
+pub(in crate::daemon) type CreateWebSessionFuture =
+    Pin<Box<dyn Future<Output = Result<WebSessionInfo, WebSessionLaunchError>> + Send + 'static>>;
+pub(in crate::daemon) type CreateWebSessionEffect =
+    Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+
+#[derive(Clone)]
+pub struct WebSessionRouteHandle {
+    web_sessions: Arc<WebSessionManager>,
+    create_web_session: CreateWebSessionEffect,
+}
+
+impl WebSessionRouteHandle {
+    pub(in crate::daemon) fn new(
+        web_sessions: Arc<WebSessionManager>,
+        create_web_session: CreateWebSessionEffect,
+    ) -> Self {
+        Self {
+            web_sessions,
+            create_web_session,
+        }
+    }
+
+    pub(in crate::daemon) fn web_sessions(&self) -> &WebSessionManager {
+        self.web_sessions.as_ref()
+    }
+
+    pub(in crate::daemon) fn web_sessions_arc(&self) -> Arc<WebSessionManager> {
+        Arc::clone(&self.web_sessions)
+    }
+
+    pub(in crate::daemon) async fn create_web_session(
+        &self,
+        req: WebSessionLaunchRequest,
+    ) -> Result<WebSessionInfo, WebSessionLaunchError> {
+        (self.create_web_session)(req).await
     }
 }
 

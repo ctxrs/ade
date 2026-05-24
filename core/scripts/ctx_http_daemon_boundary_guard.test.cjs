@@ -191,6 +191,8 @@ const {
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
+  scanTransportHandleRouteExtractorRatchet,
+  scanWebSessionRouteHandleRatchet,
   scanProviderAccountDaemonFacadeRatchet,
   scanProviderAccountHandleRatchet,
   scanProviderAuthImportDaemonFacadeRatchet,
@@ -714,6 +716,78 @@ test("appstate terminal route handle ratchet rejects broad terminal route seams"
       `,
     }),
     [],
+  );
+});
+
+test("appstate transport handle ratchet rejects production HTTP API transport handles", () => {
+  assert.deepEqual(
+    scanTransportHandleRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+      contents: `
+        use ctx_daemon::daemon::TransportHandle;
+        async fn route(State(transport): State<TransportHandle>) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "HTTP API route exposes broad transport handle",
+      "HTTP API route exposes broad transport handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanTransportHandleRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/test_support.rs",
+      contents: "use ctx_daemon::daemon::TransportHandle;",
+    }),
+    [],
+  );
+});
+
+test("appstate web-session route handle ratchet rejects broad route seams", () => {
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/route_contract.rs",
+      contents: `
+        impl TransportHandle {
+          pub async fn run_web_session_for_route(&self) {}
+        }
+      `,
+    }).map((violation) => violation.name),
+    ["web-session route contract remains on broad transport handle"],
+  );
+
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+      contents: `
+        impl TransportHandle {
+          pub async fn prepare_web_session_view_page(&self) {}
+        }
+      `,
+    }).map((violation) => violation.name),
+    ["web-session route contract remains on broad transport handle"],
+  );
+
+  const fieldViolations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WebSessionRouteHandle {
+        state: Arc<DaemonState>,
+        effects: Effects,
+        transport: TransportHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "web-session route capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "web-session route capability exposes generic full-state escape hatch",
+    ),
   );
 });
 
@@ -7956,7 +8030,7 @@ test("daemon boundary guard rejects web-session REST route contract leaks", () =
   );
 });
 
-test("daemon boundary guard allows web-session signal/view transport access error", () => {
+test("daemon boundary guard allows web-session signal/view runtime access error", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/api/web_sessions/stream_view.rs",
     "core/crates/ctx-http/src/api/ws/web_session.rs",
@@ -7964,7 +8038,7 @@ test("daemon boundary guard allows web-session signal/view transport access erro
     const violations = scanText({
       filePath,
       contents: `
-        use ctx_daemon::daemon::TransportHandle;
+        use ctx_daemon::daemon::WebSessionRouteHandle;
         use ctx_transport_runtime::web_sessions::WebSessionAccessError;
         fn status(error: WebSessionAccessError) {}
       `,
@@ -8019,7 +8093,7 @@ test("daemon boundary guard scopes web-session REST route contract roots", () =>
     scanText({
       filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",
       contents: `
-        async fn run_web_session(state: TransportHandle, id: String, payload: WebSessionActionRouteRequest) {
+        async fn run_web_session(state: WebSessionRouteHandle, id: String, payload: WebSessionActionRouteRequest) {
           let _ = state.run_web_session_for_route(&id, payload).await?;
           let _ = state.close_web_session_for_route(&id).await?;
         }
