@@ -3329,71 +3329,98 @@ impl TaskSessionAdmissionHandle {
     }
 }
 
+type TaskWorktreeCleanupTarget = crate::daemon::workspaces::TaskWorktreeCleanupTarget;
+type BranchCleanupErrorMode = crate::daemon::workspaces::BranchCleanupErrorMode;
+type ResolvedExistingWorktreeExecution =
+    crate::daemon::workspaces::ResolvedExistingWorktreeExecution;
+
+type TaskLifecycleCleanupTaskWorktrees = Arc<
+    dyn Fn(
+            Workspace,
+            TaskId,
+            Vec<TaskWorktreeCleanupTarget>,
+            BranchCleanupErrorMode,
+        ) -> TaskLifecycleFuture<Vec<anyhow::Error>>
+        + Send
+        + Sync,
+>;
+type TaskLifecycleRematerializeSandboxBinding = Arc<
+    dyn Fn(
+            Workspace,
+            Worktree,
+            SandboxBinding,
+        ) -> TaskLifecycleFuture<anyhow::Result<SandboxBinding>>
+        + Send
+        + Sync,
+>;
+type TaskLifecycleWorktreeEffect =
+    Arc<dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync>;
+type TaskLifecycleTaskWorktreeEffect = Arc<
+    dyn Fn(Workspace, Worktree, TaskId) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync,
+>;
+type TaskAdmissionResolveExistingWorktreeExecution = Arc<
+    dyn Fn(
+            Store,
+            Workspace,
+            WorktreeId,
+        ) -> TaskAdmissionFuture<anyhow::Result<ResolvedExistingWorktreeExecution>>
+        + Send
+        + Sync,
+>;
+type TaskAdmissionProvisionWorktreeForExecution = Arc<
+    dyn Fn(
+            Workspace,
+            WorktreeId,
+            String,
+            String,
+            ExecutionSettings,
+        ) -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
+        + Send
+        + Sync,
+>;
+type TaskAdmissionPersistProvisionedWorktree = Arc<
+    dyn Fn(
+            Store,
+            Workspace,
+            Worktree,
+            Option<SandboxBinding>,
+        ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
+        + Send
+        + Sync,
+>;
+type TaskAdmissionCleanupTaskWorktrees = Arc<
+    dyn Fn(
+            Workspace,
+            TaskId,
+            Vec<TaskWorktreeCleanupTarget>,
+            BranchCleanupErrorMode,
+        ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
+        + Send
+        + Sync,
+>;
+type TaskAdmissionTaskWorktreeEffect = Arc<
+    dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync,
+>;
+type TaskAdmissionTaskUpsertEffect =
+    Arc<dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync>;
+
 pub(in crate::daemon) struct TaskLifecycleWorkspaceRuntime {
     data_root: PathBuf,
-    cleanup_task_worktrees: Arc<
-        dyn Fn(
-                Workspace,
-                TaskId,
-                Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                crate::daemon::workspaces::BranchCleanupErrorMode,
-            ) -> TaskLifecycleFuture<Vec<anyhow::Error>>
-            + Send
-            + Sync,
-    >,
-    rematerialize_sandbox_binding_for_worktree: Arc<
-        dyn Fn(
-                Workspace,
-                Worktree,
-                SandboxBinding,
-            ) -> TaskLifecycleFuture<anyhow::Result<SandboxBinding>>
-            + Send
-            + Sync,
-    >,
-    ensure_worktree_attachment_mounts_if_materialized:
-        Arc<dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync>,
-    spawn_worktree_bootstrap:
-        Arc<dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync>,
-    ensure_task_commit_hook: Arc<
-        dyn Fn(Workspace, Worktree, TaskId) -> TaskLifecycleFuture<anyhow::Result<()>>
-            + Send
-            + Sync,
-    >,
+    cleanup_task_worktrees: TaskLifecycleCleanupTaskWorktrees,
+    rematerialize_sandbox_binding_for_worktree: TaskLifecycleRematerializeSandboxBinding,
+    ensure_worktree_attachment_mounts_if_materialized: TaskLifecycleWorktreeEffect,
+    spawn_worktree_bootstrap: TaskLifecycleWorktreeEffect,
+    ensure_task_commit_hook: TaskLifecycleTaskWorktreeEffect,
 }
 
 impl TaskLifecycleWorkspaceRuntime {
     pub(in crate::daemon) fn new(
         data_root: PathBuf,
-        cleanup_task_worktrees: Arc<
-            dyn Fn(
-                    Workspace,
-                    TaskId,
-                    Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                    crate::daemon::workspaces::BranchCleanupErrorMode,
-                ) -> TaskLifecycleFuture<Vec<anyhow::Error>>
-                + Send
-                + Sync,
-        >,
-        rematerialize_sandbox_binding_for_worktree: Arc<
-            dyn Fn(
-                    Workspace,
-                    Worktree,
-                    SandboxBinding,
-                ) -> TaskLifecycleFuture<anyhow::Result<SandboxBinding>>
-                + Send
-                + Sync,
-        >,
-        ensure_worktree_attachment_mounts_if_materialized: Arc<
-            dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync,
-        >,
-        spawn_worktree_bootstrap: Arc<
-            dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync,
-        >,
-        ensure_task_commit_hook: Arc<
-            dyn Fn(Workspace, Worktree, TaskId) -> TaskLifecycleFuture<anyhow::Result<()>>
-                + Send
-                + Sync,
-        >,
+        cleanup_task_worktrees: TaskLifecycleCleanupTaskWorktrees,
+        rematerialize_sandbox_binding_for_worktree: TaskLifecycleRematerializeSandboxBinding,
+        ensure_worktree_attachment_mounts_if_materialized: TaskLifecycleWorktreeEffect,
+        spawn_worktree_bootstrap: TaskLifecycleWorktreeEffect,
+        ensure_task_commit_hook: TaskLifecycleTaskWorktreeEffect,
     ) -> Arc<Self> {
         Arc::new(Self {
             data_root,
@@ -3594,111 +3621,24 @@ impl TaskLifecycleEffects {
 
 pub(in crate::daemon) struct TaskAdmissionWorkspaceRuntime {
     data_root: PathBuf,
-    resolve_existing_worktree_execution: Arc<
-        dyn Fn(
-                Store,
-                Workspace,
-                WorktreeId,
-            ) -> TaskAdmissionFuture<
-                anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution>,
-            > + Send
-            + Sync,
-    >,
-    provision_worktree_for_execution: Arc<
-        dyn Fn(
-                Workspace,
-                WorktreeId,
-                String,
-                String,
-                ExecutionSettings,
-            )
-                -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
-            + Send
-            + Sync,
-    >,
-    persist_provisioned_worktree: Arc<
-        dyn Fn(
-                Store,
-                Workspace,
-                Worktree,
-                Option<SandboxBinding>,
-            ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
-            + Send
-            + Sync,
-    >,
-    cleanup_task_worktrees: Arc<
-        dyn Fn(
-                Workspace,
-                TaskId,
-                Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                crate::daemon::workspaces::BranchCleanupErrorMode,
-            ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
-            + Send
-            + Sync,
-    >,
-    ensure_task_commit_hook: Arc<
-        dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>>
-            + Send
-            + Sync,
-    >,
-    emit_workspace_task_upsert:
-        Arc<dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync>,
+    resolve_existing_worktree_execution: TaskAdmissionResolveExistingWorktreeExecution,
+    provision_worktree_for_execution: TaskAdmissionProvisionWorktreeForExecution,
+    persist_provisioned_worktree: TaskAdmissionPersistProvisionedWorktree,
+    cleanup_task_worktrees: TaskAdmissionCleanupTaskWorktrees,
+    ensure_task_commit_hook: TaskAdmissionTaskWorktreeEffect,
+    emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
 }
 
 impl TaskAdmissionWorkspaceRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::daemon) fn new(
         data_root: PathBuf,
-        resolve_existing_worktree_execution: Arc<
-            dyn Fn(
-                    Store,
-                    Workspace,
-                    WorktreeId,
-                ) -> TaskAdmissionFuture<
-                    anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution>,
-                > + Send
-                + Sync,
-        >,
-        provision_worktree_for_execution: Arc<
-            dyn Fn(
-                    Workspace,
-                    WorktreeId,
-                    String,
-                    String,
-                    ExecutionSettings,
-                )
-                    -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
-                + Send
-                + Sync,
-        >,
-        persist_provisioned_worktree: Arc<
-            dyn Fn(
-                    Store,
-                    Workspace,
-                    Worktree,
-                    Option<SandboxBinding>,
-                ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
-                + Send
-                + Sync,
-        >,
-        cleanup_task_worktrees: Arc<
-            dyn Fn(
-                    Workspace,
-                    TaskId,
-                    Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                    crate::daemon::workspaces::BranchCleanupErrorMode,
-                ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
-                + Send
-                + Sync,
-        >,
-        ensure_task_commit_hook: Arc<
-            dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>>
-                + Send
-                + Sync,
-        >,
-        emit_workspace_task_upsert: Arc<
-            dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync,
-        >,
+        resolve_existing_worktree_execution: TaskAdmissionResolveExistingWorktreeExecution,
+        provision_worktree_for_execution: TaskAdmissionProvisionWorktreeForExecution,
+        persist_provisioned_worktree: TaskAdmissionPersistProvisionedWorktree,
+        cleanup_task_worktrees: TaskAdmissionCleanupTaskWorktrees,
+        ensure_task_commit_hook: TaskAdmissionTaskWorktreeEffect,
+        emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
     ) -> Arc<Self> {
         Arc::new(Self {
             data_root,
