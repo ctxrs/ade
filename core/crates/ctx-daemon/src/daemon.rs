@@ -44,6 +44,7 @@ pub mod resource_governance;
 pub mod resource_telemetry;
 pub mod resource_utilization;
 mod retention;
+mod route_capabilities;
 mod route_files;
 mod runtime;
 pub mod scheduler;
@@ -105,6 +106,7 @@ pub use mcp_auth::{
 };
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
+pub use route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal};
 pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::subagents::SessionSubagentMcpControlHandle;

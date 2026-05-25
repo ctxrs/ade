@@ -17,7 +17,8 @@ pub(in crate::daemon) use background::spawn_startup_provider_status_refresh;
 
 pub struct DaemonRuntime {
     pub _daemon_lock: std::fs::File,
-    pub handle: DaemonHandle,
+    pub route_handles: DaemonRouteHandles,
+    pub shutdown_signal: DaemonShutdownSignal,
     pub listeners: Vec<TcpListener>,
     pub daemon_url: String,
 }
@@ -129,7 +130,8 @@ pub async fn bootstrap_daemon_runtime(
     background::spawn_daemon_background_services(state, requested_binds);
     Ok(DaemonRuntime {
         _daemon_lock: daemon_lock,
-        handle,
+        route_handles: handle.route_handles(),
+        shutdown_signal: handle.shutdown_signal(),
         listeners,
         daemon_url,
     })

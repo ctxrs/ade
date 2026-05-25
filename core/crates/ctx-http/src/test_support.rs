@@ -71,8 +71,8 @@ impl TestDaemonFixture {
     }
 
     pub(crate) fn router(&self) -> axum::Router {
-        crate::api::router(crate::api::RouteHandles::from_daemon_handle(
-            self.daemon.handle(),
+        crate::api::router(crate::api::RouteHandles::from_daemon_route_handles(
+            self.daemon.route_handles(),
         ))
     }
 
@@ -132,8 +132,8 @@ impl DataRootTestDaemonFixture {
     }
 
     pub(crate) fn router(&self) -> axum::Router {
-        crate::api::router(crate::api::RouteHandles::from_daemon_handle(
-            self.daemon.handle(),
+        crate::api::router(crate::api::RouteHandles::from_daemon_route_handles(
+            self.daemon.route_handles(),
         ))
     }
 }

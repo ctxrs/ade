@@ -8,6 +8,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
   APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
+  DAEMON_ROUTE_HANDLES_ALLOWED_PATHS,
   DELETED_BROAD_DOMAIN_HANDLE_NAMES,
   daemonTestSurfaceRustFiles,
   EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS,
@@ -313,6 +314,7 @@ const {
   scanWorkspaceVcsStreamHandleFieldRatchet,
   scanWorkspaceVcsStreamRouteExtractorRatchet,
   scanRepo,
+  scanRouteCapabilityCutoverRatchet,
   scanRouterComposition,
   scanText,
   schedulerRuntimeStorePatternsForPath,
@@ -754,6 +756,148 @@ test("route state aggregate ratchet allows router composition and router-local a
   assert.deepEqual(routerViolations, []);
 });
 
+test("route capability cutover ratchet rejects retired DaemonHandle router assembly", () => {
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        pub fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          RouteHandles::from_daemon_handle(handle)
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "retired RouteHandles::from_daemon_handle",
+      "retired RouteHandles::from_daemon_handle",
+      "ctx-http DaemonHandle usage",
+    ],
+  );
+});
+
+test("route capability cutover ratchet rejects DaemonHandle throughout ctx-http surfaces", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/server.rs",
+    "core/crates/ctx-http/tests/common/mod.rs",
+    "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
+  ]) {
+    const violations = scanRouteCapabilityCutoverRatchet({
+      filePath,
+      contents: "use ctx_daemon::daemon::DaemonHandle;",
+    });
+    assert.deepEqual(
+      violations.map((violation) => violation.name),
+      ["ctx-http DaemonHandle usage"],
+    );
+  }
+});
+
+test("route capability cutover ratchet restricts DaemonRouteHandles to router assembly files", () => {
+  assert.deepEqual(
+    [...DAEMON_ROUTE_HANDLES_ALLOWED_PATHS].sort(),
+    [
+      "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
+      "core/crates/ctx-http/src/api/router.rs",
+      "core/crates/ctx-http/src/server.rs",
+      "core/crates/ctx-http/src/test_support.rs",
+      "core/crates/ctx-http/tests/common/mod.rs",
+    ],
+  );
+
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-http/src/api/tasks.rs",
+    contents: `
+      use ctx_daemon::daemon::DaemonRouteHandles;
+      fn build(handles: DaemonRouteHandles) {}
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "DaemonRouteHandles outside router assembly",
+      "DaemonRouteHandles outside router assembly",
+    ],
+  );
+});
+
+test("route capability cutover ratchet rejects DaemonRouteHandles field access outside constructor", () => {
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      use ctx_daemon::daemon::DaemonRouteHandles;
+
+      impl RouteHandles {
+        pub fn from_daemon_route_handles(handles: DaemonRouteHandles) -> Self {
+          let DaemonRouteHandles { auth } = handles;
+          Self { auth }
+        }
+
+        fn leak(handles: DaemonRouteHandles) {
+          let _ = handles.auth.clone();
+          let DaemonRouteHandles { auth } = handles;
+          let _ = auth;
+        }
+
+        fn leak_inferred(runtime: daemon::DaemonRuntime, daemon: TestDaemon) {
+          let daemon::DaemonRuntime { route_handles, .. } = runtime;
+          let _ = route_handles.auth.clone();
+          let leaked = daemon.route_handles();
+          let _ = leaked.auth.clone();
+          let daemon::DaemonRuntime { route_handles: renamed, .. } = runtime;
+          let _ = renamed.auth.clone();
+          let _ = daemon.route_handles().auth.clone();
+          let _ = route_handles
+            .auth
+            .clone();
+          let _ = daemon.route_handles()
+            .auth
+            .clone();
+          let leaked_multiline = daemon
+            .route_handles();
+          let _ = leaked_multiline.auth.clone();
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "DaemonRouteHandles destructuring outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+    ],
+  );
+});
+
+test("route capability cutover ratchet allows the RouteHandles constructor handoff", () => {
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      use ctx_daemon::daemon::DaemonRouteHandles;
+
+      impl RouteHandles {
+        pub fn from_daemon_route_handles(handles: DaemonRouteHandles) -> Self {
+          let DaemonRouteHandles { auth } = handles;
+          Self { auth }
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
 test("appstate daemon handle construction ratchet rejects new production reconstructions", () => {
   assert.equal(APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.length, 1);
   const violations = scanDaemonHandleConstructionRatchet({
@@ -801,6 +945,25 @@ test("appstate daemon handle construction ratchet rejects From and into escape h
       "unclassified daemon handle reconstruction",
       "unclassified daemon handle reconstruction",
     ],
+  );
+});
+
+test("appstate daemon handle construction ratchet rejects Arc<DaemonState> From impl", () => {
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      impl From<Arc<DaemonState>> for DaemonHandle {
+        fn from(state: Arc<DaemonState>) -> Self {
+          Self::new(state)
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["daemon handle Arc<DaemonState> From impl"],
   );
 });
 
@@ -7376,7 +7539,9 @@ test("daemon boundary guard allows only router_for_daemon in integration common"
     filePath: "core/crates/ctx-http/tests/common/mod.rs",
     contents: `
       pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
-        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
+        api::router(api::RouteHandles::from_daemon_route_handles(
+          daemon.route_handles(),
+        ))
       }
 
       pub fn router(state: Arc<DaemonState>) -> axum::Router {
@@ -7397,10 +7562,10 @@ test("daemon boundary guard requires router calls to be inside sanctioned helper
     filePath: "core/crates/ctx-http/tests/common/mod.rs",
     contents: `
       pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
-        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
+        api::router(api::RouteHandles::from_daemon_route_handles(daemon.route_handles()))
       }
       pub fn other_router(daemon: &TestDaemon) -> axum::Router {
-        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
+        api::router(api::RouteHandles::from_daemon_route_handles(daemon.route_handles()))
       }
     `,
     patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -7415,32 +7580,17 @@ test("daemon boundary guard requires router calls to be inside sanctioned helper
 test("daemon boundary guard allows only sanctioned router helper bodies", () => {
   const cases = [
     {
-      filePath: "core/crates/ctx-http/src/api/workspaces/tests.rs",
-      allowed: `
-        fn test_router(daemon: &TestDaemon) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(
-            daemon.handle(),
-          ))
-        }
-      `,
-      denied: `
-        fn other_router(daemon: &TestDaemon) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(daemon.handle()))
-        }
-      `,
-    },
-    {
       filePath: "core/crates/ctx-http/src/test_support.rs",
       allowed: `
         pub(crate) fn router(&self) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(
-            self.daemon.handle(),
+          crate::api::router(crate::api::RouteHandles::from_daemon_route_handles(
+            self.daemon.route_handles(),
           ))
         }
       `,
       denied: `
         pub(crate) fn other_router(&self) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(self.daemon.handle()))
+          crate::api::router(crate::api::RouteHandles::from_daemon_route_handles(self.daemon.route_handles()))
         }
       `,
     },
@@ -7448,12 +7598,12 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
       allowed: `
         pub(crate) fn spawn_router_for_daemon(listener: tokio::net::TcpListener, daemon: &TestDaemon) {
-          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(daemon.handle()));
+          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_route_handles(daemon.route_handles()));
         }
       `,
       denied: `
-        pub(crate) fn other_router(handle: DaemonHandle) {
-          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(handle));
+        pub(crate) fn other_router(daemon: &TestDaemon) {
+          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_route_handles(daemon.route_handles()));
         }
       `,
     },

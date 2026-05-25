@@ -13,8 +13,8 @@ pub(crate) async fn bind_loopback_listener() -> Result<(tokio::net::TcpListener,
 }
 
 pub(crate) fn spawn_router_for_daemon(listener: tokio::net::TcpListener, daemon: &TestDaemon) {
-    let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(
-        daemon.handle(),
+    let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_route_handles(
+        daemon.route_handles(),
     ));
     tokio::spawn(async move {
         axum::serve(listener, app)

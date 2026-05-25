@@ -64,6 +64,7 @@ use crate::daemon::sessions::{
 
 use super::{
     blobs::BlobHandle,
+    route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
     state::{
         session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup,
         SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WorkspaceFileCompletionsCache,
@@ -85,6 +86,14 @@ impl DaemonHandle {
 
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
         self.state.core.shutdown_tx.subscribe()
+    }
+
+    pub fn shutdown_signal(&self) -> DaemonShutdownSignal {
+        DaemonShutdownSignal::new(self.state.core.shutdown_tx.clone())
+    }
+
+    pub fn route_handles(&self) -> DaemonRouteHandles {
+        DaemonRouteHandles::from_handle(self)
     }
 
     pub fn auth(&self) -> AuthHandle {
@@ -1570,12 +1579,6 @@ impl DaemonHandle {
             self.state.core.local_shutdown_token.clone(),
             request_shutdown,
         )
-    }
-}
-
-impl From<Arc<DaemonState>> for DaemonHandle {
-    fn from(state: Arc<DaemonState>) -> Self {
-        Self::new(state)
     }
 }
 

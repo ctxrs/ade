@@ -35,7 +35,9 @@ use sha2::Digest;
 use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::daemon::{self, AppRuntimeFlags, DaemonHandle, DaemonState};
+use crate::daemon::{
+    self, AppRuntimeFlags, DaemonHandle, DaemonRouteHandles, DaemonShutdownSignal, DaemonState,
+};
 
 mod cache_rehydration;
 pub use cache_rehydration::{
@@ -629,6 +631,18 @@ impl TestDaemon {
 
     pub fn handle(&self) -> DaemonHandle {
         DaemonHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn route_handles(&self) -> DaemonRouteHandles {
+        self.handle().route_handles()
+    }
+
+    pub fn shutdown_signal(&self) -> DaemonShutdownSignal {
+        self.handle().shutdown_signal()
+    }
+
+    pub fn emit_shutdown_for_test(&self) {
+        let _ = self.state.core.shutdown_tx.send(());
     }
 
     pub fn data_root(&self) -> &Path {
