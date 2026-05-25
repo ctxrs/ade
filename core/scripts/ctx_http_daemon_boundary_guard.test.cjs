@@ -191,6 +191,7 @@ const {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
+  scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
@@ -606,6 +607,151 @@ test("deleted broad domain handle ratchet scans daemon test support surfaces", (
     ),
     true,
   );
+});
+
+test("route state aggregate ratchet rejects broad route aggregate extraction", () => {
+  const violations = scanRouteStateAggregateRatchet({
+    filePath: "core/crates/ctx-http/src/api/example.rs",
+    contents: `
+      use axum::extract::{FromRef, State};
+      use crate::api::router::{RouteHandles, RouteState};
+
+      async fn route(State(state): State<RouteState>) {
+        let _ = state.handles.auth.clone();
+      }
+
+      async fn route_handles(State(handles): State<RouteHandles>) {
+        let _ = handles;
+      }
+
+      async fn route_absolute(
+        State(route_state): State<::crate::api::router::RouteState>,
+      ) {
+        let _ = route_state;
+      }
+
+      impl FromRef<RouteState> for RouteHandles {
+        fn from_ref(state: &RouteState) -> Self {
+          state.handles.clone()
+        }
+      }
+
+      impl axum::extract::FromRef<RouteState> for crate::api::router::RouteHandles {
+        fn from_ref(state: &RouteState) -> Self {
+          state.handles.clone()
+        }
+      }
+
+      impl ::axum::extract::FromRef<::crate::api::router::RouteState>
+        for ::crate::api::router::RouteHandles
+      {
+        fn from_ref(route_state: &::crate::api::router::RouteState) -> Self {
+          route_state.handles.clone()
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "broad route aggregate extractor",
+      "broad route aggregate extractor",
+      "broad route aggregate extractor",
+      "broad route aggregate FromRef",
+      "broad route aggregate FromRef",
+      "broad route aggregate FromRef",
+      "direct route aggregate handles access",
+      "direct route aggregate handles access",
+      "direct route aggregate handles access",
+      "direct route aggregate handles access",
+    ],
+  );
+});
+
+test("route state aggregate ratchet does not reject unrelated handles fields", () => {
+  const violations = scanRouteStateAggregateRatchet({
+    filePath: "core/crates/ctx-http/src/api/example.rs",
+    contents: `
+      struct Fixture {
+        handles: Vec<String>,
+      }
+
+      fn helper(fixture: Fixture) {
+        let _ = fixture.handles.clone();
+      }
+
+      fn helper_with_state_name(state: Fixture) {
+        let _ = state.handles.clone();
+      }
+
+      fn helper_with_route_state_name(route_state: Fixture) {
+        let _ = route_state.handles.clone();
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("route state aggregate ratchet rejects public aggregate fields", () => {
+  const violations = scanRouteStateAggregateRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      pub struct RouteHandles {
+        pub(in crate::api) auth: AuthHandle,
+        pub(crate) health: HealthHandle,
+        diagnostics: DiagnosticsHandle,
+      }
+
+      pub(in crate::api) struct RouteState {
+        pub handles: RouteHandles,
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "public route aggregate field",
+      "public route aggregate field",
+      "public route aggregate field",
+    ],
+  );
+});
+
+test("route state aggregate ratchet allows router composition and router-local access", () => {
+  const routeCompositionViolations = scanRouteStateAggregateRatchet({
+    filePath: "core/crates/ctx-http/src/api/routes.rs",
+    contents: `
+      use crate::api::router::RouteState;
+
+      pub(super) fn api_routes() -> axum::Router<RouteState> {
+        axum::Router::new()
+      }
+    `,
+  });
+  assert.deepEqual(routeCompositionViolations, []);
+
+  const routerViolations = scanRouteStateAggregateRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      pub struct RouteHandles {
+        auth: AuthHandle,
+      }
+
+      pub(in crate::api) struct RouteState {
+        handles: RouteHandles,
+      }
+
+      impl FromRef<RouteState> for AuthHandle {
+        fn from_ref(state: &RouteState) -> Self {
+          state.handles.auth.clone()
+        }
+      }
+    `,
+  });
+  assert.deepEqual(routerViolations, []);
 });
 
 test("appstate daemon handle construction ratchet rejects new production reconstructions", () => {

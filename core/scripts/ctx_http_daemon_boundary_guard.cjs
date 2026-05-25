@@ -7081,6 +7081,132 @@ function scanDeletedBroadDomainHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanRouteStateAggregateRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const lineForOffset = (matchOffset) => contents.slice(0, matchOffset).split(/\r?\n/u).length;
+  const rustPathPrefix = String.raw`(?:::)?(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*`;
+  const routeStatePath = String.raw`${rustPathPrefix}RouteState\b`;
+  const routeHandlesPath = String.raw`${rustPathPrefix}RouteHandles\b`;
+  const routeAggregatePath = String.raw`${rustPathPrefix}(RouteState|RouteHandles)\b`;
+
+  const broadExtractorRegex = new RegExp(
+    String.raw`\bState\s*<\s*${routeAggregatePath}\s*>`,
+    "gu",
+  );
+  for (
+    let match = broadExtractorRegex.exec(contents);
+    match;
+    match = broadExtractorRegex.exec(contents)
+  ) {
+    const line = lineForOffset(match.index);
+    violations.push({
+      filePath,
+      line,
+      name: "broad route aggregate extractor",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+
+  const aggregateFromRefRegex = new RegExp(
+    String.raw`\bimpl\s+${rustPathPrefix}FromRef\b\s*<\s*${routeStatePath}\s*>\s+for\s+${routeHandlesPath}`,
+    "gsu",
+  );
+  for (
+    let match = aggregateFromRefRegex.exec(contents);
+    match;
+    match = aggregateFromRefRegex.exec(contents)
+  ) {
+    const line = lineForOffset(match.index);
+    violations.push({
+      filePath,
+      line,
+      name: "broad route aggregate FromRef",
+      text: lines[line - 1]?.trim() ?? "impl FromRef<RouteState> for RouteHandles",
+    });
+  }
+
+  if (filePath !== "core/crates/ctx-http/src/api/router.rs") {
+    const aggregateVariableNames = new Set();
+    const aggregateVariableRegexes = [
+      new RegExp(
+        String.raw`\bState\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*:\s*State\s*<\s*${routeAggregatePath}\s*>`,
+        "gu",
+      ),
+      new RegExp(
+        String.raw`(?:^|[,(]\s*)(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&?\s*${routeAggregatePath}`,
+        "gmu",
+      ),
+      new RegExp(
+        String.raw`\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&?\s*${routeAggregatePath}`,
+        "gu",
+      ),
+    ];
+    for (const aggregateVariableRegex of aggregateVariableRegexes) {
+      for (
+        let match = aggregateVariableRegex.exec(contents);
+        match;
+        match = aggregateVariableRegex.exec(contents)
+      ) {
+        aggregateVariableNames.add(match[1]);
+      }
+    }
+
+    lines.forEach((lineText, index) => {
+      const trimmed = lineText.trim();
+      if (trimmed.startsWith("//")) {
+        return;
+      }
+      const hasAggregateHandleAccess = Array.from(aggregateVariableNames).some((variableName) => {
+        const escapedName = variableName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+        return new RegExp(String.raw`\b${escapedName}\s*\.\s*handles\b`, "u").test(lineText);
+      });
+      if (!hasAggregateHandleAccess) {
+        return;
+      }
+      violations.push({
+        filePath,
+        line: index + 1,
+        name: "direct route aggregate handles access",
+        text: trimmed,
+      });
+    });
+  }
+
+  const structBodyViolations = (structName) => {
+    const structRegex = new RegExp(String.raw`\bstruct\s+${structName}\s*\{`, "u");
+    const match = structRegex.exec(contents);
+    if (!match) {
+      return;
+    }
+    const bodyOffset = match.index + match[0].length;
+    const bodyEnd = contents.indexOf("}", bodyOffset);
+    if (bodyEnd === -1) {
+      return;
+    }
+    const body = contents.slice(bodyOffset, bodyEnd);
+    const bodyLines = body.split(/\r?\n/u);
+    let bodyLineOffset = 0;
+    for (const bodyLine of bodyLines) {
+      if (/^\s*pub(?:\s|\()/u.test(bodyLine) && /:/u.test(bodyLine)) {
+        const line = lineForOffset(bodyOffset + bodyLineOffset);
+        violations.push({
+          filePath,
+          line,
+          name: "public route aggregate field",
+          text: lines[line - 1]?.trim() ?? bodyLine.trim(),
+        });
+      }
+      bodyLineOffset += bodyLine.length + 1;
+    }
+  };
+
+  structBodyViolations("RouteHandles");
+  structBodyViolations("RouteState");
+
+  return violations;
+}
+
 function isAllowedDaemonHandleConstruction({ filePath, line }) {
   return APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.some(
     (entry) => entry.path === filePath && entry.regex.test(line),
@@ -13712,6 +13838,10 @@ function scanRepo() {
         contents,
         patterns: apiPatternsForPath(relativePath),
       }),
+      ...scanRouteStateAggregateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanExecutionHandleRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -14375,6 +14505,10 @@ function scanRepo() {
         contents,
         patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
       }),
+      ...scanRouteStateAggregateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanDeletedBroadDomainHandleRatchet({
         filePath: relativePath,
         contents,
@@ -14944,6 +15078,7 @@ module.exports = {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
+  scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
