@@ -39,6 +39,9 @@ use runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 
+pub(in crate::daemon) use store_lookup::{
+    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup, TaskStoreLookup,
+};
 pub use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
 pub use types::WorktreeBootstrapGate;
 pub use types::{

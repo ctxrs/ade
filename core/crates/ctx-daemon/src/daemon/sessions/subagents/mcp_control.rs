@@ -18,10 +18,9 @@ use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use tokio::sync::mpsc;
 
-use crate::daemon::handle::{
-    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+use crate::daemon::{
+    session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
 };
-use crate::daemon::DaemonState;
 
 pub(in crate::daemon) type SessionSubagentMcpControlFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;

@@ -12,7 +12,7 @@ use ctx_session_runtime::runtime::{
 use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-use crate::daemon::handle::{ProtectedWorkspaceStoreLookup, SessionStoreLookup};
+use crate::daemon::{ProtectedWorkspaceStoreLookup, SessionStoreLookup};
 
 pub struct DemoSeedTranscript {
     pub session_title: Option<String>,

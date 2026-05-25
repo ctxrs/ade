@@ -3,8 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::models::{Workspace, WorkspaceAttachment, Worktree, WorktreeAttachmentMount};
 
-use crate::daemon::handle::ProtectedWorkspaceStoreLookup;
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
 
 mod hosts;
 mod materialization;

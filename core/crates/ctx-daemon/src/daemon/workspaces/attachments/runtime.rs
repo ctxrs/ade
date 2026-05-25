@@ -13,7 +13,7 @@ use ctx_workspace_runtime::HarnessRuntimeManager;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::daemon::handle::ProtectedWorkspaceStoreLookup;
+use crate::daemon::ProtectedWorkspaceStoreLookup;
 
 use super::materialization::{cancel_attachment_materialization, spawn_attachment_materialization};
 use super::mounts::{

@@ -110,6 +110,9 @@ pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;
+pub(in crate::daemon) use state::{
+    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     CacheSweepConfig, SessionStoreAccessError, StoreLookup, TimedEntry, WorkspaceStoreAccessError,

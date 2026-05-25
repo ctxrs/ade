@@ -11,6 +11,8 @@ const {
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   DAEMON_ROOT_ROUTE_FACADE_TARGETS,
   DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY,
+  DAEMON_HANDLE_STORE_LOOKUP_HOME,
+  DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -27,6 +29,7 @@ const {
   checkCollapsedPaths,
   checkCtxHttpCliOnlyServiceUsage,
   checkDaemonRootRouteFacades,
+  checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
@@ -630,6 +633,87 @@ test("daemon root route facade guard rejects web-session transport leaf reexport
       "core/crates/ctx-daemon/src/daemon/web_sessions.rs must not publicly glob-reexport ctx_transport_runtime::web_sessions; use owner-crate symbols directly.",
     ],
   );
+});
+
+test("daemon handle store lookup ownership rejects definitions returning to handle.rs", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, DAEMON_HANDLE_STORE_LOOKUP_HOME, `
+    pub(in crate::daemon) struct ProtectedWorkspaceStoreLookup {}
+    impl ProtectedWorkspaceStoreLookup {
+      fn store_for_workspace() {}
+    }
+    pub(in crate::daemon) struct SessionStoreLookup {}
+    impl SessionStoreLookup {}
+    pub(in crate::daemon) struct TaskStoreLookup {}
+    impl TaskStoreLookup {}
+    pub(in crate::daemon) fn session_store_access_anyhow() {}
+    async fn reject_archived_subagent_session() {}
+    fn is_transient_store_open_error() {}
+    fn scoped_mcp_session_store_error() {}
+  `);
+
+  const violations = checkDaemonHandleStoreLookupOwnership(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    Array.from(
+      { length: DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS.length + 3 },
+      () => "daemon_handle_store_lookup_ownership",
+    ),
+  );
+});
+
+test("daemon handle store lookup ownership rejects old handle imports", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, DAEMON_HANDLE_STORE_LOOKUP_HOME, "pub struct OtherHandle;\n");
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs", `
+    use crate::daemon::handle::{ProtectedWorkspaceStoreLookup, SessionStoreLookup};
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/workspaces/attachments.rs", `
+    use crate::daemon::handle::TaskStoreLookup;
+    fn helper() {
+      let _ = crate::daemon::handle::session_store_access_anyhow;
+    }
+  `);
+
+  const violations = checkDaemonHandleStoreLookupOwnership(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.message.match(/^([A-Za-z_][A-Za-z0-9_]*)/u)?.[1]),
+    [
+      "ProtectedWorkspaceStoreLookup",
+      "SessionStoreLookup",
+      "TaskStoreLookup",
+      "session_store_access_anyhow",
+    ],
+  );
+});
+
+test("daemon handle store lookup ownership allows state-owned imports and handle references", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, DAEMON_HANDLE_STORE_LOOKUP_HOME, `
+    use super::state::{ProtectedWorkspaceStoreLookup, SessionStoreLookup, TaskStoreLookup};
+
+    fn assemble() {
+      let _ = ProtectedWorkspaceStoreLookup::new;
+      let _ = SessionStoreLookup::new;
+      let _ = TaskStoreLookup::new;
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/sessions/demo_seed.rs", `
+    use crate::daemon::{ProtectedWorkspaceStoreLookup, SessionStoreLookup};
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/store_lookup.rs", `
+    pub(in crate::daemon) struct ProtectedWorkspaceStoreLookup {}
+    pub(in crate::daemon) struct SessionStoreLookup {}
+    pub(in crate::daemon) struct TaskStoreLookup {}
+    pub(in crate::daemon) fn session_store_access_anyhow() {}
+    async fn reject_archived_subagent_session() {}
+    fn is_transient_store_open_error() {}
+    fn scoped_mcp_session_store_error() {}
+  `);
+
+  assert.deepEqual(checkDaemonHandleStoreLookupOwnership(rootDir), []);
 });
 
 test("cargo dependency direction rejects service, transport runtime, and active snapshot backedges", () => {

@@ -231,6 +231,18 @@ const DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY = new Set([
   "WebSessionViewConnectPath",
   "WebSessionViewPage",
 ]);
+const DAEMON_HANDLE_STORE_LOOKUP_HOME = "core/crates/ctx-daemon/src/daemon/handle.rs";
+const DAEMON_HANDLE_STORE_LOOKUP_STATE_HOME =
+  "core/crates/ctx-daemon/src/daemon/state/store_lookup.rs";
+const DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS = [
+  "ProtectedWorkspaceStoreLookup",
+  "SessionStoreLookup",
+  "TaskStoreLookup",
+  "session_store_access_anyhow",
+  "reject_archived_subagent_session",
+  "is_transient_store_open_error",
+  "scoped_mcp_session_store_error",
+];
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -439,6 +451,8 @@ const stripRustLineComments = (contents) =>
     .split(/\r?\n/u)
     .map((line) => line.replace(/\/\/.*$/u, ""))
     .join("\n");
+
+const lineForOffset = (contents, offset) => contents.slice(0, offset).split(/\r?\n/u).length;
 
 const HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS = [
   {
@@ -728,6 +742,55 @@ const checkDaemonRootRouteFacades = (rootDir) => {
   return violations;
 };
 
+const checkDaemonHandleStoreLookupOwnership = (rootDir) => {
+  const violations = [];
+  const handlePath = path.join(rootDir, DAEMON_HANDLE_STORE_LOOKUP_HOME);
+  if (fs.existsSync(handlePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(handlePath, "utf8"));
+    for (const symbol of DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS) {
+      const definitionRegex = new RegExp(
+        String.raw`\b(?:(?:struct|fn)\s+${symbol}\b|impl(?:\s*<[^>]*>)?\s+${symbol}\b)`,
+        "gu",
+      );
+      for (
+        let match = definitionRegex.exec(contents);
+        match;
+        match = definitionRegex.exec(contents)
+      ) {
+        violations.push({
+          kind: "daemon_handle_store_lookup_ownership",
+          line: lineForOffset(contents, match.index),
+          path: DAEMON_HANDLE_STORE_LOOKUP_HOME,
+          message: `${symbol} must live in ${DAEMON_HANDLE_STORE_LOOKUP_STATE_HOME}; do not reintroduce store lookup ownership into daemon/handle.rs.`,
+        });
+      }
+    }
+  }
+
+  const daemonSrcRoot = path.join(rootDir, "core", "crates", "ctx-daemon", "src");
+  for (const absolutePath of walkFiles(daemonSrcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    if (relativePath === DAEMON_HANDLE_STORE_LOOKUP_HOME) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (const symbol of DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS) {
+      const importRegex = new RegExp(
+        String.raw`\bcrate\s*::\s*daemon\s*::\s*handle\s*::\s*(?:\{[^}]*\b${symbol}\b[^}]*\}|${symbol}\b)`,
+        "gu",
+      );
+      for (let match = importRegex.exec(contents); match; match = importRegex.exec(contents)) {
+        violations.push({
+          kind: "daemon_handle_store_lookup_ownership",
+          line: lineForOffset(contents, match.index),
+          path: relativePath,
+          message: `${symbol} must be imported from crate::daemon/state-owned lookup exports, not crate::daemon::handle.`,
+        });
+      }
+    }
+  }
+
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
@@ -736,6 +799,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkHeadProjectionPurity(rootDir),
     ...checkCtxHttpCliOnlyServiceUsage(rootDir),
     ...checkDaemonRootRouteFacades(rootDir),
+    ...checkDaemonHandleStoreLookupOwnership(rootDir),
   ];
   return { violations };
 };
@@ -775,6 +839,8 @@ module.exports = {
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   DAEMON_ROOT_ROUTE_FACADE_TARGETS,
   DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY,
+  DAEMON_HANDLE_STORE_LOOKUP_HOME,
+  DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -794,6 +860,7 @@ module.exports = {
   checkCollapsedPaths,
   checkCtxHttpCliOnlyServiceUsage,
   checkDaemonRootRouteFacades,
+  checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
