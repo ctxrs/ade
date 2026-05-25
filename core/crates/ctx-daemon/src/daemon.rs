@@ -73,6 +73,7 @@ pub use activity::{
 };
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
+pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
     AuthHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
     ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
@@ -114,6 +115,7 @@ pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;
 pub(in crate::daemon) use state::{
     session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+    WeakSessionStoreLookup,
 };
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{

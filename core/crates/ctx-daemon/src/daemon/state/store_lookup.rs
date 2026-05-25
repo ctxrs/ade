@@ -3,6 +3,7 @@ use ctx_merge_queue::MergeQueueRuntime;
 use ctx_session_runtime::runtime::SessionRuntime;
 use ctx_store::manager::WorkspaceStoreAccessOutcome;
 use ctx_store::StoreManager;
+use std::sync::Weak;
 use std::time::Duration;
 
 const STORE_OPEN_RETRY_LIMIT: usize = 3;
@@ -156,6 +157,57 @@ impl ProtectedWorkspaceStoreLookup {
 pub(in crate::daemon) struct SessionStoreLookup {
     global_store: Store,
     workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct WeakSessionStoreLookup {
+    global_store: Store,
+    stores: StoreManager,
+    sessions: Weak<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    merge_queue: Arc<MergeQueueRuntime>,
+}
+
+impl WeakSessionStoreLookup {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        stores: StoreManager,
+        sessions: Weak<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+        merge_queue: Arc<MergeQueueRuntime>,
+    ) -> Self {
+        Self {
+            global_store,
+            stores,
+            sessions,
+            merge_queue,
+        }
+    }
+
+    pub(in crate::daemon) fn upgraded_lookups(
+        &self,
+    ) -> Option<(SessionStoreLookup, ProtectedWorkspaceStoreLookup)> {
+        let sessions = self.sessions.upgrade()?;
+        let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+            self.stores.clone(),
+            sessions,
+            Arc::clone(&self.merge_queue),
+        );
+        let session_stores =
+            SessionStoreLookup::new(self.global_store.clone(), workspace_stores.clone());
+        Some((session_stores, workspace_stores))
+    }
+
+    pub(in crate::daemon) async fn existing_session_store_allow_archived(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Store>, SessionStoreAccessError> {
+        let Some((session_stores, _workspace_stores)) = self.upgraded_lookups() else {
+            return Ok(None);
+        };
+        session_stores
+            .existing_session_store_allow_archived(session_id)
+            .await
+            .map(Some)
+    }
 }
 
 impl SessionStoreLookup {

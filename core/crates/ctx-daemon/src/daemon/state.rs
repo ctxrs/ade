@@ -40,7 +40,8 @@ use runtime_adapters::{
 };
 
 pub(in crate::daemon) use store_lookup::{
-    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup, TaskStoreLookup,
+    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+    TaskStoreLookup, WeakSessionStoreLookup,
 };
 pub use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
 pub use types::WorktreeBootstrapGate;

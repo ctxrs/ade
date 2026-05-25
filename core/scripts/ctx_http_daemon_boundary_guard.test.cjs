@@ -296,6 +296,7 @@ const {
   scanSessionSubagentMcpControlDaemonImplementationRatchet,
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
+  scanSubagentSpawnHostStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
@@ -2886,6 +2887,99 @@ test("appstate guard rejects session subagent MCP control broad fields and store
     "session subagent MCP control capability exposes generic full-state field",
     "session subagent MCP control capability exposes store escape hatch",
   ]));
+});
+
+test("appstate guard rejects subagent spawn host daemon-state seams", () => {
+  const spawnViolations = scanSubagentSpawnHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn.rs",
+    contents: `
+      pub(in crate::daemon) struct SubagentSpawnHost {
+        daemon_state: Arc<DaemonState>,
+        state: Arc<DaemonState>,
+        effects: SubagentSpawnEffects,
+      }
+      pub(in crate::daemon) struct SubagentSpawnHostParts {
+        weak: Weak<DaemonState>,
+        sessions: SessionsHandle,
+        task_workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+      }
+      impl SubagentSpawnHost {
+        pub(in crate::daemon) fn daemon_state(&self) -> Arc<DaemonState> {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(spawnViolations), new Set([
+    "subagent spawn host stores broad daemon state seam",
+    "subagent spawn host exposes generic full-state field",
+    "subagent spawn host exposes daemon state escape hatch",
+  ]));
+
+  const childRunViolations = scanSubagentSpawnHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/wait.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub async fn wait_for_run_terminal_turn(state: &Weak<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(childRunViolations), new Set([
+    "subagent helper depends on broad daemon state",
+  ]));
+
+  const childRunStrongRuntimeViolations = scanSubagentSpawnHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/invocation.rs",
+    contents: `
+      pub(in crate::daemon) struct SubagentChildRunHost {
+        session_stores: SessionStoreLookup,
+        publish_host: SessionSubagentMcpControlPublicationHost,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(childRunStrongRuntimeViolations), new Set([
+    "subagent child-run host strongly retains session runtime",
+  ]));
+
+  const worktreeViolations = scanSubagentSpawnHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn/worktrees.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub(in crate::daemon) struct SubagentSpawnWorktreeHost {
+        task_workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(worktreeViolations), new Set([
+    "subagent helper depends on broad daemon state",
+  ]));
+
+  const assemblyViolations = scanSubagentSpawnHostStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn session_subagent_mcp_control(&self) -> SessionSubagentMcpControlHandle {
+          let hidden = Arc::clone(&self.state);
+          let forbidden = SomeFactory::new(Arc::downgrade(&self.state));
+          let task_workspace = self.task_session_admission_workspace_runtime();
+          let scheduler_spawner =
+            SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(&self.state));
+          todo!()
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(assemblyViolations, [
+    "subagent spawn/control assembly hides daemon state capture",
+    "subagent spawn/control assembly hides daemon state capture",
+    "subagent spawn/control assembly hides daemon state capture",
+  ]);
 });
 
 test("appstate guard rejects final session route broad HTTP state", () => {

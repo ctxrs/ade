@@ -1,4 +1,4 @@
-use crate::daemon::workspaces::vcs_hooks::WorkspaceDeletionVcsHookHost;
+use crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost;
 use crate::daemon::workspaces::{
     cleanup_task_worktrees_with_host, managed_worktree_root_for_data_root, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,
@@ -14,14 +14,14 @@ use references::archived_worktree_has_other_references;
 pub(in crate::daemon) struct SubagentArchiveWorktreeCleanupHost {
     data_root: std::path::PathBuf,
     global_store: Store,
-    vcs_hooks: WorkspaceDeletionVcsHookHost,
+    vcs_hooks: WorkspaceVcsHookHost,
 }
 
 impl SubagentArchiveWorktreeCleanupHost {
     pub(in crate::daemon) fn new(
         data_root: std::path::PathBuf,
         global_store: Store,
-        vcs_hooks: WorkspaceDeletionVcsHookHost,
+        vcs_hooks: WorkspaceVcsHookHost,
     ) -> Self {
         Self {
             data_root,

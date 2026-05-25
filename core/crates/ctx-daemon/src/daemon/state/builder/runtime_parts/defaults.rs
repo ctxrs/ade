@@ -27,7 +27,7 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
         workspace_active_snapshot,
         workspace_active_snapshot_cache: Arc::new(Mutex::new(HashMap::new())),
         workspace_active_heads_cache: Arc::new(Mutex::new(HashMap::new())),
-        worktree_bootstrap_gates: Mutex::new(HashMap::new()),
+        worktree_bootstrap_gates: Arc::new(Mutex::new(HashMap::new())),
         attachment_materialization: Arc::new(WorkspaceAttachmentMaterializationRuntime::new()),
     }
 }

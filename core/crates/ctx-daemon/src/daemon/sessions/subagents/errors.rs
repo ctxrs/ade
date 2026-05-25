@@ -1,6 +1,3 @@
-use crate::daemon::DaemonState;
-use ctx_core::ids::SessionId;
-use ctx_core::models::Session;
 use ctx_observability::logs;
 use ctx_storage_admission::is_storage_exhaustion_error;
 
@@ -81,34 +78,4 @@ pub(super) fn internal_request_or_policy_error(error: anyhow::Error) -> Subagent
         SubagentErrorKind::Internal
     };
     subagent_error(kind, logs::redact_sensitive(&format!("{error:#}")))
-}
-
-pub(super) async fn store_for_session(
-    state: &DaemonState,
-    session_id: SessionId,
-) -> SubagentResult<ctx_store::Store> {
-    state
-        .store_for_session(session_id)
-        .await
-        .map_err(internal_subagent_error)
-}
-
-pub(super) async fn load_parent_session(
-    state: &DaemonState,
-    parent_id: SessionId,
-) -> SubagentResult<(ctx_store::Store, Session)> {
-    let store = store_for_session(state, parent_id).await?;
-    if store
-        .is_archived_subagent_session(parent_id)
-        .await
-        .map_err(internal_subagent_error)?
-    {
-        return Err(not_found("parent session not found"));
-    }
-    let parent = store
-        .get_session(parent_id)
-        .await
-        .map_err(internal_subagent_error)?
-        .ok_or_else(|| not_found("parent session not found"))?;
-    Ok((store, parent))
 }

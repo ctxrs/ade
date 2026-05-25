@@ -63,7 +63,7 @@ pub struct WorkspaceRuntime {
     pub(crate) workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
     pub(crate) workspace_active_heads_cache: WorkspaceActiveHeadsCache,
     pub(crate) worktree_bootstrap_gates:
-        Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
+        Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>>,
     pub(crate) attachment_materialization: Arc<WorkspaceAttachmentMaterializationRuntime>,
 }
 

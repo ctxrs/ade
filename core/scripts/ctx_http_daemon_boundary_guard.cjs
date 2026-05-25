@@ -10872,6 +10872,164 @@ function scanSessionSubagentMcpControlHandleFieldRatchet({ filePath, contents })
   return violations;
 }
 
+function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (
+    filePath ===
+    "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn.rs"
+  ) {
+    for (const typeName of ["SubagentSpawnHost", "SubagentSpawnHostParts"]) {
+      const structBlock = rustStructBlockForType({ contents, typeName });
+      if (!structBlock) {
+        continue;
+      }
+      const broadFieldRegex =
+        /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime|TaskAdmissionWorkspaceRuntime)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu;
+      for (
+        let broad = broadFieldRegex.exec(structBlock.text);
+        broad;
+        broad = broadFieldRegex.exec(structBlock.text)
+      ) {
+        const offset = structBlock.index + broad.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "subagent spawn host stores broad daemon state seam",
+          text: lines[line - 1]?.trim() ?? broad[0],
+        });
+      }
+
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|effects)\s*:/gmu;
+      for (
+        let generic = genericEscapeFieldRegex.exec(structBlock.text);
+        generic;
+        generic = genericEscapeFieldRegex.exec(structBlock.text)
+      ) {
+        const offset = structBlock.index + generic.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "subagent spawn host exposes generic full-state field",
+          text: lines[line - 1]?.trim() ?? generic[0],
+        });
+      }
+    }
+
+    for (const impl of rustImplBlocksForType({ contents, typeName: "SubagentSpawnHost" })) {
+      const escapeRegex = /\b(?:daemon_state|downgrade_daemon_state)\s*\(/gu;
+      for (
+        let escape = escapeRegex.exec(impl.text);
+        escape;
+        escape = escapeRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + escape.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "subagent spawn host exposes daemon state escape hatch",
+          text: lines[line - 1]?.trim() ?? escape[0],
+        });
+      }
+    }
+  }
+
+  if (
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn/worktrees.rs" ||
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/invocation.rs" ||
+    filePath ===
+      "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/wait.rs"
+  ) {
+    const broadChildRunRegex =
+      /\bDaemonState\b|\bTaskAdmissionWorkspaceRuntime\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu;
+    for (
+      let broad = broadChildRunRegex.exec(contents);
+      broad;
+      broad = broadChildRunRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, broad.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "subagent helper depends on broad daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  if (
+    filePath ===
+    "core/crates/ctx-daemon/src/daemon/sessions/subagents/child_runs/invocation.rs"
+  ) {
+    const hostBlock = rustStructBlockForType({
+      contents,
+      typeName: "SubagentChildRunHost",
+    });
+    if (hostBlock) {
+      const strongRuntimeRegex =
+        /\bSessionStoreLookup\b|\bSessionSubagentMcpControlPublicationHost\b|\bArc\s*<\s*SessionRuntime\b/gu;
+      for (
+        let strong = strongRuntimeRegex.exec(hostBlock.text);
+        strong;
+        strong = strongRuntimeRegex.exec(hostBlock.text)
+      ) {
+        const offset = hostBlock.index + strong.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "subagent child-run host strongly retains session runtime",
+          text: lines[line - 1]?.trim() ?? strong[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const assemblyBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "session_subagent_mcp_control",
+    });
+    if (assemblyBlock) {
+      const hiddenStateRegex =
+        /\bArc::clone\s*\(\s*&self\.state\s*\)|\bArc::downgrade\s*\(\s*&self\.state\s*\)|\bself\.task_session_admission_workspace_runtime\s*\(\s*\)/gu;
+      for (
+        let hidden = hiddenStateRegex.exec(assemblyBlock.text);
+        hidden;
+        hidden = hiddenStateRegex.exec(assemblyBlock.text)
+      ) {
+        const before = assemblyBlock.text.slice(
+          Math.max(0, hidden.index - 120),
+          hidden.index,
+        );
+        if (
+          hidden[0].startsWith("Arc::downgrade") &&
+          /SessionSubagentMcpControlSchedulerSpawner::new\s*\(\s*$/u.test(before)
+        ) {
+          continue;
+        }
+        const offset = assemblyBlock.index + hidden.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "subagent spawn/control assembly hides daemon state capture",
+          text: lines[line - 1]?.trim() ?? hidden[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionTitleModelModeTitleImplementationRatchet({ filePath, contents }) {
   if (!sessionTitleModelModeMigratedTitleImplementationPaths.has(filePath)) {
     return [];
@@ -14378,6 +14536,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSubagentSpawnHostStateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanFinalSessionRouteCapabilityRatchet({
         filePath: relativePath,
         contents,
@@ -14582,6 +14744,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionSubagentMcpControlHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSubagentSpawnHostStateRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -15410,6 +15576,7 @@ module.exports = {
   scanSessionSubagentMcpControlDaemonImplementationRatchet,
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
+  scanSubagentSpawnHostStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,

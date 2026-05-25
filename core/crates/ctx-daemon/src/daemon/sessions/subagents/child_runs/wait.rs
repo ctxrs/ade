@@ -1,11 +1,13 @@
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use ctx_core::ids::{RunId, SessionId};
 use ctx_core::models::SessionTurn;
 use ctx_observability::logs;
+use ctx_session_runtime::runtime::SessionRuntime;
+use tokio::sync::watch;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::SchedulerCommand;
 
 use super::status::subagent_terminal_status_from_turn_status;
 
@@ -23,8 +25,28 @@ async fn latest_terminal_turn_for_run(
     }))
 }
 
+#[derive(Clone)]
+pub(in crate::daemon) struct SessionEventHeadSubscriber {
+    runtime: Weak<SessionRuntime<SchedulerCommand>>,
+}
+
+impl SessionEventHeadSubscriber {
+    pub(in crate::daemon) fn new(runtime: Weak<SessionRuntime<SchedulerCommand>>) -> Self {
+        Self { runtime }
+    }
+
+    pub(super) fn runtime(&self) -> Option<Arc<SessionRuntime<SchedulerCommand>>> {
+        self.runtime.upgrade()
+    }
+
+    pub(super) async fn subscribe(&self, session_id: SessionId) -> Option<watch::Receiver<i64>> {
+        let runtime = self.runtime.upgrade()?;
+        Some(runtime.subscribe_session_event_head(session_id).await)
+    }
+}
+
 pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
-    state_weak: &Weak<DaemonState>,
+    event_heads: &SessionEventHeadSubscriber,
     store: &ctx_store::Store,
     session_id: SessionId,
     run_id: RunId,
@@ -32,23 +54,18 @@ pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
     if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await? {
         return Ok(Some(turn));
     }
-    let Some(state) = state_weak.upgrade() else {
+    let Some(mut rx) = event_heads.subscribe(session_id).await else {
         return Ok(None);
     };
-    let mut rx = state
-        .sessions
-        .subscribe_session_event_head(session_id)
-        .await;
-    drop(state);
 
     loop {
         tokio::select! {
             changed = rx.changed() => {
                 if changed.is_err() {
-                    let Some(state) = state_weak.upgrade() else {
+                    let Some(next) = event_heads.subscribe(session_id).await else {
                         return Ok(None);
                     };
-                    rx = state.subscribe_session_event_head(session_id).await;
+                    rx = next;
                 }
                 if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await?
                 {

@@ -54,10 +54,11 @@ use crate::daemon::sessions::title_generation::{
 };
 use crate::daemon::sessions::{
     subagents::{
-        SessionSubagentMcpControlFuture, SessionSubagentMcpControlHandle,
-        SessionSubagentMcpControlHandleParts, SessionSubagentMcpControlLifecycleHost,
-        SessionSubagentMcpControlPublicationHost, SessionSubagentMcpControlSchedulerSpawner,
-        SubagentSpawnHost,
+        SessionEventHeadSubscriber, SessionSubagentMcpControlFuture,
+        SessionSubagentMcpControlHandle, SessionSubagentMcpControlHandleParts,
+        SessionSubagentMcpControlLifecycleHost, SessionSubagentMcpControlPublicationHost,
+        SessionSubagentMcpControlSchedulerSpawner, SubagentChildRunHost, SubagentSpawnHost,
+        SubagentSpawnHostParts, SubagentSpawnWorktreeHost, SubagentSpawnWorktreeHostParts,
     },
     DemoSeedTranscriptHandle,
 };
@@ -67,8 +68,8 @@ use super::{
     route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
     state::{
         session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup,
-        SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WorkspaceFileCompletionsCache,
-        WorktreeFileCompletionsCache,
+        SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WeakSessionStoreLookup,
+        WorkspaceFileCompletionsCache, WorktreeFileCompletionsCache,
     },
     terminals::CreateTerminalLaunchRequest,
     web_sessions::{WebSessionLaunchError, WebSessionLaunchRequest},
@@ -576,36 +577,64 @@ impl DaemonHandle {
                 }) as SessionSubagentMcpControlFuture<_>
             }
         });
-        let spawn_host = Arc::new(SubagentSpawnHost::new(
-            Arc::clone(&self.state),
-            self.state.global_store().clone(),
-            Arc::clone(&self.state.providers),
-            self.state.core.data_root.clone(),
+        let session_stores = self.session_store_lookup();
+        let scheduler_spawner =
+            SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(&self.state));
+        let publish_host = SessionSubagentMcpControlPublicationHost::new(
+            session_stores.clone(),
+            self.protected_workspace_store_lookup(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+        );
+        let child_run_host = SubagentChildRunHost::new(
+            self.weak_session_store_lookup(),
+            SessionEventHeadSubscriber::new(Arc::downgrade(&self.state.sessions)),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+        );
+        let worktree_host = Arc::new(SubagentSpawnWorktreeHost::new(
+            SubagentSpawnWorktreeHostParts {
+                data_root: self.state.core.data_root.clone(),
+                daemon_url: self.state.core.daemon_url.clone(),
+                global_store: self.state.global_store().clone(),
+                workspace_stores: self.protected_workspace_store_lookup(),
+                harness: Arc::clone(&self.state.execution.harness),
+                active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+                bootstrap_gates: Arc::clone(&self.state.workspaces.worktree_bootstrap_gates),
+                attachment_materialization: Arc::clone(
+                    &self.state.workspaces.attachment_materialization,
+                ),
+            },
         ));
+        let spawn_host = Arc::new(SubagentSpawnHost::new(SubagentSpawnHostParts {
+            session_stores: session_stores.clone(),
+            session_runtime: Arc::clone(&self.state.sessions),
+            scheduler_spawner: scheduler_spawner.clone(),
+            publish_host: publish_host.clone(),
+            child_run_host,
+            session_vcs: self.session_vcs(),
+            worktrees: worktree_host,
+            provider_launch: self.provider_workspace_launch_runtime(),
+            global_store: self.state.global_store().clone(),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            data_root: self.state.core.data_root.clone(),
+        }));
         let archive_worktree_cleanup = Arc::new(
             crate::daemon::sessions::subagents::SubagentArchiveWorktreeCleanupHost::new(
                 self.state.core.data_root.clone(),
                 self.state.global_store().clone(),
-                crate::daemon::workspaces::vcs_hooks::WorkspaceDeletionVcsHookHost::new(
+                crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost::new(
                     self.state.core.data_root.clone(),
                     self.state.core.daemon_url.clone(),
                     self.state.global_store().clone(),
-                    self.state.core.stores.clone(),
+                    self.protected_workspace_store_lookup(),
                     Arc::clone(&self.state.execution.harness),
                 ),
             ),
         );
         SessionSubagentMcpControlHandle::new(SessionSubagentMcpControlHandleParts {
-            session_stores: self.session_store_lookup(),
+            session_stores,
             session_runtime: Arc::clone(&self.state.sessions),
-            scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(
-                &self.state,
-            )),
-            publish_host: SessionSubagentMcpControlPublicationHost::new(
-                self.session_store_lookup(),
-                self.protected_workspace_store_lookup(),
-                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            ),
+            scheduler_spawner,
+            publish_host,
             lifecycle_host: SessionSubagentMcpControlLifecycleHost::new(
                 self.state.global_store().clone(),
                 Arc::clone(&self.state.workspaces.workspace_active_snapshot),
@@ -634,6 +663,15 @@ impl DaemonHandle {
         SessionStoreLookup::new(
             self.state.global_store().clone(),
             self.protected_workspace_store_lookup(),
+        )
+    }
+
+    fn weak_session_store_lookup(&self) -> WeakSessionStoreLookup {
+        WeakSessionStoreLookup::new(
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::downgrade(&self.state.sessions),
+            Arc::clone(&self.state.transport.merge_queue),
         )
     }
 

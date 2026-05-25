@@ -10,7 +10,7 @@ use ctx_worktree_vcs_service::VcsHooksHost;
 
 use crate::daemon::DaemonState;
 
-pub(in crate::daemon) use host::WorkspaceDeletionVcsHookHost;
+pub(in crate::daemon) use host::WorkspaceVcsHookHost;
 
 pub async fn ensure_task_commit_hook(
     state: &DaemonState,

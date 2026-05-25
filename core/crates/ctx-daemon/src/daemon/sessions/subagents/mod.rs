@@ -22,11 +22,16 @@ pub use self::types::{
 };
 use ctx_core::models::SubagentInvocationChild;
 
-pub(in crate::daemon) use self::agent_control::SubagentSpawnHost;
-pub(in crate::daemon) use self::child_runs::PersistedSubagentPrompt;
+pub(in crate::daemon) use self::agent_control::{
+    SubagentSpawnHost, SubagentSpawnHostParts, SubagentSpawnWorktreeHost,
+    SubagentSpawnWorktreeHostParts,
+};
 use self::child_runs::{
-    dispatch_subagent_prompt, emit_subagent_invocation_notice, finalize_subagent_invocation,
-    persist_subagent_prompt, run_subagent_child, wait_for_run_assistant_message_in_store,
+    emit_subagent_invocation_notice, finalize_subagent_invocation, run_subagent_child,
+    wait_for_run_assistant_message_in_store,
+};
+pub(in crate::daemon) use self::child_runs::{
+    PersistedSubagentPrompt, SessionEventHeadSubscriber, SubagentChildRunHost,
 };
 pub(in crate::daemon) use self::context::worktree_path_for_child_in_store;
 use self::details::build_spawned_agent_detail;

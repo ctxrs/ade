@@ -89,7 +89,7 @@ fn test_workspace_runtime() -> WorkspaceRuntime {
         workspace_active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
         workspace_active_snapshot_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         workspace_active_heads_cache: Arc::new(AsyncMutex::new(HashMap::new())),
-        worktree_bootstrap_gates: AsyncMutex::new(HashMap::new()),
+        worktree_bootstrap_gates: Arc::new(AsyncMutex::new(HashMap::new())),
         attachment_materialization: Arc::new(WorkspaceAttachmentMaterializationRuntime::new()),
     }
 }

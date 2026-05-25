@@ -1,51 +1,74 @@
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
-use ctx_core::models::{
-    ExecutionEnvironment, Message, Session, SubagentInvocationChild, VcsKind, Workspace, Worktree,
-};
-use ctx_provider_install::install_state::InstallTarget;
-use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
-use ctx_provider_runtime::provider_usability::{
-    provider_status_is_usable, provider_status_unusable_reason,
-};
-use ctx_provider_runtime::ProviderRuntime;
-use ctx_session_tools::model_resolution::ModelCatalog;
-use ctx_settings_model::ExecutionSettings;
+use ctx_core::models::{Session, SubagentInvocationChild, Workspace};
+use ctx_observability::perf_telemetry::PerfTelemetry;
+use ctx_session_runtime::runtime::SessionRuntime;
 use ctx_store::Store;
-use ctx_subagent_service::SubagentWorktreeSelection;
+use tokio::sync::Mutex;
 
 use super::super::errors::ApiResult;
 use super::super::{
-    api_error, build_spawned_agent_detail, dispatch_subagent_prompt,
-    emit_subagent_invocation_notice, finalize_subagent_invocation, init_subagents,
-    persist_subagent_prompt, run_subagent_child, AgentInitItem, AgentInitReq,
-    PersistedSubagentPrompt, SpawnAgentReq, SpawnAgentResp, SubagentErrorKind,
+    api_error, build_spawned_agent_detail, init_subagents, run_subagent_child, AgentInitItem,
+    AgentInitReq, SessionSubagentMcpControlPublicationHost,
+    SessionSubagentMcpControlSchedulerSpawner, SpawnAgentReq, SpawnAgentResp, SubagentChildRunHost,
+    SubagentErrorKind,
 };
-use crate::daemon::DaemonState;
+use crate::daemon::{
+    scheduler::SchedulerCommand, session_store_access_anyhow, ProviderWorkspaceLaunchRuntime,
+    SessionStoreAccessError, SessionStoreLookup, SessionVcsHandle,
+};
+
+mod prompt;
+mod providers;
+mod worktrees;
+
+pub(in crate::daemon) use worktrees::{SubagentSpawnWorktreeHost, SubagentSpawnWorktreeHostParts};
 
 #[derive(Clone)]
 pub(in crate::daemon) struct SubagentSpawnHost {
-    daemon_state: Arc<DaemonState>,
+    session_stores: SessionStoreLookup,
+    session_runtime: Arc<SessionRuntime<SchedulerCommand>>,
+    scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner,
+    publish_host: SessionSubagentMcpControlPublicationHost,
+    child_run_host: SubagentChildRunHost,
+    session_vcs: SessionVcsHandle,
+    worktrees: Arc<SubagentSpawnWorktreeHost>,
+    provider_launch: Arc<ProviderWorkspaceLaunchRuntime>,
     global_store: Store,
-    providers: Arc<ProviderRuntime>,
+    perf_telemetry: PerfTelemetry,
     data_root: PathBuf,
 }
 
+pub(in crate::daemon) struct SubagentSpawnHostParts {
+    pub(in crate::daemon) session_stores: SessionStoreLookup,
+    pub(in crate::daemon) session_runtime: Arc<SessionRuntime<SchedulerCommand>>,
+    pub(in crate::daemon) scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner,
+    pub(in crate::daemon) publish_host: SessionSubagentMcpControlPublicationHost,
+    pub(in crate::daemon) child_run_host: SubagentChildRunHost,
+    pub(in crate::daemon) session_vcs: SessionVcsHandle,
+    pub(in crate::daemon) worktrees: Arc<SubagentSpawnWorktreeHost>,
+    pub(in crate::daemon) provider_launch: Arc<ProviderWorkspaceLaunchRuntime>,
+    pub(in crate::daemon) global_store: Store,
+    pub(in crate::daemon) perf_telemetry: PerfTelemetry,
+    pub(in crate::daemon) data_root: PathBuf,
+}
+
 impl SubagentSpawnHost {
-    pub(in crate::daemon) fn new(
-        daemon_state: Arc<DaemonState>,
-        global_store: Store,
-        providers: Arc<ProviderRuntime>,
-        data_root: PathBuf,
-    ) -> Self {
+    pub(in crate::daemon) fn new(parts: SubagentSpawnHostParts) -> Self {
         Self {
-            daemon_state,
-            global_store,
-            providers,
-            data_root,
+            session_stores: parts.session_stores,
+            session_runtime: parts.session_runtime,
+            scheduler_spawner: parts.scheduler_spawner,
+            publish_host: parts.publish_host,
+            child_run_host: parts.child_run_host,
+            session_vcs: parts.session_vcs,
+            worktrees: parts.worktrees,
+            provider_launch: parts.provider_launch,
+            global_store: parts.global_store,
+            perf_telemetry: parts.perf_telemetry,
+            data_root: parts.data_root,
         }
     }
 
@@ -66,21 +89,45 @@ impl SubagentSpawnHost {
         &self,
         parent_id: SessionId,
     ) -> ApiResult<(Store, Session)> {
-        super::super::errors::load_parent_session(self.daemon_state.as_ref(), parent_id).await
+        let store = match self.session_stores.existing_session_store(parent_id).await {
+            Ok(store) => store,
+            Err(SessionStoreAccessError::NotFound) => {
+                return Err(super::super::not_found("parent session not found"));
+            }
+            Err(error) => {
+                return Err(super::super::internal_api_error(
+                    session_store_access_anyhow(error),
+                ));
+            }
+        };
+        let parent = store
+            .get_session(parent_id)
+            .await
+            .map_err(super::super::internal_api_error)?
+            .ok_or_else(|| super::super::not_found("parent session not found"))?;
+        Ok((store, parent))
     }
 
     pub(in crate::daemon) async fn task_session_creation_lock(
         &self,
         task_id: TaskId,
-    ) -> Arc<tokio::sync::Mutex<()>> {
-        self.daemon_state.task_session_creation_lock(task_id).await
+    ) -> Arc<Mutex<()>> {
+        self.session_runtime
+            .task_session_creation_lock(task_id)
+            .await
     }
 
     pub(in crate::daemon) async fn store_for_session(
         &self,
         session_id: SessionId,
     ) -> ApiResult<Store> {
-        super::super::errors::store_for_session(self.daemon_state.as_ref(), session_id).await
+        self.session_stores
+            .existing_session_store(session_id)
+            .await
+            .map_err(|error| match error {
+                SessionStoreAccessError::NotFound => super::super::not_found("session not found"),
+                error => super::super::internal_api_error(session_store_access_anyhow(error)),
+            })
     }
 
     pub(in crate::daemon) async fn load_workspace(
@@ -94,133 +141,6 @@ impl SubagentSpawnHost {
             .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))
     }
 
-    pub(in crate::daemon) async fn resolve_existing_worktree_execution(
-        &self,
-        store: &Store,
-        workspace: &Workspace,
-        worktree_id: WorktreeId,
-    ) -> ApiResult<crate::daemon::workspaces::ResolvedExistingWorktreeExecution> {
-        crate::daemon::workspaces::resolve_existing_worktree_execution(
-            &self.daemon_state,
-            store,
-            workspace,
-            worktree_id,
-        )
-        .await
-        .map_err(super::super::internal_api_error)
-    }
-
-    pub(in crate::daemon) async fn load_requested_model_catalogs(
-        &self,
-        workspace: &Workspace,
-        provider_ids: &HashSet<String>,
-        execution_environment: ExecutionEnvironment,
-    ) -> ApiResult<HashMap<String, Option<ModelCatalog>>> {
-        super::super::providers::load_requested_model_catalogs(
-            self,
-            workspace,
-            provider_ids,
-            execution_environment,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn effective_install_target_for_environment(
-        &self,
-        workspace_id: WorkspaceId,
-        execution_environment: ExecutionEnvironment,
-    ) -> anyhow::Result<InstallTarget> {
-        crate::daemon::execution_effective::effective_install_target_for_environment(
-            self.daemon_state.as_ref(),
-            workspace_id,
-            execution_environment,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn load_provider_matrix(
-        &self,
-    ) -> ctx_provider_matrix::ProviderMatrix {
-        self.providers.load_provider_matrix(&self.data_root).await
-    }
-
-    pub(in crate::daemon) async fn known_harness_provider_ids(
-        &self,
-        matrix: &ctx_provider_matrix::ProviderMatrix,
-    ) -> HashSet<String> {
-        self.providers.known_harness_provider_ids(matrix).await
-    }
-
-    pub(in crate::daemon) async fn provider_unusable_reason_for_target(
-        &self,
-        managed: &ctx_managed_installs::AgentServerConfigFile,
-        matrix: &ctx_provider_matrix::ProviderMatrix,
-        provider_id: &str,
-        install_target: InstallTarget,
-    ) -> Option<String> {
-        let status = provider_status_for_target(
-            self.daemon_state.as_ref(),
-            managed,
-            matrix,
-            provider_id,
-            install_target,
-        )
-        .await;
-        (!provider_status_is_usable(&status)).then(|| {
-            provider_status_unusable_reason(&status)
-                .unwrap_or_else(|| "provider not ready for use".to_string())
-        })
-    }
-
-    pub(in crate::daemon) async fn load_provider_model_catalog_for_execution_environment(
-        &self,
-        workspace: &Workspace,
-        provider_id: &str,
-        execution_environment: ExecutionEnvironment,
-    ) -> Result<Option<ModelCatalog>, String> {
-        crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment(
-            self.daemon_state.as_ref(),
-            workspace,
-            provider_id,
-            execution_environment,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn plan_subagent_worktree_creation(
-        &self,
-        parent_worktree: &Worktree,
-        selection: SubagentWorktreeSelection,
-    ) -> ApiResult<Option<(VcsKind, String)>> {
-        super::super::worktrees::plan_subagent_worktree_creation(
-            &self.daemon_state,
-            parent_worktree,
-            selection,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn create_subagent_worktree(
-        &self,
-        store: &Store,
-        workspace: &Workspace,
-        task_id: TaskId,
-        base_commit_sha: &str,
-        vcs_kind: VcsKind,
-        effective: &ExecutionSettings,
-    ) -> ApiResult<Worktree> {
-        super::super::worktrees::create_subagent_worktree(
-            &self.daemon_state,
-            store,
-            workspace,
-            task_id,
-            base_commit_sha,
-            vcs_kind,
-            effective,
-        )
-        .await
-    }
-
     pub(in crate::daemon) async fn upsert_workspace_session_index(
         &self,
         session_id: SessionId,
@@ -229,59 +149,6 @@ impl SubagentSpawnHost {
         self.global_store
             .upsert_workspace_session_index(session_id, workspace_id)
             .await
-    }
-
-    pub(in crate::daemon) async fn persist_subagent_prompt(
-        &self,
-        session: &Session,
-        prompt: String,
-    ) -> ApiResult<PersistedSubagentPrompt> {
-        persist_subagent_prompt(&self.daemon_state, session, prompt).await
-    }
-
-    pub(in crate::daemon) async fn emit_subagent_invocation_notice(
-        &self,
-        parent_session_id: SessionId,
-        parent_turn_id: Option<TurnId>,
-        payload: serde_json::Value,
-    ) -> ApiResult<()> {
-        emit_subagent_invocation_notice(
-            &self.daemon_state,
-            parent_session_id,
-            parent_turn_id,
-            payload,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn dispatch_subagent_prompt(
-        &self,
-        session: &Session,
-        saved: &Message,
-    ) {
-        dispatch_subagent_prompt(&self.daemon_state, session, saved).await;
-    }
-
-    pub(in crate::daemon) async fn emit_compat_payload_reject_counter(
-        &self,
-        surface: &str,
-        issue: &str,
-        extra_label: Option<(&str, &str)>,
-    ) {
-        self.daemon_state
-            .emit_compat_payload_reject_counter(surface, issue, extra_label)
-            .await;
-    }
-
-    pub(in crate::daemon) async fn emit_product_fallback_applied_counter(
-        &self,
-        surface: &str,
-        fallback: &str,
-        extra_label: Option<(&str, &str)>,
-    ) {
-        self.daemon_state
-            .emit_product_fallback_applied_counter(surface, fallback, extra_label)
-            .await;
     }
 
     pub(in crate::daemon) fn spawn_subagent_completion_task(
@@ -293,23 +160,22 @@ impl SubagentSpawnHost {
         parent_turn_id: Option<TurnId>,
         parent_worktree_id: WorktreeId,
     ) {
-        let state_weak = Arc::downgrade(&self.daemon_state);
+        let child_run_host = self.child_run_host.clone();
         tokio::spawn(async move {
-            if let Err(error) = run_subagent_child(&state_weak, child, parent_worktree_id).await {
+            if let Err(error) = run_subagent_child(&child_run_host, child, parent_worktree_id).await
+            {
                 tracing::warn!(error = %error, "subagent execution failed");
             }
-            if let Some(state) = state_weak.upgrade() {
-                if let Err(error) = finalize_subagent_invocation(
-                    &state,
-                    &invocation_id,
-                    &tool_call_id,
-                    parent_id,
-                    parent_turn_id,
-                )
-                .await
-                {
-                    tracing::warn!(error = %error, "failed to finalize subagent invocation");
-                }
+            if let Err(error) = super::super::finalize_subagent_invocation(
+                &child_run_host,
+                &invocation_id,
+                &tool_call_id,
+                parent_id,
+                parent_turn_id,
+            )
+            .await
+            {
+                tracing::warn!(error = %error, "failed to finalize subagent invocation");
             }
         });
     }

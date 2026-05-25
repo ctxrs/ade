@@ -48,6 +48,17 @@ impl ModelCatalogHost for crate::daemon::SessionTitleModelModeHandle {
     }
 }
 
+#[async_trait]
+impl ModelCatalogHost for crate::daemon::ProviderWorkspaceLaunchRuntime {
+    fn global_store(&self) -> &Store {
+        self.global_store()
+    }
+
+    async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
+        self.store_for_workspace(workspace_id).await
+    }
+}
+
 async fn load_pinned_subscription_model_catalog(
     host: &impl ModelCatalogHost,
     provider_id: &str,

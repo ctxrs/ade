@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
-use ctx_store::{Store, StoreManager};
+use ctx_store::Store;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
@@ -17,31 +17,32 @@ use ctx_worktree_vcs_service::{
 
 use crate::daemon::execution_effective;
 use crate::daemon::DaemonState;
+use crate::daemon::ProtectedWorkspaceStoreLookup;
 
 #[path = "host/git_config.rs"]
 mod git_config;
 
-pub(in crate::daemon) struct WorkspaceDeletionVcsHookHost {
+pub(in crate::daemon) struct WorkspaceVcsHookHost {
     data_root: PathBuf,
     daemon_url: String,
     global_store: Store,
-    stores: StoreManager,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
     harness: Arc<HarnessRuntimeManager>,
 }
 
-impl WorkspaceDeletionVcsHookHost {
+impl WorkspaceVcsHookHost {
     pub(in crate::daemon) fn new(
         data_root: PathBuf,
         daemon_url: String,
         global_store: Store,
-        stores: StoreManager,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
         harness: Arc<HarnessRuntimeManager>,
     ) -> Self {
         Self {
             data_root,
             daemon_url,
             global_store,
-            stores,
+            workspace_stores,
             harness,
         }
     }
@@ -50,7 +51,10 @@ impl WorkspaceDeletionVcsHookHost {
         &self,
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<ctx_settings_model::ExecutionSettings> {
-        let store = self.stores.workspace(workspace_id).await?;
+        let store = self
+            .workspace_stores
+            .store_for_workspace(workspace_id)
+            .await?;
         ctx_settings_service::effective_execution_settings_classified(&self.global_store, &store)
             .await
             .map_err(ctx_settings_service::EffectiveExecutionSettingsError::into_inner)
@@ -58,18 +62,21 @@ impl WorkspaceDeletionVcsHookHost {
 }
 
 #[async_trait]
-impl WorktreeDataPlaneHost for WorkspaceDeletionVcsHookHost {
+impl WorktreeDataPlaneHost for WorkspaceVcsHookHost {
     async fn get_workspace(state: &Self, workspace_id: WorkspaceId) -> Result<Option<Workspace>> {
         state.global_store.get_workspace(workspace_id).await
     }
 
     async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store> {
-        state.stores.workspace(workspace_id).await
+        state
+            .workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
     }
 }
 
 #[async_trait]
-impl VcsHooksHost for WorkspaceDeletionVcsHookHost {
+impl VcsHooksHost for WorkspaceVcsHookHost {
     fn data_root(&self) -> &Path {
         &self.data_root
     }

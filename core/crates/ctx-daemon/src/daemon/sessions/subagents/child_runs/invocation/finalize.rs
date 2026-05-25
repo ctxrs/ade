@@ -1,16 +1,25 @@
 use super::*;
 
 pub(in crate::daemon::sessions::subagents) async fn finalize_subagent_invocation(
-    state: &Arc<DaemonState>,
+    host: &SubagentChildRunHost,
     invocation_id: &str,
     tool_call_id: &str,
     parent_session_id: SessionId,
     parent_turn_id: Option<TurnId>,
 ) -> Result<(), String> {
-    let store = state
-        .store_for_session(parent_session_id)
+    let store = match host
+        .store_for_session_allow_archived(parent_session_id)
         .await
-        .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
+    {
+        Ok(Some(store)) => store,
+        Ok(None) => return Ok(()),
+        Err(SessionStoreAccessError::NotFound) => return Ok(()),
+        Err(error) => {
+            return Err(logs::redact_sensitive(
+                &session_store_access_anyhow(error).to_string(),
+            ));
+        }
+    };
     let Some(invocation) = store
         .get_subagent_invocation(invocation_id)
         .await
@@ -64,7 +73,7 @@ pub(in crate::daemon::sessions::subagents) async fn finalize_subagent_invocation
         })
         .collect::<Vec<_>>();
     emit_subagent_invocation_notice(
-        state,
+        host,
         parent_session_id,
         parent_turn_id,
         serde_json::json!({

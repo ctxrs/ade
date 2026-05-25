@@ -549,7 +549,7 @@ impl SessionSubagentMcpControlSchedulerSpawner {
         Self { state }
     }
 
-    async fn ensure_scheduler(
+    pub(in crate::daemon) async fn ensure_scheduler(
         &self,
         runtime: &SessionRuntime<crate::daemon::scheduler::SchedulerCommand>,
         session: Session,

@@ -248,6 +248,37 @@ async fn existing_session_store_hides_archived_subagents_except_explicit_history
 }
 
 #[tokio::test]
+async fn weak_session_store_lookup_stops_after_session_runtime_drops() {
+    let (_data_dir, state, session) = seeded_session().await;
+    let lookup = WeakSessionStoreLookup::new(
+        state.global_store().clone(),
+        state.core.stores.clone(),
+        Arc::downgrade(&state.sessions),
+        Arc::clone(&state.transport.merge_queue),
+    );
+
+    assert!(
+        lookup
+            .existing_session_store_allow_archived(session.id)
+            .await
+            .expect("live runtime lookup should not error")
+            .is_some(),
+        "live runtime should permit lookup"
+    );
+
+    drop(state);
+
+    assert!(
+        lookup
+            .existing_session_store_allow_archived(session.id)
+            .await
+            .expect("dropped runtime lookup should not error")
+            .is_none(),
+        "dropped runtime should stop weak lookup without retaining the runtime"
+    );
+}
+
+#[tokio::test]
 async fn existing_workspace_store_treats_deleting_workspace_as_not_found() {
     let (_data_dir, state, session) = seeded_session().await;
     state

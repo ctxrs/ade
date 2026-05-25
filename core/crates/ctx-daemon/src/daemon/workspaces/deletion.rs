@@ -6,6 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{Workspace, Worktree};
+use ctx_merge_queue::MergeQueueRuntime;
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_session_runtime::runtime::SessionLifecycleHost;
 use ctx_store::{Store, StoreManager};
@@ -13,11 +14,11 @@ use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 
 use crate::daemon::state::{
-    DaemonState, SessionRuntime, WorkspaceActiveHeadsCache, WorkspaceActiveSnapshotCache,
-    WorkspaceFileCompletionsCache,
+    DaemonState, ProtectedWorkspaceStoreLookup, SessionRuntime, WorkspaceActiveHeadsCache,
+    WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache,
 };
 
-use super::vcs_hooks::{cleanup_worktree_hooks_with_host, WorkspaceDeletionVcsHookHost};
+use super::vcs_hooks::{cleanup_worktree_hooks_with_host, WorkspaceVcsHookHost};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceDeleteError {
@@ -37,7 +38,7 @@ pub(in crate::daemon) struct WorkspaceDeletionRuntime {
     workspace_file_completions_cache: WorkspaceFileCompletionsCache,
     harness: Arc<HarnessRuntimeManager>,
     session_lifecycle: WorkspaceDeletionSessionLifecycleHost,
-    vcs_hooks: Arc<WorkspaceDeletionVcsHookHost>,
+    vcs_hooks: Arc<WorkspaceVcsHookHost>,
     #[cfg(test)]
     fail_after_begin_for_test: Arc<AtomicBool>,
 }
@@ -54,6 +55,7 @@ struct WorkspaceDeletionRuntimeDeps {
     workspace_file_completions_cache: WorkspaceFileCompletionsCache,
     harness: Arc<HarnessRuntimeManager>,
     providers: Arc<ProviderRuntime>,
+    merge_queue: Arc<MergeQueueRuntime>,
 }
 
 impl WorkspaceDeletionRuntime {
@@ -70,17 +72,20 @@ impl WorkspaceDeletionRuntime {
             workspace_file_completions_cache,
             harness,
             providers,
+            merge_queue,
         } = deps;
         let session_lifecycle = WorkspaceDeletionSessionLifecycleHost::new(
             global_store.clone(),
             Arc::clone(&active_snapshot),
             providers,
         );
-        let vcs_hooks = Arc::new(WorkspaceDeletionVcsHookHost::new(
+        let workspace_stores =
+            ProtectedWorkspaceStoreLookup::new(stores.clone(), Arc::clone(&sessions), merge_queue);
+        let vcs_hooks = Arc::new(WorkspaceVcsHookHost::new(
             data_root.clone(),
             daemon_url,
             global_store.clone(),
-            stores.clone(),
+            workspace_stores,
             Arc::clone(&harness),
         ));
         Self {
@@ -289,6 +294,7 @@ pub(in crate::daemon) fn runtime_from_state(
             ),
             harness: Arc::clone(&state.execution.harness),
             providers: Arc::clone(&state.providers),
+            merge_queue: Arc::clone(&state.transport.merge_queue),
         },
     ))
 }
