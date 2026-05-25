@@ -10875,6 +10875,8 @@ function scanSessionSubagentMcpControlHandleFieldRatchet({ filePath, contents })
 function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
+  const taskWorktreeHostPath =
+    "core/crates/ctx-daemon/src/daemon/workspaces/task_worktree_host.rs";
 
   if (
     filePath ===
@@ -10939,6 +10941,47 @@ function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
     }
   }
 
+  if (filePath === taskWorktreeHostPath) {
+    const broadTaskWorktreeHostRegex =
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime|TaskAdmissionWorkspaceRuntime|TaskLifecycleWorkspaceRuntime)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>|\bruntime_from_state\b|\bSubagentSpawnWorktreeHost\b/gu;
+    for (
+      let broad = broadTaskWorktreeHostRegex.exec(contents);
+      broad;
+      broad = broadTaskWorktreeHostRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, broad.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task worktree host depends on broad daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    for (const typeName of ["TaskWorktreeHost", "TaskWorktreeHostParts"]) {
+      const structBlock = rustStructBlockForType({ contents, typeName });
+      if (!structBlock) {
+        continue;
+      }
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|effects)\s*:/gmu;
+      for (
+        let generic = genericEscapeFieldRegex.exec(structBlock.text);
+        generic;
+        generic = genericEscapeFieldRegex.exec(structBlock.text)
+      ) {
+        const offset = structBlock.index + generic.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "task worktree host exposes generic full-state field",
+          text: lines[line - 1]?.trim() ?? generic[0],
+        });
+      }
+    }
+  }
+
   if (
     filePath ===
       "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn/worktrees.rs" ||
@@ -10993,6 +11036,45 @@ function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
   }
 
   if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const removedRuntimeRegex =
+      /\b(?:task_session_admission_workspace_runtime|task_lifecycle_workspace_runtime|TaskAdmissionWorkspaceRuntime|TaskLifecycleWorkspaceRuntime)\b/gu;
+    for (
+      let removed = removedRuntimeRegex.exec(contents);
+      removed;
+      removed = removedRuntimeRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, removed.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task worktree host assembly keeps removed workspace runtime seam",
+        text: lines[line - 1]?.trim() ?? removed[0],
+      });
+    }
+
+    const taskWorktreeHostBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "task_worktree_host",
+    });
+    if (taskWorktreeHostBlock) {
+      const hiddenStateRegex =
+        /\bArc::clone\s*\(\s*&self\.state\s*\)|\bArc::downgrade\s*\(\s*&self\.state\s*\)/gu;
+      for (
+        let hidden = hiddenStateRegex.exec(taskWorktreeHostBlock.text);
+        hidden;
+        hidden = hiddenStateRegex.exec(taskWorktreeHostBlock.text)
+      ) {
+        const offset = taskWorktreeHostBlock.index + hidden.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "task worktree host assembly captures broad daemon state",
+          text: lines[line - 1]?.trim() ?? hidden[0],
+        });
+      }
+    }
+
     const assemblyBlock = rustFunctionBlockForName({
       contents,
       fnName: "session_subagent_mcp_control",

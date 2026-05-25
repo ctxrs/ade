@@ -21,6 +21,7 @@ mod run_archive;
 mod runtime;
 mod sandbox_binding;
 pub mod stream;
+mod task_worktree_host;
 pub mod vcs_hooks;
 mod workspace_file_completions_route;
 mod worktree_bootstrap;
@@ -56,6 +57,7 @@ pub(in crate::daemon::workspaces) use route_config::WorkspaceRouteError;
 pub use run_archive::RunArchiveIngestError;
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
+pub(in crate::daemon) use task_worktree_host::{TaskWorktreeHost, TaskWorktreeHostParts};
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
 pub use worktree_bootstrap::spawn_worktree_bootstrap;
 pub use worktree_cleanup::{

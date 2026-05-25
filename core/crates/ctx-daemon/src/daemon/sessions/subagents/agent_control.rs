@@ -1,6 +1,3 @@
 mod spawn;
 
-pub(in crate::daemon) use spawn::{
-    SubagentSpawnHost, SubagentSpawnHostParts, SubagentSpawnWorktreeHost,
-    SubagentSpawnWorktreeHostParts,
-};
+pub(in crate::daemon) use spawn::{SubagentSpawnHost, SubagentSpawnHostParts};

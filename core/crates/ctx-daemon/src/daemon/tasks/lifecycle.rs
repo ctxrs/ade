@@ -5,7 +5,9 @@ use ctx_task_service::lifecycle::{self, LifecycleCleanupTarget};
 use ctx_worktree_vcs_service::ensure_worktree_attached;
 
 use crate::daemon::handle::TaskLifecycleHandle;
-use crate::daemon::workspaces::{BranchCleanupErrorMode, TaskWorktreeCleanupTarget};
+use crate::daemon::workspaces::{
+    BranchCleanupErrorMode, TaskWorktreeCleanupTarget, TaskWorktreeHost,
+};
 use crate::daemon::WorkspaceStoreAccessError;
 
 pub use ctx_task_service::lifecycle::TaskLifecycleError;
@@ -296,7 +298,7 @@ impl TaskLifecycleHandle {
 }
 
 fn daemon_cleanup_targets(
-    workspace_runtime: &crate::daemon::handle::TaskLifecycleWorkspaceRuntime,
+    workspace_runtime: &TaskWorktreeHost,
     workspace: &Workspace,
     targets: &[LifecycleCleanupTarget],
 ) -> Vec<TaskWorktreeCleanupTarget> {

@@ -22,10 +22,7 @@ pub use self::types::{
 };
 use ctx_core::models::SubagentInvocationChild;
 
-pub(in crate::daemon) use self::agent_control::{
-    SubagentSpawnHost, SubagentSpawnHostParts, SubagentSpawnWorktreeHost,
-    SubagentSpawnWorktreeHostParts,
-};
+pub(in crate::daemon) use self::agent_control::{SubagentSpawnHost, SubagentSpawnHostParts};
 use self::child_runs::{
     emit_subagent_invocation_notice, finalize_subagent_invocation, run_subagent_child,
     wait_for_run_assistant_message_in_store,

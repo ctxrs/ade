@@ -15,6 +15,7 @@ use super::super::{
     SessionSubagentMcpControlSchedulerSpawner, SpawnAgentReq, SpawnAgentResp, SubagentChildRunHost,
     SubagentErrorKind,
 };
+use crate::daemon::workspaces::TaskWorktreeHost;
 use crate::daemon::{
     scheduler::SchedulerCommand, session_store_access_anyhow, ProviderWorkspaceLaunchRuntime,
     SessionStoreAccessError, SessionStoreLookup, SessionVcsHandle,
@@ -24,8 +25,6 @@ mod prompt;
 mod providers;
 mod worktrees;
 
-pub(in crate::daemon) use worktrees::{SubagentSpawnWorktreeHost, SubagentSpawnWorktreeHostParts};
-
 #[derive(Clone)]
 pub(in crate::daemon) struct SubagentSpawnHost {
     session_stores: SessionStoreLookup,
@@ -34,7 +33,7 @@ pub(in crate::daemon) struct SubagentSpawnHost {
     publish_host: SessionSubagentMcpControlPublicationHost,
     child_run_host: SubagentChildRunHost,
     session_vcs: SessionVcsHandle,
-    worktrees: Arc<SubagentSpawnWorktreeHost>,
+    worktrees: Arc<TaskWorktreeHost>,
     provider_launch: Arc<ProviderWorkspaceLaunchRuntime>,
     global_store: Store,
     perf_telemetry: PerfTelemetry,
@@ -48,7 +47,7 @@ pub(in crate::daemon) struct SubagentSpawnHostParts {
     pub(in crate::daemon) publish_host: SessionSubagentMcpControlPublicationHost,
     pub(in crate::daemon) child_run_host: SubagentChildRunHost,
     pub(in crate::daemon) session_vcs: SessionVcsHandle,
-    pub(in crate::daemon) worktrees: Arc<SubagentSpawnWorktreeHost>,
+    pub(in crate::daemon) worktrees: Arc<TaskWorktreeHost>,
     pub(in crate::daemon) provider_launch: Arc<ProviderWorkspaceLaunchRuntime>,
     pub(in crate::daemon) global_store: Store,
     pub(in crate::daemon) perf_telemetry: PerfTelemetry,

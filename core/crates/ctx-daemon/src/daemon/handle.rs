@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Message, SandboxBinding, Session, SessionEvent, SessionEventType,
-    SessionHeadDelta, SessionSummary, SessionSummaryDelta, SessionTurn, SessionTurnToolSummary,
-    SubagentInvocation, Task, TaskDeltaKind, TerminalSession, Workspace, WorkspaceActiveHeadBatch,
+    ExecutionEnvironment, Message, Session, SessionEvent, SessionEventType, SessionHeadDelta,
+    SessionSummary, SessionSummaryDelta, SessionTurn, SessionTurnToolSummary, SubagentInvocation,
+    Task, TaskDeltaKind, TerminalSession, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
@@ -33,7 +33,6 @@ use ctx_session_runtime::runtime::{
 };
 use ctx_session_tools::model_resolution::ModelCatalog;
 use ctx_session_vcs_service::vcs::SessionVcsDiffBaseQuery;
-use ctx_settings_model::ExecutionSettings;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
@@ -58,7 +57,7 @@ use crate::daemon::sessions::{
         SessionSubagentMcpControlHandle, SessionSubagentMcpControlHandleParts,
         SessionSubagentMcpControlLifecycleHost, SessionSubagentMcpControlPublicationHost,
         SessionSubagentMcpControlSchedulerSpawner, SubagentChildRunHost, SubagentSpawnHost,
-        SubagentSpawnHostParts, SubagentSpawnWorktreeHost, SubagentSpawnWorktreeHostParts,
+        SubagentSpawnHostParts,
     },
     DemoSeedTranscriptHandle,
 };
@@ -73,6 +72,7 @@ use super::{
     },
     terminals::CreateTerminalLaunchRequest,
     web_sessions::{WebSessionLaunchError, WebSessionLaunchRequest},
+    workspaces::{TaskWorktreeHost, TaskWorktreeHostParts},
 };
 
 #[derive(Clone)]
@@ -590,20 +590,7 @@ impl DaemonHandle {
             SessionEventHeadSubscriber::new(Arc::downgrade(&self.state.sessions)),
             Arc::clone(&self.state.workspaces.workspace_active_snapshot),
         );
-        let worktree_host = Arc::new(SubagentSpawnWorktreeHost::new(
-            SubagentSpawnWorktreeHostParts {
-                data_root: self.state.core.data_root.clone(),
-                daemon_url: self.state.core.daemon_url.clone(),
-                global_store: self.state.global_store().clone(),
-                workspace_stores: self.protected_workspace_store_lookup(),
-                harness: Arc::clone(&self.state.execution.harness),
-                active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-                bootstrap_gates: Arc::clone(&self.state.workspaces.worktree_bootstrap_gates),
-                attachment_materialization: Arc::clone(
-                    &self.state.workspaces.attachment_materialization,
-                ),
-            },
-        ));
+        let worktree_host = self.task_worktree_host();
         let spawn_host = Arc::new(SubagentSpawnHost::new(SubagentSpawnHostParts {
             session_stores: session_stores.clone(),
             session_runtime: Arc::clone(&self.state.sessions),
@@ -823,88 +810,38 @@ impl DaemonHandle {
         SessionVcsHandle::new(self.session_store_lookup(), self.session_vcs_effects())
     }
 
-    fn task_lifecycle_workspace_runtime(&self) -> Arc<TaskLifecycleWorkspaceRuntime> {
-        let state = Arc::clone(&self.state);
-        let cleanup_task_worktrees = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace,
-                  task_id: TaskId,
-                  targets: Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                  mode: crate::daemon::workspaces::BranchCleanupErrorMode| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::cleanup_task_worktrees(
-                        state.as_ref(),
-                        &workspace,
-                        task_id,
-                        &targets,
-                        mode,
-                    )
-                    .await
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let rematerialize_sandbox_binding_for_worktree = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace, worktree: Worktree, binding: SandboxBinding| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::rematerialize_sandbox_binding_for_worktree(
-                        state.as_ref(),
-                        &workspace,
-                        &worktree,
-                        &binding,
-                    )
-                    .await
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let ensure_worktree_attachment_mounts_if_materialized = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace, worktree: Worktree| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::ensure_worktree_attachment_mounts_if_materialized(
-                        &state, &workspace, &worktree,
-                    )
-                    .await
-                    .map(|_| ())
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let spawn_worktree_bootstrap = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace, worktree: Worktree| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::spawn_worktree_bootstrap(state, workspace, worktree)
-                        .await
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let ensure_task_commit_hook = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace, worktree: Worktree, task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::vcs_hooks::ensure_task_commit_hook(
-                        state.as_ref(),
-                        &workspace,
-                        &worktree,
-                        task_id,
-                    )
-                    .await
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        TaskLifecycleWorkspaceRuntime::new(
-            self.state.core.data_root.clone(),
-            cleanup_task_worktrees,
-            rematerialize_sandbox_binding_for_worktree,
-            ensure_worktree_attachment_mounts_if_materialized,
-            spawn_worktree_bootstrap,
-            ensure_task_commit_hook,
-        )
+    fn task_worktree_host(&self) -> Arc<TaskWorktreeHost> {
+        let workspace_stores = self.protected_workspace_store_lookup();
+        let attachments = Arc::new(
+            crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime::new(
+                self.state.core.data_root.clone(),
+                self.state.core.daemon_url.clone(),
+                self.state.global_store().clone(),
+                workspace_stores.clone(),
+                Arc::clone(&self.state.execution.harness),
+                Arc::clone(&self.state.workspaces.attachment_materialization),
+            ),
+        );
+        let vcs_hooks = Arc::new(
+            crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost::new(
+                self.state.core.data_root.clone(),
+                self.state.core.daemon_url.clone(),
+                self.state.global_store().clone(),
+                workspace_stores.clone(),
+                Arc::clone(&self.state.execution.harness),
+            ),
+        );
+        Arc::new(TaskWorktreeHost::new(TaskWorktreeHostParts {
+            data_root: self.state.core.data_root.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            global_store: self.state.global_store().clone(),
+            workspace_stores,
+            harness: Arc::clone(&self.state.execution.harness),
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            bootstrap_gates: Arc::clone(&self.state.workspaces.worktree_bootstrap_gates),
+            attachments,
+            vcs_hooks,
+        }))
     }
 
     fn task_lifecycle_effects(&self) -> Arc<TaskLifecycleEffects> {
@@ -996,7 +933,7 @@ impl DaemonHandle {
                 Arc::clone(&self.state.sessions),
                 Arc::clone(&self.state.transport.merge_queue),
             ),
-            self.task_lifecycle_workspace_runtime(),
+            self.task_worktree_host(),
             self.task_lifecycle_effects(),
         )
     }
@@ -1076,116 +1013,6 @@ impl DaemonHandle {
         )
     }
 
-    fn task_session_admission_workspace_runtime(&self) -> Arc<TaskAdmissionWorkspaceRuntime> {
-        let state = Arc::clone(&self.state);
-        let resolve_existing_worktree_execution = Arc::new({
-            let state = Arc::clone(&state);
-            move |store: Store, workspace: Workspace, worktree_id: WorktreeId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::resolve_existing_worktree_execution(
-                        &state,
-                        &store,
-                        &workspace,
-                        worktree_id,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let provision_worktree_for_execution = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace,
-                  worktree_id: WorktreeId,
-                  base_commit_sha: String,
-                  branch_name: String,
-                  effective: ExecutionSettings| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::provision_worktree_for_execution(
-                        &state,
-                        &workspace,
-                        worktree_id,
-                        &base_commit_sha,
-                        &branch_name,
-                        &effective,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let persist_provisioned_worktree = Arc::new({
-            let state = Arc::clone(&state);
-            move |store: Store,
-                  workspace: Workspace,
-                  worktree: Worktree,
-                  sandbox_binding: Option<SandboxBinding>| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::persist_provisioned_worktree(
-                        &state,
-                        &store,
-                        &workspace,
-                        worktree,
-                        sandbox_binding,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let cleanup_task_worktrees = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace,
-                  task_id: TaskId,
-                  targets: Vec<crate::daemon::workspaces::TaskWorktreeCleanupTarget>,
-                  mode: crate::daemon::workspaces::BranchCleanupErrorMode| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::cleanup_task_worktrees(
-                        state.as_ref(),
-                        &workspace,
-                        task_id,
-                        &targets,
-                        mode,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let ensure_task_commit_hook = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace: Workspace, worktree: Worktree, task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::workspaces::vcs_hooks::ensure_task_commit_hook(
-                        state.as_ref(),
-                        &workspace,
-                        &worktree,
-                        task_id,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let emit_workspace_task_upsert = Arc::new({
-            let state = Arc::clone(&state);
-            move |task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
-                    as TaskAdmissionFuture<_>
-            }
-        });
-        TaskAdmissionWorkspaceRuntime::new(
-            self.state.core.data_root.clone(),
-            resolve_existing_worktree_execution,
-            provision_worktree_for_execution,
-            persist_provisioned_worktree,
-            cleanup_task_worktrees,
-            ensure_task_commit_hook,
-            emit_workspace_task_upsert,
-        )
-    }
-
     fn task_session_admission_effects(&self) -> Arc<TaskAdmissionSessionEffects> {
         let state = Arc::clone(&self.state);
         let publish_event = Arc::new({
@@ -1215,7 +1042,20 @@ impl DaemonHandle {
                 }) as TaskAdmissionFuture<_>
             }
         });
-        TaskAdmissionSessionEffects::new(publish_event, ensure_scheduler, schedule_title_generation)
+        let emit_workspace_task_upsert = Arc::new({
+            let state = Arc::clone(&state);
+            move |task_id: TaskId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
+                    as TaskAdmissionFuture<_>
+            }
+        });
+        TaskAdmissionSessionEffects::new(
+            publish_event,
+            ensure_scheduler,
+            schedule_title_generation,
+            emit_workspace_task_upsert,
+        )
     }
 
     fn task_session_admission_provider_status(&self) -> ProviderStatusHandle {
@@ -1257,7 +1097,7 @@ impl DaemonHandle {
             Arc::clone(&self.state.sessions),
             Arc::clone(&self.state.providers),
             self.task_session_admission_provider_status(),
-            self.task_session_admission_workspace_runtime(),
+            self.task_worktree_host(),
             self.task_session_admission_effects(),
             self.task_session_admission_model_catalog_loader(),
             self.state.telemetry.telemetry.clone(),
@@ -4389,7 +4229,7 @@ impl TaskTitleHandle {
 pub struct TaskLifecycleHandle {
     global_store: Store,
     workspace_stores: ProtectedWorkspaceStoreLookup,
-    workspace: Arc<TaskLifecycleWorkspaceRuntime>,
+    workspace: Arc<TaskWorktreeHost>,
     effects: Arc<TaskLifecycleEffects>,
 }
 
@@ -4397,7 +4237,7 @@ impl TaskLifecycleHandle {
     pub(in crate::daemon) fn new(
         global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
-        workspace: Arc<TaskLifecycleWorkspaceRuntime>,
+        workspace: Arc<TaskWorktreeHost>,
         effects: Arc<TaskLifecycleEffects>,
     ) -> Self {
         Self {
@@ -4421,7 +4261,7 @@ impl TaskLifecycleHandle {
             .await
     }
 
-    pub(in crate::daemon) fn workspace(&self) -> &TaskLifecycleWorkspaceRuntime {
+    pub(in crate::daemon) fn workspace(&self) -> &Arc<TaskWorktreeHost> {
         &self.workspace
     }
 
@@ -4489,7 +4329,7 @@ pub struct TaskSessionAdmissionHandle {
     sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
     providers: Arc<ProviderRuntime>,
     provider_status: ProviderStatusHandle,
-    workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+    workspace: Arc<TaskWorktreeHost>,
     effects: Arc<TaskAdmissionSessionEffects>,
     model_catalog_loader: TaskAdmissionModelCatalogLoader,
     telemetry: Telemetry,
@@ -4505,7 +4345,7 @@ impl TaskSessionAdmissionHandle {
         sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
         providers: Arc<ProviderRuntime>,
         provider_status: ProviderStatusHandle,
-        workspace: Arc<TaskAdmissionWorkspaceRuntime>,
+        workspace: Arc<TaskWorktreeHost>,
         effects: Arc<TaskAdmissionSessionEffects>,
         model_catalog_loader: TaskAdmissionModelCatalogLoader,
         telemetry: Telemetry,
@@ -4545,8 +4385,8 @@ impl TaskSessionAdmissionHandle {
         &self.provider_status
     }
 
-    pub(in crate::daemon) fn workspace(&self) -> &TaskAdmissionWorkspaceRuntime {
-        self.workspace.as_ref()
+    pub(in crate::daemon) fn workspace(&self) -> &Arc<TaskWorktreeHost> {
+        &self.workspace
     }
 
     pub(in crate::daemon) fn effects(&self) -> &TaskAdmissionSessionEffects {
@@ -4589,175 +4429,8 @@ impl TaskSessionAdmissionHandle {
     }
 }
 
-type TaskWorktreeCleanupTarget = crate::daemon::workspaces::TaskWorktreeCleanupTarget;
-type BranchCleanupErrorMode = crate::daemon::workspaces::BranchCleanupErrorMode;
-type ResolvedExistingWorktreeExecution =
-    crate::daemon::workspaces::ResolvedExistingWorktreeExecution;
-
-type TaskLifecycleCleanupTaskWorktrees = Arc<
-    dyn Fn(
-            Workspace,
-            TaskId,
-            Vec<TaskWorktreeCleanupTarget>,
-            BranchCleanupErrorMode,
-        ) -> TaskLifecycleFuture<Vec<anyhow::Error>>
-        + Send
-        + Sync,
->;
-type TaskLifecycleRematerializeSandboxBinding = Arc<
-    dyn Fn(
-            Workspace,
-            Worktree,
-            SandboxBinding,
-        ) -> TaskLifecycleFuture<anyhow::Result<SandboxBinding>>
-        + Send
-        + Sync,
->;
-type TaskLifecycleWorktreeEffect =
-    Arc<dyn Fn(Workspace, Worktree) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync>;
-type TaskLifecycleTaskWorktreeEffect = Arc<
-    dyn Fn(Workspace, Worktree, TaskId) -> TaskLifecycleFuture<anyhow::Result<()>> + Send + Sync,
->;
-type TaskAdmissionResolveExistingWorktreeExecution = Arc<
-    dyn Fn(
-            Store,
-            Workspace,
-            WorktreeId,
-        ) -> TaskAdmissionFuture<anyhow::Result<ResolvedExistingWorktreeExecution>>
-        + Send
-        + Sync,
->;
-type TaskAdmissionProvisionWorktreeForExecution = Arc<
-    dyn Fn(
-            Workspace,
-            WorktreeId,
-            String,
-            String,
-            ExecutionSettings,
-        ) -> TaskAdmissionFuture<anyhow::Result<(PathBuf, Option<SandboxBinding>)>>
-        + Send
-        + Sync,
->;
-type TaskAdmissionPersistProvisionedWorktree = Arc<
-    dyn Fn(
-            Store,
-            Workspace,
-            Worktree,
-            Option<SandboxBinding>,
-        ) -> TaskAdmissionFuture<anyhow::Result<Worktree>>
-        + Send
-        + Sync,
->;
-type TaskAdmissionCleanupTaskWorktrees = Arc<
-    dyn Fn(
-            Workspace,
-            TaskId,
-            Vec<TaskWorktreeCleanupTarget>,
-            BranchCleanupErrorMode,
-        ) -> TaskAdmissionFuture<Vec<anyhow::Error>>
-        + Send
-        + Sync,
->;
-type TaskAdmissionTaskWorktreeEffect = Arc<
-    dyn Fn(Workspace, Worktree, TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync,
->;
 type TaskAdmissionTaskUpsertEffect =
     Arc<dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync>;
-
-pub(in crate::daemon) struct TaskLifecycleWorkspaceRuntime {
-    data_root: PathBuf,
-    cleanup_task_worktrees: TaskLifecycleCleanupTaskWorktrees,
-    rematerialize_sandbox_binding_for_worktree: TaskLifecycleRematerializeSandboxBinding,
-    ensure_worktree_attachment_mounts_if_materialized: TaskLifecycleWorktreeEffect,
-    spawn_worktree_bootstrap: TaskLifecycleWorktreeEffect,
-    ensure_task_commit_hook: TaskLifecycleTaskWorktreeEffect,
-}
-
-impl TaskLifecycleWorkspaceRuntime {
-    pub(in crate::daemon) fn new(
-        data_root: PathBuf,
-        cleanup_task_worktrees: TaskLifecycleCleanupTaskWorktrees,
-        rematerialize_sandbox_binding_for_worktree: TaskLifecycleRematerializeSandboxBinding,
-        ensure_worktree_attachment_mounts_if_materialized: TaskLifecycleWorktreeEffect,
-        spawn_worktree_bootstrap: TaskLifecycleWorktreeEffect,
-        ensure_task_commit_hook: TaskLifecycleTaskWorktreeEffect,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            data_root,
-            cleanup_task_worktrees,
-            rematerialize_sandbox_binding_for_worktree,
-            ensure_worktree_attachment_mounts_if_materialized,
-            spawn_worktree_bootstrap,
-            ensure_task_commit_hook,
-        })
-    }
-
-    pub(in crate::daemon) fn managed_worktree_root(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-    ) -> Option<PathBuf> {
-        ctx_worktree_vcs_service::matching_managed_worktree_path(
-            &self.data_root,
-            workspace.id,
-            worktree.id,
-            PathBuf::from(&worktree.root_path),
-        )
-    }
-
-    pub(in crate::daemon) async fn cleanup_task_worktrees(
-        &self,
-        workspace: &Workspace,
-        task_id: TaskId,
-        targets: &[crate::daemon::workspaces::TaskWorktreeCleanupTarget],
-        mode: crate::daemon::workspaces::BranchCleanupErrorMode,
-    ) -> Vec<anyhow::Error> {
-        (self.cleanup_task_worktrees)(workspace.clone(), task_id, targets.to_vec(), mode).await
-    }
-
-    pub(in crate::daemon) async fn rematerialize_sandbox_binding_for_worktree(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-        binding: &SandboxBinding,
-    ) -> anyhow::Result<SandboxBinding> {
-        (self.rematerialize_sandbox_binding_for_worktree)(
-            workspace.clone(),
-            worktree.clone(),
-            binding.clone(),
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn ensure_worktree_attachment_mounts_if_materialized(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-    ) -> anyhow::Result<()> {
-        (self.ensure_worktree_attachment_mounts_if_materialized)(
-            workspace.clone(),
-            worktree.clone(),
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn spawn_worktree_bootstrap(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-    ) -> anyhow::Result<()> {
-        (self.spawn_worktree_bootstrap)(workspace.clone(), worktree.clone()).await
-    }
-
-    pub(in crate::daemon) async fn ensure_task_commit_hook(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-        task_id: TaskId,
-    ) -> anyhow::Result<()> {
-        (self.ensure_task_commit_hook)(workspace.clone(), worktree.clone(), task_id).await
-    }
-}
 
 pub(in crate::daemon) struct TaskMetadataEffects {
     emit_workspace_task_delta:
@@ -4879,122 +4552,6 @@ impl TaskLifecycleEffects {
     }
 }
 
-pub(in crate::daemon) struct TaskAdmissionWorkspaceRuntime {
-    data_root: PathBuf,
-    resolve_existing_worktree_execution: TaskAdmissionResolveExistingWorktreeExecution,
-    provision_worktree_for_execution: TaskAdmissionProvisionWorktreeForExecution,
-    persist_provisioned_worktree: TaskAdmissionPersistProvisionedWorktree,
-    cleanup_task_worktrees: TaskAdmissionCleanupTaskWorktrees,
-    ensure_task_commit_hook: TaskAdmissionTaskWorktreeEffect,
-    emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
-}
-
-impl TaskAdmissionWorkspaceRuntime {
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::daemon) fn new(
-        data_root: PathBuf,
-        resolve_existing_worktree_execution: TaskAdmissionResolveExistingWorktreeExecution,
-        provision_worktree_for_execution: TaskAdmissionProvisionWorktreeForExecution,
-        persist_provisioned_worktree: TaskAdmissionPersistProvisionedWorktree,
-        cleanup_task_worktrees: TaskAdmissionCleanupTaskWorktrees,
-        ensure_task_commit_hook: TaskAdmissionTaskWorktreeEffect,
-        emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            data_root,
-            resolve_existing_worktree_execution,
-            provision_worktree_for_execution,
-            persist_provisioned_worktree,
-            cleanup_task_worktrees,
-            ensure_task_commit_hook,
-            emit_workspace_task_upsert,
-        })
-    }
-
-    pub(in crate::daemon) fn managed_worktree_root(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-    ) -> Option<PathBuf> {
-        ctx_worktree_vcs_service::matching_managed_worktree_path(
-            &self.data_root,
-            workspace.id,
-            worktree.id,
-            PathBuf::from(&worktree.root_path),
-        )
-    }
-
-    pub(in crate::daemon) async fn resolve_existing_worktree_execution(
-        &self,
-        store: &Store,
-        workspace: &Workspace,
-        worktree_id: WorktreeId,
-    ) -> anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution> {
-        (self.resolve_existing_worktree_execution)(store.clone(), workspace.clone(), worktree_id)
-            .await
-    }
-
-    pub(in crate::daemon) async fn provision_worktree_for_execution(
-        &self,
-        workspace: &Workspace,
-        worktree_id: WorktreeId,
-        base_commit_sha: &str,
-        branch_name: &str,
-        effective: &ExecutionSettings,
-    ) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
-        (self.provision_worktree_for_execution)(
-            workspace.clone(),
-            worktree_id,
-            base_commit_sha.to_string(),
-            branch_name.to_string(),
-            effective.clone(),
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn persist_provisioned_worktree(
-        &self,
-        store: &Store,
-        workspace: &Workspace,
-        worktree: Worktree,
-        sandbox_binding: Option<SandboxBinding>,
-    ) -> anyhow::Result<Worktree> {
-        (self.persist_provisioned_worktree)(
-            store.clone(),
-            workspace.clone(),
-            worktree,
-            sandbox_binding,
-        )
-        .await
-    }
-
-    pub(in crate::daemon) async fn cleanup_task_worktrees(
-        &self,
-        workspace: &Workspace,
-        task_id: TaskId,
-        targets: &[crate::daemon::workspaces::TaskWorktreeCleanupTarget],
-        mode: crate::daemon::workspaces::BranchCleanupErrorMode,
-    ) -> Vec<anyhow::Error> {
-        (self.cleanup_task_worktrees)(workspace.clone(), task_id, targets.to_vec(), mode).await
-    }
-
-    pub(in crate::daemon) async fn ensure_task_commit_hook(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-        task_id: TaskId,
-    ) -> anyhow::Result<()> {
-        (self.ensure_task_commit_hook)(workspace.clone(), worktree.clone(), task_id).await
-    }
-
-    pub(in crate::daemon) async fn emit_workspace_task_upsert(
-        &self,
-        task_id: TaskId,
-    ) -> anyhow::Result<()> {
-        (self.emit_workspace_task_upsert)(task_id).await
-    }
-}
-
 pub(in crate::daemon) struct TaskAdmissionSessionEffects {
     publish_event:
         Arc<dyn Fn(ctx_core::models::SessionEvent) -> TaskAdmissionFuture<()> + Send + Sync>,
@@ -5008,6 +4565,7 @@ pub(in crate::daemon) struct TaskAdmissionSessionEffects {
     >,
     schedule_title_generation:
         Arc<dyn Fn(Session, String, bool) -> TaskAdmissionFuture<bool> + Send + Sync>,
+    emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
 }
 
 impl TaskAdmissionSessionEffects {
@@ -5026,11 +4584,13 @@ impl TaskAdmissionSessionEffects {
         schedule_title_generation: Arc<
             dyn Fn(Session, String, bool) -> TaskAdmissionFuture<bool> + Send + Sync,
         >,
+        emit_workspace_task_upsert: TaskAdmissionTaskUpsertEffect,
     ) -> Arc<Self> {
         Arc::new(Self {
             publish_event,
             ensure_scheduler,
             schedule_title_generation,
+            emit_workspace_task_upsert,
         })
     }
 
@@ -5052,6 +4612,13 @@ impl TaskAdmissionSessionEffects {
         force: bool,
     ) -> bool {
         (self.schedule_title_generation)(session, prompt, force).await
+    }
+
+    pub(in crate::daemon) async fn emit_workspace_task_upsert(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<()> {
+        (self.emit_workspace_task_upsert)(task_id).await
     }
 }
 

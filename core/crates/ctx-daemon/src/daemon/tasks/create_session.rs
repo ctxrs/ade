@@ -390,7 +390,7 @@ impl TaskSessionAdmissionHandle {
         &self,
         task_id: TaskId,
     ) -> anyhow::Result<()> {
-        self.workspace().emit_workspace_task_upsert(task_id).await
+        self.effects().emit_workspace_task_upsert(task_id).await
     }
 
     pub(in crate::daemon) async fn emit_session_started_observability_for_task(

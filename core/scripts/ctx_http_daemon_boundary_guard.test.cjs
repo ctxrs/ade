@@ -2949,7 +2949,7 @@ test("appstate guard rejects subagent spawn host daemon-state seams", () => {
       "core/crates/ctx-daemon/src/daemon/sessions/subagents/agent_control/spawn/worktrees.rs",
     contents: `
       use crate::daemon::DaemonState;
-      pub(in crate::daemon) struct SubagentSpawnWorktreeHost {
+      pub(in crate::daemon) struct SubagentSpawnWorktreePlanner {
         task_workspace: Arc<TaskAdmissionWorkspaceRuntime>,
       }
     `,
@@ -2957,6 +2957,31 @@ test("appstate guard rejects subagent spawn host daemon-state seams", () => {
 
   assert.deepEqual(new Set(worktreeViolations), new Set([
     "subagent helper depends on broad daemon state",
+  ]));
+
+  const taskWorktreeHostViolations = scanSubagentSpawnHostStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/task_worktree_host.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, DaemonState};
+      pub(in crate::daemon) struct SubagentSpawnWorktreeHost;
+      pub(in crate::daemon) struct TaskWorktreeHost {
+        state: Arc<DaemonState>,
+        runtime: Arc<TaskLifecycleWorkspaceRuntime>,
+      }
+      pub(in crate::daemon) struct TaskWorktreeHostParts {
+        effects: TaskAdmissionWorkspaceRuntime,
+      }
+      impl TaskWorktreeHost {
+        fn make(&self) {
+          let runtime = runtime_from_state();
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(taskWorktreeHostViolations), new Set([
+    "task worktree host depends on broad daemon state",
+    "task worktree host exposes generic full-state field",
   ]));
 
   const assemblyViolations = scanSubagentSpawnHostStateRatchet({
@@ -2976,9 +3001,28 @@ test("appstate guard rejects subagent spawn host daemon-state seams", () => {
   }).map((violation) => violation.name);
 
   assert.deepEqual(assemblyViolations, [
+    "task worktree host assembly keeps removed workspace runtime seam",
     "subagent spawn/control assembly hides daemon state capture",
     "subagent spawn/control assembly hides daemon state capture",
     "subagent spawn/control assembly hides daemon state capture",
+  ]);
+
+  const taskWorktreeAssemblyViolations = scanSubagentSpawnHostStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        fn task_worktree_host(&self) -> Arc<TaskWorktreeHost> {
+          let state = Arc::clone(&self.state);
+          let weak = Arc::downgrade(&self.state);
+          TaskWorktreeHost::new(state, weak)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(taskWorktreeAssemblyViolations, [
+    "task worktree host assembly captures broad daemon state",
+    "task worktree host assembly captures broad daemon state",
   ]);
 });
 
