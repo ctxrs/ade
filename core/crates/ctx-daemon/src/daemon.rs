@@ -52,6 +52,7 @@ pub mod sessions;
 pub mod settings;
 mod state;
 pub mod storage_guard;
+mod task_session_effects;
 pub mod tasks;
 pub mod terminals;
 #[cfg(any(test, feature = "test-support"))]

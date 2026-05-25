@@ -180,16 +180,13 @@ impl DaemonHandle {
         let workspace_stores = self.protected_workspace_store_lookup();
         let session_stores =
             SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
-        let publish_merge_queue_notice = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |notice_event: MergeQueueNoticeSessionEvent| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    state.publish_event(notice_event.into_event()).await;
-                    Ok(())
-                }) as MergeQueueNoticePublicationFuture
-            }
-        });
+        let publisher = self.session_publication_effects();
+        let publish_merge_queue_notice =
+            Arc::new(move |notice_event: MergeQueueNoticeSessionEvent| {
+                let publisher = publisher.clone();
+                Box::pin(async move { publisher.publish_merge_queue_notice(notice_event).await })
+                    as MergeQueueNoticePublicationFuture
+            });
         MergeQueueApiHandle::new(Arc::new(
             crate::daemon::merge_queue::MergeQueueRouteHost::new(
                 self.state.core.stores.clone(),
@@ -657,6 +654,39 @@ impl DaemonHandle {
         )
     }
 
+    fn task_publication_host(
+        &self,
+    ) -> Arc<crate::daemon::task_session_effects::TaskPublicationHost> {
+        Arc::new(
+            crate::daemon::task_session_effects::TaskPublicationHost::new(
+                self.protected_workspace_store_lookup(),
+                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            ),
+        )
+    }
+
+    fn task_session_cleanup_host(
+        &self,
+    ) -> crate::daemon::task_session_effects::TaskSessionCleanupHost {
+        crate::daemon::task_session_effects::TaskSessionCleanupHost::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.sessions),
+            Arc::clone(&self.state.providers),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            self.protected_workspace_store_lookup(),
+        )
+    }
+
+    fn session_publication_effects(
+        &self,
+    ) -> crate::daemon::task_session_effects::SessionPublicationEffects {
+        crate::daemon::task_session_effects::SessionPublicationEffects::new(
+            Arc::clone(&self.state.sessions),
+            self.session_store_lookup(),
+            self.task_publication_host(),
+        )
+    }
+
     fn weak_session_store_lookup(&self) -> WeakSessionStoreLookup {
         WeakSessionStoreLookup::new(
             self.state.global_store().clone(),
@@ -667,12 +697,8 @@ impl DaemonHandle {
     }
 
     fn session_artifact_effects(&self) -> Arc<SessionArtifactEffects> {
-        let state = Arc::clone(&self.state);
-        let publish_event = Arc::new(move |event: SessionEvent| {
-            let state = Arc::clone(&state);
-            Box::pin(async move { state.publish_event(event).await }) as SessionArtifactsFuture<_>
-        });
-        SessionArtifactEffects::new(publish_event)
+        self.session_publication_effects()
+            .session_artifact_effects()
     }
 
     pub fn session_artifacts(&self) -> SessionArtifactsHandle {
@@ -849,83 +875,9 @@ impl DaemonHandle {
     }
 
     fn task_lifecycle_effects(&self) -> Arc<TaskLifecycleEffects> {
-        let state = Arc::clone(&self.state);
-        let cleanup_session = Arc::new({
-            let state = Arc::clone(&state);
-            move |session_id: SessionId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.cleanup_session(session_id).await })
-                    as TaskLifecycleFuture<_>
-            }
-        });
-        let emit_workspace_task_delta = Arc::new({
-            let state = Arc::clone(&state);
-            move |task: Task, kind: TaskDeltaKind| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    let _ = state.emit_workspace_task_delta(task, kind).await;
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let emit_workspace_task_upsert = Arc::new({
-            let state = Arc::clone(&state);
-            move |task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
-                    as TaskLifecycleFuture<_>
-            }
-        });
-        let remove_active_snapshot_session = Arc::new({
-            let state = Arc::clone(&state);
-            move |session_id: SessionId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    state
-                        .workspaces
-                        .workspace_active_snapshot
-                        .remove_session(session_id)
-                        .await;
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let refresh_session_head_cache = Arc::new({
-            let state = Arc::clone(&state);
-            move |session_id: SessionId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.refresh_session_head_cache(session_id).await })
-                    as TaskLifecycleFuture<_>
-            }
-        });
-        let emit_workspace_archived_task_delete = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace_id: WorkspaceId, task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    state
-                        .emit_workspace_archived_task_delete(workspace_id, task_id)
-                        .await;
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        let emit_workspace_task_delete = Arc::new({
-            let state = Arc::clone(&state);
-            move |workspace_id: WorkspaceId, task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    state
-                        .emit_workspace_task_delete(workspace_id, task_id)
-                        .await;
-                }) as TaskLifecycleFuture<_>
-            }
-        });
-        TaskLifecycleEffects::new(
-            cleanup_session,
-            emit_workspace_task_delta,
-            emit_workspace_task_upsert,
-            remove_active_snapshot_session,
-            refresh_session_head_cache,
-            emit_workspace_archived_task_delete,
-            emit_workspace_task_delete,
+        crate::daemon::task_session_effects::task_lifecycle_effects(
+            self.task_publication_host(),
+            self.task_session_cleanup_host(),
         )
     }
 
@@ -958,25 +910,7 @@ impl DaemonHandle {
     }
 
     fn task_metadata_effects(&self) -> Arc<TaskMetadataEffects> {
-        let state = Arc::clone(&self.state);
-        let emit_workspace_task_delta = Arc::new({
-            let state = Arc::clone(&state);
-            move |task: Task, kind: TaskDeltaKind| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    let _ = state.emit_workspace_task_delta(task, kind).await;
-                }) as TaskMetadataFuture<_>
-            }
-        });
-        let emit_workspace_task_upsert = Arc::new({
-            let state = Arc::clone(&state);
-            move |task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
-                    as TaskMetadataFuture<_>
-            }
-        });
-        TaskMetadataEffects::new(emit_workspace_task_delta, emit_workspace_task_upsert)
+        crate::daemon::task_session_effects::task_metadata_effects(self.task_publication_host())
     }
 
     pub fn task_listing(&self) -> TaskListingHandle {
@@ -1018,47 +952,14 @@ impl DaemonHandle {
     }
 
     fn task_session_admission_effects(&self) -> Arc<TaskAdmissionSessionEffects> {
-        let state = Arc::clone(&self.state);
-        let publish_event = Arc::new({
-            let state = Arc::clone(&state);
-            move |event| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.publish_event(event).await }) as TaskAdmissionFuture<_>
-            }
-        });
-        let ensure_scheduler = Arc::new({
-            let state = Arc::clone(&state);
-            move |session: Session| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.ensure_scheduler(session).await })
-                    as TaskAdmissionFuture<_>
-            }
-        });
-        let schedule_title_generation = Arc::new({
-            let state = Arc::clone(&state);
-            move |session: Session, prompt: String, force: bool| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::sessions::title_generation::schedule_session_title_generation(
-                        state, session, prompt, force,
-                    )
-                    .await
-                }) as TaskAdmissionFuture<_>
-            }
-        });
-        let emit_workspace_task_upsert = Arc::new({
-            let state = Arc::clone(&state);
-            move |task_id: TaskId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.emit_workspace_task_upsert(task_id).await })
-                    as TaskAdmissionFuture<_>
-            }
-        });
-        TaskAdmissionSessionEffects::new(
-            publish_event,
-            ensure_scheduler,
-            schedule_title_generation,
-            emit_workspace_task_upsert,
+        crate::daemon::task_session_effects::task_admission_session_effects(
+            self.session_publication_effects(),
+            Arc::clone(&self.state.sessions),
+            SessionMessageSchedulerSpawner::new(Arc::downgrade(
+                &self.state.session_scheduler_worker_host(),
+            )),
+            self.session_title_model_mode(),
+            self.task_publication_host(),
         )
     }
 
@@ -1071,15 +972,15 @@ impl DaemonHandle {
     }
 
     fn task_session_admission_model_catalog_loader(&self) -> TaskAdmissionModelCatalogLoader {
-        let state = Arc::clone(&self.state);
+        let launch = self.provider_workspace_launch_runtime();
         Arc::new(
             move |workspace: Workspace,
                   provider_id: String,
                   execution_environment: ExecutionEnvironment| {
-                let state = Arc::clone(&state);
+                let launch = Arc::clone(&launch);
                 Box::pin(async move {
                     crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment(
-                        state.as_ref(),
+                        launch.as_ref(),
                         &workspace,
                         &provider_id,
                         execution_environment,
@@ -2576,10 +2477,13 @@ impl ProviderAccountsHandle {
     }
 }
 
-type TaskAdmissionFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
-type TaskLifecycleFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub(in crate::daemon) type TaskAdmissionFuture<T> =
+    Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub(in crate::daemon) type TaskLifecycleFuture<T> =
+    Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type SessionControlFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
-type SessionArtifactsFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub(in crate::daemon) type SessionArtifactsFuture<T> =
+    Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskMetadataFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskArchivedRevLoader =
@@ -4433,7 +4337,7 @@ impl TaskSessionAdmissionHandle {
     }
 }
 
-type TaskAdmissionTaskUpsertEffect =
+pub(in crate::daemon) type TaskAdmissionTaskUpsertEffect =
     Arc<dyn Fn(TaskId) -> TaskAdmissionFuture<anyhow::Result<()>> + Send + Sync>;
 
 pub(in crate::daemon) struct TaskMetadataEffects {

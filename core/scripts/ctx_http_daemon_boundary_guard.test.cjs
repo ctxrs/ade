@@ -298,6 +298,7 @@ const {
   scanSessionSubagentMcpControlHandleRatchet,
   scanSubagentSpawnHostStateRatchet,
   scanSchedulerHostStateRatchet,
+  scanTaskSessionPublicationEffectsStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
@@ -17014,6 +17015,85 @@ test("daemon boundary guard rejects grouped daemon API imports", () => {
     [
       "daemon imports API module",
       "daemon imports API module",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects task/session publication effect state backdoors", () => {
+  const hostViolations = scanTaskSessionPublicationEffectsStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/task_session_effects.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      struct TaskPublicationHost {
+        state: Arc<DaemonState>,
+      }
+      impl TaskPublicationHost {
+        fn daemon_state(&self) -> &DaemonState { todo!() }
+      }
+    `,
+  });
+  assert.deepEqual(
+    hostViolations.map((violation) => violation.name),
+    [
+      "task/session publication effects depend on broad daemon state",
+      "task/session publication effects depend on broad daemon state",
+      "task/session publication effects depend on broad daemon state",
+      "task/session publication effects expose generic state escape hatch",
+      "task/session publication effects expose generic state escape hatch",
+    ],
+  );
+
+  const methodOnlyHostViolations = scanTaskSessionPublicationEffectsStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/task_session_effects.rs",
+    contents: `
+      impl TaskPublicationHost {
+        pub(crate) fn daemon_state(&self) -> NarrowDependency { todo!() }
+      }
+    `,
+  });
+  assert.deepEqual(
+    methodOnlyHostViolations.map((violation) => violation.name),
+    ["task/session publication effects expose generic state escape hatch"],
+  );
+
+  const publicationViolations = scanTaskSessionPublicationEffectsStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/runtime/publication.rs",
+    contents: `
+      mod task_delta;
+      struct HttpTaskDeltaRefreshHost {
+        daemon_state: Arc<DaemonState>,
+      }
+    `,
+  });
+  assert.deepEqual(
+    publicationViolations.map((violation) => violation.name),
+    [
+      "session runtime publication uses stale weak daemon-state task refresh host",
+      "session runtime publication uses stale weak daemon-state task refresh host",
+      "session runtime publication uses stale weak daemon-state task refresh host",
+    ],
+  );
+
+  const handleViolations = scanTaskSessionPublicationEffectsStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        fn task_session_admission_effects(&self) -> Arc<TaskAdmissionSessionEffects> {
+          let state = Arc::clone(&self.state);
+          let publish_event = Arc::new(move |event| {
+            let state = Arc::clone(&state);
+            Box::pin(async move { state.publish_event(event).await })
+          });
+          todo!()
+        }
+      }
+    `,
+  });
+  assert.deepEqual(
+    handleViolations.map((violation) => violation.name),
+    [
+      "task/session publication assembly hides full daemon state closure",
+      "task/session publication assembly hides full daemon state closure",
     ],
   );
 });

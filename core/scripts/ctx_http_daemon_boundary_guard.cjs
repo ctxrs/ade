@@ -10712,6 +10712,99 @@ function scanSchedulerHostStateRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanTaskSessionPublicationEffectsStateRatchet({ filePath, contents }) {
+  const migratedHostPath = "core/crates/ctx-daemon/src/daemon/task_session_effects.rs";
+  const publicationPath = "core/crates/ctx-daemon/src/daemon/sessions/runtime/publication.rs";
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (filePath === migratedHostPath) {
+    const broadStateRegex =
+      /\b(?:DaemonState|DaemonHandle|SessionsHandle|TasksHandle|WorkspacesHandle|ProvidersHandle)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task/session publication effects depend on broad daemon state",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+
+    const genericEscapeRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:async\s+)?fn\s+)?(?:daemon|daemon_state|state|services|runtime|provider_services)\s*(?:\(|:)/gmu;
+    for (
+      let match = genericEscapeRegex.exec(contents);
+      match;
+      match = genericEscapeRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "task/session publication effects expose generic state escape hatch",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === publicationPath) {
+    const stalePublicationRegex =
+      /\bHttpTaskDeltaRefreshHost\b|\bWeak\s*<\s*DaemonState\s*>|^\s*(?:pub(?:\s*\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?:Arc|Weak)\s*<\s*DaemonState\s*>|mod\s+task_delta\s*;/gmu;
+    for (
+      let match = stalePublicationRegex.exec(contents);
+      match;
+      match = stalePublicationRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session runtime publication uses stale weak daemon-state task refresh host",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    for (const fnName of [
+      "merge_queue_api",
+      "session_artifact_effects",
+      "task_lifecycle_effects",
+      "task_metadata_effects",
+      "task_session_admission_effects",
+      "task_session_admission_model_catalog_loader",
+    ]) {
+      const block = rustFunctionBlockForName({ contents, fnName });
+      if (!block) {
+        continue;
+      }
+      const hiddenStateRegex =
+        /\blet\s+state\s*=\s*Arc::clone\s*\(\s*&self\.state\s*\)|\bstate\s*\.\s*(?:publish_event|emit_workspace_task_delta|emit_workspace_task_upsert|emit_workspace_task_delete|emit_workspace_archived_task_delete|ensure_scheduler|refresh_session_head_cache)\s*\(|\bschedule_session_title_generation\s*\(\s*state\b|\bload_provider_model_catalog_for_execution_environment\s*\(\s*state\b/gu;
+      for (
+        let match = hiddenStateRegex.exec(block.text);
+        match;
+        match = hiddenStateRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "task/session publication assembly hides full daemon state closure",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -14674,6 +14767,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTaskSessionPublicationEffectsStateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanFinalSessionRouteCapabilityRatchet({
         filePath: relativePath,
         contents,
@@ -14886,6 +14983,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSchedulerHostStateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskSessionPublicationEffectsStateRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -15716,6 +15817,7 @@ module.exports = {
   scanSessionSubagentMcpControlHandleRatchet,
   scanSubagentSpawnHostStateRatchet,
   scanSchedulerHostStateRatchet,
+  scanTaskSessionPublicationEffectsStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
