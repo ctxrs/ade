@@ -229,7 +229,6 @@ impl SubagentSpawnHost {
         self.global_store
             .upsert_workspace_session_index(session_id, workspace_id)
             .await
-            .map_err(Into::into)
     }
 
     pub(in crate::daemon) async fn persist_subagent_prompt(

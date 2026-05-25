@@ -46,48 +46,19 @@ pub struct SessionSubagentMcpControlHandle {
 }
 
 pub(in crate::daemon) struct SessionSubagentMcpControlHandleParts {
-    session_stores: SessionStoreLookup,
-    session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
-    scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner,
-    publish_host: SessionSubagentMcpControlPublicationHost,
-    lifecycle_host: SessionSubagentMcpControlLifecycleHost,
-    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
-    spawn_host: Arc<crate::daemon::sessions::subagents::SubagentSpawnHost>,
-    archive_worktree_cleanup:
+    pub(in crate::daemon) session_stores: SessionStoreLookup,
+    pub(in crate::daemon) session_runtime:
+        Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    pub(in crate::daemon) scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner,
+    pub(in crate::daemon) publish_host: SessionSubagentMcpControlPublicationHost,
+    pub(in crate::daemon) lifecycle_host: SessionSubagentMcpControlLifecycleHost,
+    pub(in crate::daemon) active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    pub(in crate::daemon) spawn_host: Arc<crate::daemon::sessions::subagents::SubagentSpawnHost>,
+    pub(in crate::daemon) archive_worktree_cleanup:
         Arc<crate::daemon::sessions::subagents::SubagentArchiveWorktreeCleanupHost>,
-    provider_inactivity_timeout: SessionSubagentMcpControlProviderTimeout,
-    emit_legacy_context_window_key_reject:
+    pub(in crate::daemon) provider_inactivity_timeout: SessionSubagentMcpControlProviderTimeout,
+    pub(in crate::daemon) emit_legacy_context_window_key_reject:
         SessionSubagentMcpControlLegacyContextWindowRejectCounter,
-}
-
-impl SessionSubagentMcpControlHandleParts {
-    pub(in crate::daemon) fn new(
-        session_stores: SessionStoreLookup,
-        session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
-        scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner,
-        publish_host: SessionSubagentMcpControlPublicationHost,
-        lifecycle_host: SessionSubagentMcpControlLifecycleHost,
-        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
-        spawn_host: Arc<crate::daemon::sessions::subagents::SubagentSpawnHost>,
-        archive_worktree_cleanup: Arc<
-            crate::daemon::sessions::subagents::SubagentArchiveWorktreeCleanupHost,
-        >,
-        provider_inactivity_timeout: SessionSubagentMcpControlProviderTimeout,
-        emit_legacy_context_window_key_reject: SessionSubagentMcpControlLegacyContextWindowRejectCounter,
-    ) -> Self {
-        Self {
-            session_stores,
-            session_runtime,
-            scheduler_spawner,
-            publish_host,
-            lifecycle_host,
-            active_snapshot,
-            spawn_host,
-            archive_worktree_cleanup,
-            provider_inactivity_timeout,
-            emit_legacy_context_window_key_reject,
-        }
-    }
 }
 
 impl SessionSubagentMcpControlHandle {

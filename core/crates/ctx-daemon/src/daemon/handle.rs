@@ -439,16 +439,18 @@ impl DaemonHandle {
     }
 
     pub fn session_file_completions(&self) -> SessionFileCompletionsHandle {
-        SessionFileCompletionsHandle::new(
-            self.state.global_store().clone(),
-            self.session_store_lookup(),
-            self.protected_workspace_store_lookup(),
-            Arc::clone(&self.state.workspaces.file_completions_cache),
-            self.state.telemetry.perf_telemetry.clone(),
-            self.state.core.data_root.clone(),
-            self.state.core.daemon_url.clone(),
-            Arc::clone(&self.state.execution.harness),
-        )
+        SessionFileCompletionsHandle::new(SessionFileCompletionsHandleParts {
+            global_store: self.state.global_store().clone(),
+            session_stores: self.session_store_lookup(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            worktree_file_completions_cache: Arc::clone(
+                &self.state.workspaces.file_completions_cache,
+            ),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            data_root: self.state.core.data_root.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            harness: Arc::clone(&self.state.execution.harness),
+        })
     }
 
     pub fn session_title_model_mode(&self) -> SessionTitleModelModeHandle {
@@ -587,26 +589,28 @@ impl DaemonHandle {
                 ),
             ),
         );
-        SessionSubagentMcpControlHandle::new(SessionSubagentMcpControlHandleParts::new(
-            self.session_store_lookup(),
-            Arc::clone(&self.state.sessions),
-            SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(&self.state)),
-            SessionSubagentMcpControlPublicationHost::new(
+        SessionSubagentMcpControlHandle::new(SessionSubagentMcpControlHandleParts {
+            session_stores: self.session_store_lookup(),
+            session_runtime: Arc::clone(&self.state.sessions),
+            scheduler_spawner: SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(
+                &self.state,
+            )),
+            publish_host: SessionSubagentMcpControlPublicationHost::new(
                 self.session_store_lookup(),
                 self.protected_workspace_store_lookup(),
                 Arc::clone(&self.state.workspaces.workspace_active_snapshot),
             ),
-            SessionSubagentMcpControlLifecycleHost::new(
+            lifecycle_host: SessionSubagentMcpControlLifecycleHost::new(
                 self.state.global_store().clone(),
                 Arc::clone(&self.state.workspaces.workspace_active_snapshot),
                 Arc::clone(&self.state.providers),
             ),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
             spawn_host,
             archive_worktree_cleanup,
             provider_inactivity_timeout,
             emit_legacy_context_window_key_reject,
-        ))
+        })
     }
 
     pub fn session_read_models(&self) -> SessionReadModelsHandle {
@@ -3210,26 +3214,28 @@ pub struct SessionFileCompletionsHandle {
     harness: Arc<HarnessRuntimeManager>,
 }
 
+pub(in crate::daemon) struct SessionFileCompletionsHandleParts {
+    global_store: Store,
+    session_stores: SessionStoreLookup,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    worktree_file_completions_cache: WorktreeFileCompletionsCache,
+    perf_telemetry: PerfTelemetry,
+    data_root: PathBuf,
+    daemon_url: String,
+    harness: Arc<HarnessRuntimeManager>,
+}
+
 impl SessionFileCompletionsHandle {
-    pub(in crate::daemon) fn new(
-        global_store: Store,
-        session_stores: SessionStoreLookup,
-        workspace_stores: ProtectedWorkspaceStoreLookup,
-        worktree_file_completions_cache: WorktreeFileCompletionsCache,
-        perf_telemetry: PerfTelemetry,
-        data_root: PathBuf,
-        daemon_url: String,
-        harness: Arc<HarnessRuntimeManager>,
-    ) -> Self {
+    pub(in crate::daemon) fn new(parts: SessionFileCompletionsHandleParts) -> Self {
         Self {
-            global_store,
-            session_stores,
-            workspace_stores,
-            worktree_file_completions_cache,
-            perf_telemetry,
-            data_root,
-            daemon_url,
-            harness,
+            global_store: parts.global_store,
+            session_stores: parts.session_stores,
+            workspace_stores: parts.workspace_stores,
+            worktree_file_completions_cache: parts.worktree_file_completions_cache,
+            perf_telemetry: parts.perf_telemetry,
+            data_root: parts.data_root,
+            daemon_url: parts.daemon_url,
+            harness: parts.harness,
         }
     }
 
