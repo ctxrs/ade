@@ -8,6 +8,8 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
   APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
+  DELETED_BROAD_DOMAIN_HANDLE_NAMES,
+  daemonTestSurfaceRustFiles,
   EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
@@ -188,6 +190,7 @@ const {
   routerCompositionPatternsForPath,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanDeletedBroadDomainHandleRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
@@ -383,6 +386,7 @@ test("daemon boundary guard rejects broad daemon handle access in API code", () 
 });
 
 test("appstate route handle ratchet rejects new full-state handle families", () => {
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.size, 0);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("CoreHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TasksHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TelemetryHandle"), false);
@@ -401,9 +405,6 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(SurpriseHandle, surprise);
     `,
   });
@@ -430,9 +431,6 @@ test("appstate route handle ratchet rejects stale transport and execution handle
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(TransportHandle, transport);
     `,
   });
@@ -457,9 +455,6 @@ test("appstate route handle ratchet rejects stale transport and execution handle
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(ExecutionHandle, execution);
     `,
   });
@@ -486,9 +481,6 @@ test("appstate route handle ratchet rejects migrated telemetry full-state reintr
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(TelemetryHandle, telemetry);
     `,
   });
@@ -515,9 +507,6 @@ test("appstate route handle ratchet rejects stale tasks full-state reintroductio
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(TasksHandle, tasks);
     `,
   });
@@ -545,9 +534,6 @@ test("appstate route handle ratchet rejects workspace stream full-state reintrod
           }
         };
       }
-      domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
     `,
   });
@@ -580,6 +566,45 @@ test("appstate route handle ratchet rejects direct full-state route handles", ()
   assert.deepEqual(
     violations.map((violation) => violation.name),
     ["direct full-state route handle"],
+  );
+});
+
+test("deleted broad domain handle ratchet rejects final AppState escape hatches", () => {
+  assert.deepEqual(
+    [...DELETED_BROAD_DOMAIN_HANDLE_NAMES].sort(),
+    ["ProvidersHandle", "SessionsHandle", "WorkspacesHandle"],
+  );
+
+  const violations = scanDeletedBroadDomainHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      macro_rules! domain_handle_with_accessor { ($name:ident, $accessor:ident) => {} }
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      pub fn sessions(&self) -> SessionsHandle { todo!() }
+      pub fn workspaces(&self) -> WorkspacesHandle { todo!() }
+      pub fn providers(&self) -> ProvidersHandle { todo!() }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "deleted broad domain handle",
+      "deleted broad domain handle",
+      "deleted broad domain handle",
+      "deleted broad domain handle",
+      "deleted broad domain handle macro",
+      "deleted broad domain handle macro",
+    ],
+  );
+});
+
+test("deleted broad domain handle ratchet scans daemon test support surfaces", () => {
+  assert.equal(
+    daemonTestSurfaceRustFiles().some((filePath) =>
+      filePath.endsWith("core/crates/ctx-daemon/src/test_support.rs"),
+    ),
+    true,
   );
 });
 

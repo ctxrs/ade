@@ -13,7 +13,6 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
     seed_verify_cache_status(daemon, "ws-b/container/claude-crp", "ok").await;
 
     fixture
-        .providers()
         .restart_provider_for_auth_change("codex", "test auth updated")
         .await
         .expect("restart should succeed");

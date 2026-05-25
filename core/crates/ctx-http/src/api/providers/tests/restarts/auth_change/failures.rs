@@ -11,7 +11,6 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
     seed_options_probe_cache(daemon, "ws-a/host/codex", "codex", false).await;
 
     let err = fixture
-        .providers()
         .restart_provider_for_auth_change("codex", "test auth updated")
         .await
         .expect_err("restart failure should bubble up");

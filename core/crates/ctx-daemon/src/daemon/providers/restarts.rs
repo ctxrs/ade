@@ -21,7 +21,7 @@ pub async fn restart_provider_for_auth_change(
     restart_provider_for_auth_change_with_runtime(&state.providers, provider_id, reason).await
 }
 
-pub(in crate::daemon::providers) async fn restart_provider_for_auth_change_with_runtime(
+pub(crate) async fn restart_provider_for_auth_change_with_runtime(
     providers: &ProviderRuntime,
     provider_id: &str,
     reason: &str,

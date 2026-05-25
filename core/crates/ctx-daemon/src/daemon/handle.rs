@@ -341,10 +341,6 @@ impl DaemonHandle {
         )
     }
 
-    pub fn sessions(&self) -> SessionsHandle {
-        SessionsHandle::new(Arc::clone(&self.state))
-    }
-
     pub fn title_generation_local(&self) -> TitleGenerationLocalHandle {
         TitleGenerationLocalHandle::new(
             self.state.core.data_root.clone(),
@@ -1235,10 +1231,6 @@ impl DaemonHandle {
         )
     }
 
-    pub fn workspaces(&self) -> WorkspacesHandle {
-        WorkspacesHandle::new(Arc::clone(&self.state))
-    }
-
     pub fn workspace_active(&self) -> WorkspaceActiveHandle {
         let ensure_workspace_active_snapshot_hydrated = Arc::new({
             let state = Arc::clone(&self.state);
@@ -1408,10 +1400,6 @@ impl DaemonHandle {
             ensure_worktree_vcs_watcher,
             refresh_worktree_vcs,
         )
-    }
-
-    pub fn providers(&self) -> ProvidersHandle {
-        ProvidersHandle::new(Arc::clone(&self.state))
     }
 
     pub fn provider_accounts(&self) -> ProviderAccountsHandle {
@@ -6064,22 +6052,6 @@ impl DaemonShutdownHandle {
     }
 }
 
-macro_rules! domain_handle_with_accessor {
-    ($name:ident, $accessor:ident) => {
-        #[allow(dead_code)]
-        #[derive(Clone)]
-        pub struct $name {
-            pub(in crate::daemon) state: Arc<DaemonState>,
-        }
-
-        impl $name {
-            fn new(state: Arc<DaemonState>) -> Self {
-                Self { state }
-            }
-        }
-    };
-}
-
 type WorkspaceActiveFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type WorkspaceActiveHydrationEffect = Arc<
     dyn Fn(
@@ -6579,7 +6551,3 @@ impl SessionLifecycleHost for WorkspaceStreamSessionLifecycleHost {
         }
     }
 }
-
-domain_handle_with_accessor!(SessionsHandle, sessions);
-domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-domain_handle_with_accessor!(ProvidersHandle, providers);

@@ -1101,11 +1101,25 @@ impl TestDaemon {
         &self,
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<ExecutionSettings> {
-        self.handle()
-            .workspaces()
-            .effective_execution_settings(workspace_id)
-            .await
-            .map_err(Into::into)
+        crate::daemon::execution_effective::effective_execution_settings(
+            self.state.as_ref(),
+            workspace_id,
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn restart_provider_for_auth_change_for_test(
+        &self,
+        provider_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        crate::daemon::providers::restart_provider_for_auth_change_with_runtime(
+            &self.state.providers,
+            provider_id,
+            reason,
+        )
+        .await
     }
 
     pub async fn seed_task_lifecycle_session_for_test(

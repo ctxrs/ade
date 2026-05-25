@@ -1,10 +1,3 @@
-use std::path::Path as StdPath;
-
-use ctx_core::ids::WorkspaceId;
-use ctx_provider_install::install_state::InstallTarget;
-use ctx_providers::adapters::ProviderStatus;
-
-use super::handle::ProvidersHandle;
 mod accounts;
 mod admin_routes;
 mod auth_check;
@@ -55,60 +48,10 @@ pub use options::{
 };
 pub use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub use restarts::restart_provider_for_auth_change;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use restarts::restart_provider_for_auth_change_with_runtime;
 pub use runtime_probe::probe_provider_auth_verification_runtime;
 pub use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,
     refresh_provider_statuses, ProviderStatusResponseError,
 };
-
-impl ProvidersHandle {
-    pub async fn provider_diagnostics_snapshot(&self) -> diagnostics::ProviderDiagnosticsSnapshot {
-        provider_diagnostics_snapshot(&self.state).await
-    }
-
-    pub async fn can_create_loaded_session_for_provider(&self, provider_id: &str) -> bool {
-        self.state
-            .providers
-            .can_create_loaded_session_for_provider(provider_id)
-            .await
-    }
-
-    pub async fn refresh_provider_statuses(&self) -> anyhow::Result<()> {
-        refresh_provider_statuses(self.state.as_ref()).await
-    }
-
-    pub async fn restart_provider_for_auth_change(
-        &self,
-        provider_id: &str,
-        reason: &str,
-    ) -> anyhow::Result<()> {
-        restart_provider_for_auth_change(&self.state, provider_id, reason).await
-    }
-
-    pub async fn install_target_for_workspace(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<InstallTarget> {
-        install_target_for_workspace(&self.state, workspace_id).await
-    }
-
-    pub async fn providers_statuses_response(
-        &self,
-        target: InstallTarget,
-        include_matrix_providers: bool,
-    ) -> Vec<ProviderStatus> {
-        providers_statuses_response(&self.state, target, include_matrix_providers).await
-    }
-
-    pub async fn provider_status_response(
-        &self,
-        provider_id: &str,
-        target: InstallTarget,
-    ) -> Result<ProviderStatus, ProviderStatusResponseError> {
-        provider_status_response(&self.state, provider_id, target).await
-    }
-
-    pub fn data_root(&self) -> &StdPath {
-        &self.state.core.data_root
-    }
-}

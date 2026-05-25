@@ -4,8 +4,6 @@ use ctx_session_artifacts::{BlobReadError, ImageBlobStoreError, StoredImageBlob}
 use ctx_store::Store;
 use tokio::fs::File;
 
-use crate::daemon::DaemonState;
-
 #[derive(Clone)]
 pub struct BlobHandle {
     pub(in crate::daemon) data_root: PathBuf,
@@ -22,22 +20,6 @@ pub struct OpenedBlob {
     pub file: File,
     pub mime_type: String,
     pub name: Option<String>,
-}
-
-pub(in crate::daemon) async fn store_image_blob_for_state(
-    state: &DaemonState,
-    bytes: &[u8],
-    mime_type: &str,
-    name: Option<&str>,
-) -> Result<StoredImageBlob, ImageBlobStoreError> {
-    store_image_blob_for_parts(
-        &state.core.data_root,
-        state.global_store(),
-        bytes,
-        mime_type,
-        name,
-    )
-    .await
 }
 
 async fn store_image_blob_for_parts(

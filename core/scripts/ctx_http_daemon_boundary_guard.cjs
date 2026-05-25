@@ -8,6 +8,7 @@ const repoRoot = path.resolve(coreRoot, "..");
 const ctxHttpSrcRoot = path.join(coreRoot, "crates", "ctx-http", "src");
 const ctxHttpTestsRoot = path.join(coreRoot, "crates", "ctx-http", "tests");
 const ctxHttpTestSupportSrcRoot = path.join(coreRoot, "crates", "ctx-http-test-support", "src");
+const ctxDaemonSrcRoot = path.join(coreRoot, "crates", "ctx-daemon", "src");
 const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
 const ctxHttpMainPath = path.join(coreRoot, "crates", "ctx-http", "src", "main.rs");
 const legacyHttpDaemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
@@ -1372,7 +1373,8 @@ const HANDLE_BACKDOOR_PATTERNS = [
   },
 ];
 
-const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
+const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([]);
+const DELETED_BROAD_DOMAIN_HANDLE_NAMES = new Set([
   "SessionsHandle",
   "WorkspacesHandle",
   "ProvidersHandle",
@@ -5955,6 +5957,13 @@ function testSurfaceRustFiles() {
   return files;
 }
 
+function daemonTestSurfaceRustFiles() {
+  if (!fs.existsSync(ctxDaemonSrcRoot)) {
+    return [];
+  }
+  return listRustFiles(ctxDaemonSrcRoot).filter((filePath) => isTestRustPath(filePath));
+}
+
 function listRustFiles(root) {
   const out = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -7037,6 +7046,38 @@ function scanAppStateRouteHandleRatchet({ filePath, contents }) {
       text: lines[line - 1]?.trim() ?? handleName,
     });
   }
+  return violations;
+}
+
+function scanDeletedBroadDomainHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadHandleRegex = /\b(SessionsHandle|WorkspacesHandle|ProvidersHandle)\b/gu;
+  for (
+    let match = broadHandleRegex.exec(contents);
+    match;
+    match = broadHandleRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "deleted broad domain handle",
+      text: lines[line - 1]?.trim() ?? match[1],
+    });
+  }
+
+  const macroRegex = /\bdomain_handle_with_accessor\b\s*!?/gu;
+  for (let match = macroRegex.exec(contents); match; match = macroRegex.exec(contents)) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "deleted broad domain handle macro",
+      text: lines[line - 1]?.trim() ?? "domain_handle_with_accessor!",
+    });
+  }
+
   return violations;
 }
 
@@ -13916,6 +13957,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanDeletedBroadDomainHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanDaemonShutdownHandleRatchet({
         filePath: relativePath,
         contents,
@@ -14082,6 +14127,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+      }),
+      ...scanDeletedBroadDomainHandleRatchet({
+        filePath: relativePath,
+        contents,
       }),
       ...scanDaemonHandleConstructionRatchet({
         filePath: relativePath,
@@ -14306,6 +14355,17 @@ function scanRepo() {
     }
   }
 
+  for (const filePath of daemonTestSurfaceRustFiles()) {
+    const relativePath = repoRelative(filePath);
+    const contents = fs.readFileSync(filePath, "utf8");
+    violations.push(
+      ...scanDeletedBroadDomainHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+
   for (const filePath of testSurfaceRustFiles()) {
     const relativePath = repoRelative(filePath);
     const contents = fs.readFileSync(filePath, "utf8");
@@ -14314,6 +14374,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+      }),
+      ...scanDeletedBroadDomainHandleRatchet({
+        filePath: relativePath,
+        contents,
       }),
     );
     violations.push(
@@ -14690,6 +14754,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
   APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
+  DELETED_BROAD_DOMAIN_HANDLE_NAMES,
   EXECUTION_HANDLE_ROUTE_EXTRACTOR_ALLOWED_PATHS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
@@ -14875,8 +14940,10 @@ module.exports = {
   sessionReadModelRouteApiPatternsForPath,
   demoSeedTranscriptApiPatternsForPath,
   routerCompositionPatternsForPath,
+  daemonTestSurfaceRustFiles,
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
+  scanDeletedBroadDomainHandleRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,

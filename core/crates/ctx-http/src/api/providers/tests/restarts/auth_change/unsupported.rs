@@ -10,7 +10,6 @@ async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart()
     seed_options_probe_cache(daemon, "ws-a/host/codex", "codex", false).await;
 
     fixture
-        .providers()
         .restart_provider_for_auth_change("codex", "test auth updated")
         .await
         .expect("unsupported restart should be skipped");

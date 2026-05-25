@@ -409,11 +409,7 @@ mod tests {
     #[tokio::test]
     async fn read_handle_lists_invocations_with_and_without_turn_filter() -> anyhow::Result<()> {
         let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
-        let store = daemon
-            .handle()
-            .sessions()
-            .store_for_session(parent.id)
-            .await?;
+        let store = daemon.store_for_session(parent.id).await?;
         let turn_a = seed_parent_turn(&store, &parent, 1).await?;
         let turn_b = seed_parent_turn(&store, &parent, 3).await?;
         seed_invocation(&store, "inv-a", parent.id, Some(turn_a)).await?;
@@ -460,11 +456,7 @@ mod tests {
     #[tokio::test]
     async fn read_handle_gets_invocation_and_rejects_parent_mismatch() -> anyhow::Result<()> {
         let (_temp, daemon, parent) = seeded_subagent_read_parent().await?;
-        let store = daemon
-            .handle()
-            .sessions()
-            .store_for_session(parent.id)
-            .await?;
+        let store = daemon.store_for_session(parent.id).await?;
         seed_invocation(&store, "owned-invocation", parent.id, None).await?;
         let foreign_parent = store
             .create_session(

@@ -9,12 +9,19 @@ impl ProviderRestartFixture {
         self.fixture.daemon()
     }
 
-    pub(super) fn providers(&self) -> ctx_daemon::daemon::ProvidersHandle {
-        self.fixture.providers()
-    }
-
     pub(super) fn provider_accounts(&self) -> ctx_daemon::daemon::ProviderAccountsHandle {
         self.fixture.provider_accounts()
+    }
+
+    pub(super) async fn restart_provider_for_auth_change(
+        &self,
+        provider_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        self.fixture
+            .daemon()
+            .restart_provider_for_auth_change_for_test(provider_id, reason)
+            .await
     }
 }
 

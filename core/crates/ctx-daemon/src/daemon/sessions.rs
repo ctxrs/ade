@@ -20,14 +20,12 @@ mod pinning;
 mod read_models;
 mod route_contract;
 mod runtime;
-mod store_bridge;
 pub mod subagents;
 mod subagents_route;
 pub mod title_generation;
 mod title_model_mode_route;
 pub mod vcs;
 mod vcs_route;
-mod workspace_bridge;
 
 pub use artifact_access::SessionImageBlobStoreError;
 pub use artifacts::SessionArtifactDownload;

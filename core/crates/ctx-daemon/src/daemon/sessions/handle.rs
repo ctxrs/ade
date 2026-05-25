@@ -1,19 +1,10 @@
-use std::sync::Arc;
-
 use anyhow::Result;
-use ctx_core::ids::{SessionId, TaskId};
-use ctx_core::models::{Session, SessionEvent, Task, Worktree};
-use ctx_observability::ops_events::OpsEvent;
-use ctx_observability::telemetry::TelemetryEvent;
+use ctx_core::ids::SessionId;
+use ctx_core::models::Session;
 use ctx_session_title_service::title_generation::TitleGenerationOutcome;
-use ctx_session_tools::model_resolution::compose_model_id;
-use ctx_session_tools::order_seq::OrderSeqState;
-use ctx_store::Store;
-use tokio::sync::{mpsc, Mutex};
 
-use super::{title_generation, title_generation::schedule_session_title_generation};
-use crate::daemon::handle::{SessionTitleModelModeHandle, SessionsHandle};
-use crate::daemon::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
+use super::title_generation;
+use crate::daemon::handle::SessionTitleModelModeHandle;
 
 #[derive(Debug)]
 pub enum GenerateSessionTitleError {
@@ -110,143 +101,5 @@ impl SessionTitleModelModeHandle {
                 .await;
             false
         }
-    }
-}
-
-impl SessionsHandle {
-    pub async fn emit_session_started_observability_for_task(
-        &self,
-        session: &Session,
-        task: &Task,
-    ) {
-        let worktree = match self.store_for_session(session.id).await {
-            Ok(store) => store.get_worktree(session.worktree_id).await.ok().flatten(),
-            Err(_) => None,
-        };
-        let session_root_kind = session_root_kind_for_worktree(worktree.as_ref()).to_string();
-        self.emit_session_started_signals(session, &session_root_kind)
-            .await;
-        if let Err(error) = self.emit_workspace_task_upsert(task.id).await {
-            tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {error:?}");
-        }
-    }
-
-    pub async fn remember_session_meta(&self, session: &Session) {
-        self.state.remember_session_meta(session).await;
-    }
-
-    pub async fn publish_event(&self, event: SessionEvent) {
-        self.state.publish_event(event).await;
-    }
-
-    pub async fn refresh_session_head_cache(&self, session_id: SessionId) {
-        self.state.refresh_session_head_cache(session_id).await;
-    }
-
-    pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<Mutex<()>> {
-        self.state.task_session_creation_lock(task_id).await
-    }
-
-    pub async fn is_session_running(&self, session_id: SessionId) -> bool {
-        self.state.is_session_running(session_id).await
-    }
-
-    pub async fn session_order_seq_state(
-        &self,
-        store: &Store,
-        session_id: SessionId,
-    ) -> Arc<Mutex<OrderSeqState>> {
-        self.state.session_order_seq_state(store, session_id).await
-    }
-
-    pub async fn ensure_scheduler(
-        &self,
-        session: Session,
-    ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
-        self.state.ensure_scheduler(session).await
-    }
-
-    pub async fn configured_title_generation_settings(
-        &self,
-    ) -> Option<ctx_settings_model::TitleGenerationSettings> {
-        title_generation::configured_title_generation_settings(self.state.as_ref()).await
-    }
-
-    pub async fn maybe_generate_session_title(
-        &self,
-        session: Session,
-        prompt: String,
-        force: bool,
-        cfg: Option<ctx_settings_model::TitleGenerationSettings>,
-    ) -> anyhow::Result<Option<TitleGenerationOutcome>> {
-        title_generation::maybe_generate_session_title(
-            Arc::clone(&self.state),
-            session,
-            prompt,
-            force,
-            cfg,
-        )
-        .await
-    }
-
-    pub async fn schedule_session_title_generation(
-        &self,
-        session: Session,
-        prompt: String,
-        force: bool,
-    ) -> bool {
-        schedule_session_title_generation(Arc::clone(&self.state), session, prompt, force).await
-    }
-
-    pub async fn emit_session_started_signals(&self, session: &Session, session_root_kind: &str) {
-        self.state
-            .telemetry
-            .telemetry
-            .emit(TelemetryEvent::session_started(
-                session.provider_id.clone(),
-                compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
-                Some(session.execution_environment.as_str().to_string()),
-                Some(session_root_kind.to_string()),
-            ))
-            .await;
-        let mut ops_event = OpsEvent::new("info", "session_started");
-        ops_event.session_id = Some(session.id.0.to_string());
-        ops_event.worktree_id = Some(session.worktree_id.0.to_string());
-        ops_event.provider_id = Some(session.provider_id.clone());
-        ops_event.meta = Some(serde_json::json!({
-            "model_id": compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
-            "reasoning_effort": session.reasoning_effort.clone(),
-            "execution_environment": session.execution_environment.as_str(),
-            "session_root_kind": session_root_kind,
-            "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
-            "relationship": session.relationship.clone(),
-        }));
-        self.state.telemetry.ops_events.emit(ops_event);
-    }
-
-    pub async fn emit_compat_payload_reject_counter(
-        &self,
-        surface: &str,
-        issue: &str,
-        extra_label: Option<(&str, &str)>,
-    ) {
-        self.state
-            .emit_compat_payload_reject_counter(surface, issue, extra_label)
-            .await;
-    }
-
-    pub async fn require_scoped_mcp_session_context(
-        &self,
-        mcp_auth: ctx_mcp_auth::McpAuthContext,
-        session_id: SessionId,
-    ) -> Result<(), ScopedMcpSessionAccessError> {
-        require_scoped_mcp_session_context(&self.state, mcp_auth, session_id).await
-    }
-}
-
-fn session_root_kind_for_worktree(worktree: Option<&Worktree>) -> &'static str {
-    match worktree.and_then(|worktree| worktree.git_branch.as_ref()) {
-        Some(_) => "worktree",
-        None => "workspace_root",
     }
 }
