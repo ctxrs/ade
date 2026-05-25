@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
 use ctx_core::ids::MessageId;
 use ctx_core::models::{SessionEvent, SessionEventType};
 use ctx_session_tools::order_seq::attach_order_seq;
 use ctx_storage_admission::{is_storage_exhaustion_error, storage_exhaustion_message};
 use serde_json::json;
 
-use crate::daemon::scheduler::persistence::{emit_event, persist_assistant_message};
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
+use crate::daemon::scheduler::persistence::{emit_event_with_host, persist_assistant_message};
 
 use super::super::failure::{fail_turn, TurnFailurePayload};
 use super::super::state::EventLoopRuntimeState;
@@ -16,7 +14,7 @@ use super::super::TurnEventLoop;
 pub(super) async fn persist_assistant_complete_content(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &Arc<DaemonState>,
+    host: &TurnEventLoopHost,
     event: &SessionEvent,
     content: String,
     provider_message_id: Option<String>,
@@ -30,7 +28,6 @@ pub(super) async fn persist_assistant_complete_content(
         order_seq_state.get_or_assign(format!("message:{}", assistant_message_id.0), None)
     };
     match persist_assistant_message(
-        state.as_ref(),
         &ctx.store,
         ctx.workspace_id,
         assistant_message_id,
@@ -75,8 +72,8 @@ pub(super) async fn persist_assistant_complete_content(
                     runtime.assistant_sequence,
                 );
             }
-            let _ = emit_event(
-                state,
+            let _ = emit_event_with_host(
+                host,
                 ctx.session_id,
                 Some(ctx.run_id),
                 Some(ctx.turn_id),
@@ -95,7 +92,7 @@ pub(super) async fn persist_assistant_complete_content(
                 "turn_sequence": runtime.assistant_sequence + 1,
                 "root_cause": err_string,
             }));
-            let storage_status = state.storage_guard_snapshot();
+            let storage_status = host.storage_guard_snapshot();
             fail_turn(
                 ctx,
                 runtime,

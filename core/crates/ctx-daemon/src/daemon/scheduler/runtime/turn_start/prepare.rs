@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use chrono::Utc;
 use ctx_core::ids::{MessageId, RunId, TurnId};
@@ -7,8 +5,8 @@ use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, Session, SessionTurnStatus,
 };
 
+use crate::daemon::scheduler::host::TurnRuntimeHost;
 use crate::daemon::scheduler::QueuedMessage;
-use crate::daemon::DaemonState;
 
 use super::super::helpers::compute_context_window_metrics;
 use super::events::{emit_provider_run_started_event, ProviderRunStartedEvent};
@@ -25,7 +23,7 @@ pub(in crate::daemon::scheduler::runtime) struct PreparedTurnStart {
 }
 
 pub(in crate::daemon::scheduler::runtime) struct PrepareTurnStartRequest<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
+    pub(in crate::daemon::scheduler::runtime) turn_runtime: &'a TurnRuntimeHost,
     pub(in crate::daemon::scheduler::runtime) store: &'a ctx_store::Store,
     pub(in crate::daemon::scheduler::runtime) session: &'a Session,
     pub(in crate::daemon::scheduler::runtime) workdir_str: &'a str,
@@ -39,7 +37,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_turn_start(
     request: PrepareTurnStartRequest<'_>,
 ) -> Result<PreparedTurnStart> {
     let PrepareTurnStartRequest {
-        state,
+        turn_runtime,
         store,
         session,
         workdir_str,
@@ -56,7 +54,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_turn_start(
     let message_id = message.id;
     let queue_wait_ms = enqueued_at.elapsed().as_millis() as u64;
     record_queue_wait_metric(
-        state,
+        turn_runtime,
         session,
         full_model_id,
         execution_environment.as_str(),
@@ -69,7 +67,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_turn_start(
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
 
     emit_provider_run_started_event(ProviderRunStartedEvent {
-        state,
+        host: turn_runtime,
         session,
         run_id,
         turn_id,

@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn event_loop_exits_without_persisting_when_app_state_owner_is_gone() {
+async fn event_loop_exits_without_persisting_when_host_owner_is_gone() {
     let data_dir = tempdir().expect("temp dir");
     let fixture = build_loop_fixture(data_dir.path(), "fake", "model").await;
     let LoopFixture {
@@ -21,8 +21,9 @@ async fn event_loop_exits_without_persisting_when_app_state_owner_is_gone() {
     let (events_done_tx, events_done_rx) = oneshot::channel();
     let (start_progress_tx, _start_progress_rx) =
         tokio::sync::watch::channel(TurnStartProgress::Pending);
+    let host_weak = state.session_scheduler_worker_host().event_loop_host_weak();
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
-        state_weak: Arc::downgrade(&state),
+        host_weak,
         store: store.clone(),
         session_id,
         task_id,
@@ -57,7 +58,7 @@ async fn event_loop_exits_without_persisting_when_app_state_owner_is_gone() {
             payload_json: json!({}),
         })
         .await
-        .expect("send event after dropping app state owner");
+        .expect("send event after dropping host owner");
     drop(ev_tx);
 
     events_done_rx.await.expect("event loop completion");

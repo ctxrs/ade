@@ -24,7 +24,7 @@ pub(super) fn is_truthful_start_activity(event_type: &SessionEventType) -> bool 
 }
 
 pub(super) async fn handle_session_gap_notice(ctx: &TurnEventLoop, event: &SessionEvent) {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     let reason = event
@@ -32,9 +32,6 @@ pub(super) async fn handle_session_gap_notice(ctx: &TurnEventLoop, event: &Sessi
         .get("reason")
         .and_then(Value::as_str)
         .map(|value| value.to_string());
-    state
-        .workspaces
-        .workspace_active_snapshot
-        .publish_session_gap(ctx.workspace_id, ctx.session_id, event.seq, reason)
+    host.publish_session_gap(ctx.workspace_id, ctx.session_id, event.seq, reason)
         .await;
 }

@@ -12,7 +12,10 @@ pub(in crate::daemon::scheduler::runtime::event_loop::tests) async fn run_done_e
     let (start_progress_tx, _start_progress_rx) =
         tokio::sync::watch::channel(TurnStartProgress::Pending);
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
-        state_weak: Arc::downgrade(&fixture.state),
+        host_weak: fixture
+            .state
+            .session_scheduler_worker_host()
+            .event_loop_host_weak(),
         store: fixture.store.clone(),
         session_id: fixture.session_id,
         task_id: fixture.task_id,

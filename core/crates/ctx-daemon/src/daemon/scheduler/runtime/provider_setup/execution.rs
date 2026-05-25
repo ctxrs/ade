@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::ids::{MessageId, RunId, TurnId};
@@ -7,14 +6,15 @@ use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_harness_sources::{HarnessRuntimeSourceMode, ResolvedHarnessSource};
 use ctx_settings_model::ExecutionSettings;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::{ProviderTurnLaunchHost, WorkerLifecycleHost};
 
 use super::super::execution_plan::{prepare_turn_execution_plan, TurnExecutionPlan};
 use super::super::provider_env::apply_runtime_source_env;
 use super::super::turn_failure::emit_turn_start_failed;
 
 pub(super) struct ProviderExecutionContextRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
+    pub(super) lifecycle: &'a WorkerLifecycleHost,
     pub(super) store: &'a ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,
@@ -41,7 +41,7 @@ pub(super) async fn prepare_provider_execution_context(
         runtime_plan,
     } = execution_plan;
     let source_env = match apply_runtime_source_env(
-        &request.state.core.data_root,
+        request.provider_launch.data_root(),
         &request.session.provider_id,
         &runtime_plan,
         provider_env,
@@ -51,7 +51,7 @@ pub(super) async fn prepare_provider_execution_context(
         Ok(source_env) => source_env,
         Err(err) => {
             emit_turn_start_failed(
-                request.state,
+                request.lifecycle,
                 request.session,
                 request.run_id,
                 request.turn_id,
@@ -75,7 +75,7 @@ async fn prepare_turn_execution_plan_or_fail(
     request: &ProviderExecutionContextRequest<'_>,
 ) -> Result<TurnExecutionPlan> {
     match prepare_turn_execution_plan(
-        request.state,
+        request.provider_launch,
         request.store,
         request.session,
         request.execution_environment,
@@ -85,7 +85,7 @@ async fn prepare_turn_execution_plan_or_fail(
         Ok(execution_plan) => Ok(execution_plan),
         Err(err) => {
             emit_turn_start_failed(
-                request.state,
+                request.lifecycle,
                 request.session,
                 request.run_id,
                 request.turn_id,

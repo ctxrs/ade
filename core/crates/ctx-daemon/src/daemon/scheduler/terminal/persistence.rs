@@ -1,20 +1,20 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use serde_json::Value;
 
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{RunStatus, SessionEvent, SessionEventType};
 
-use crate::daemon::DaemonState;
-
+use super::super::persistence::SchedulerPersistenceHost;
 use super::super::persistence::{
     is_transient_store_error, sleep_store_write_retry, STORE_WRITE_RETRY_LIMIT,
 };
 
-async fn publish_persisted_events(state: &Arc<DaemonState>, events: Vec<SessionEvent>) {
+async fn publish_persisted_events<H>(host: &H, events: Vec<SessionEvent>)
+where
+    H: SchedulerPersistenceHost + ?Sized,
+{
     for event in events {
-        state.publish_event(event).await;
+        host.publish_event(event).await;
     }
 }
 
@@ -64,21 +64,24 @@ async fn persist_turn_terminal_events_with_retry(
     }
 }
 
-pub(super) async fn persist_terminal_events(
-    state: &Arc<DaemonState>,
+pub(super) async fn persist_terminal_events_with_host<H>(
+    host: &H,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
     run_status: RunStatus,
     cleanup_types: &[SessionEventType],
     events: Vec<(SessionEventType, Value)>,
-) -> Result<()> {
-    let store = state.store_for_session(session_id).await?;
+) -> Result<()>
+where
+    H: SchedulerPersistenceHost + ?Sized,
+{
+    let store = host.store_for_session(session_id).await?;
     cleanup_turn_stream_state(&store, session_id, turn_id, cleanup_types).await;
     let persisted =
         persist_turn_terminal_events_with_retry(&store, session_id, run_id, turn_id, &events)
             .await?;
     ctx_org_policy::admission::update_run_terminal_status(&store, run_id, run_status).await;
-    publish_persisted_events(state, persisted).await;
+    publish_persisted_events(host, persisted).await;
     Ok(())
 }

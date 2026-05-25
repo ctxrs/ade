@@ -27,7 +27,7 @@ pub(super) async fn process_provider_event(
     runtime: &mut EventLoopRuntimeState,
     ev: NormalizedEvent,
 ) -> ProviderEventProcessingOutcome {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return ProviderEventProcessingOutcome::Stop;
     };
     let event_type = ev.event_type.clone();
@@ -35,12 +35,12 @@ pub(super) async fn process_provider_event(
     let mut payload = raw_payload.clone();
 
     if runtime.mark_first_event_seen() {
-        record_first_provider_event_metric(ctx, state.as_ref()).await;
+        record_first_provider_event_metric(ctx, host.as_ref()).await;
     }
 
     if matches!(&ev.event_type, SessionEventType::Init) {
         if let Some(failure) =
-            claim_init_provider_session_ref(ctx, state.as_ref(), &mut payload).await
+            claim_init_provider_session_ref(ctx, host.as_ref(), &mut payload).await
         {
             fail_turn(ctx, runtime, failure).await;
             return ProviderEventProcessingOutcome::Continue;
@@ -86,7 +86,7 @@ pub(super) async fn process_provider_event(
     };
 
     if let Some(tool_event) = normalized_tool_event.as_ref() {
-        payload = prepare_tool_event_payload(ctx, state.as_ref(), &event_type, tool_event).await;
+        payload = prepare_tool_event_payload(ctx, host.as_ref(), &event_type, tool_event).await;
     }
 
     {
@@ -125,7 +125,7 @@ pub(super) async fn process_provider_event(
 
     handle_persisted_provider_event_effects(
         ctx,
-        &state,
+        &host,
         runtime,
         event,
         raw_payload,

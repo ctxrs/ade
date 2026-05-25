@@ -5,10 +5,8 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::SessionId;
 
-use crate::daemon::scheduler::lifecycle::{
-    fail_starting_turn, handle_provider_stall, RunningTurn, TurnStartProgress,
-};
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::SessionSchedulerWorkerHost;
+use crate::daemon::scheduler::lifecycle::{RunningTurn, TurnStartProgress};
 
 pub(super) enum WorkerDeadlineAction {
     Continue,
@@ -25,7 +23,7 @@ pub(super) fn refresh_inactivity_deadline(
 }
 
 pub(super) async fn handle_start_deadline_elapsed(
-    state_weak: &Weak<DaemonState>,
+    host_weak: &Weak<SessionSchedulerWorkerHost>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,
@@ -40,49 +38,60 @@ pub(super) async fn handle_start_deadline_elapsed(
     }
 
     let Some(turn) = running.take() else {
-        return clear_running_or_break(state_weak, session_id).await;
+        return clear_running_or_break(host_weak, session_id).await;
     };
-    let Some(state) = state_weak.upgrade() else {
+    let Some(host) = host_weak.upgrade() else {
         return WorkerDeadlineAction::Break;
     };
-    fail_starting_turn(
-        &state,
-        session_id,
-        turn,
-        "provider did not report turn start before deadline",
-    )
-    .await;
-    state.set_running(session_id, false).await;
+    if !host
+        .fail_starting_turn(
+            session_id,
+            turn,
+            "provider did not report turn start before deadline",
+        )
+        .await
+    {
+        return WorkerDeadlineAction::Break;
+    }
+    if !host.set_running(session_id, false).await {
+        return WorkerDeadlineAction::Break;
+    }
     WorkerDeadlineAction::Continue
 }
 
 pub(super) async fn handle_inactivity_deadline_elapsed(
-    state_weak: &Weak<DaemonState>,
+    host_weak: &Weak<SessionSchedulerWorkerHost>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,
     suspend_queue: &mut bool,
 ) -> WorkerDeadlineAction {
     let Some(turn) = running.take() else {
-        return clear_running_or_break(state_weak, session_id).await;
+        return clear_running_or_break(host_weak, session_id).await;
     };
     *running_start_deadline = None;
-    let Some(state) = state_weak.upgrade() else {
+    let Some(host) = host_weak.upgrade() else {
         return WorkerDeadlineAction::Break;
     };
-    let finalized = handle_provider_stall(&state, session_id, turn).await;
+    let Some(finalized) = host.handle_provider_stall(session_id, turn).await else {
+        return WorkerDeadlineAction::Break;
+    };
     *suspend_queue = !finalized;
-    state.set_running(session_id, false).await;
+    if !host.set_running(session_id, false).await {
+        return WorkerDeadlineAction::Break;
+    }
     WorkerDeadlineAction::Continue
 }
 
 async fn clear_running_or_break(
-    state_weak: &Weak<DaemonState>,
+    host_weak: &Weak<SessionSchedulerWorkerHost>,
     session_id: SessionId,
 ) -> WorkerDeadlineAction {
-    let Some(state) = state_weak.upgrade() else {
+    let Some(host) = host_weak.upgrade() else {
         return WorkerDeadlineAction::Break;
     };
-    state.set_running(session_id, false).await;
+    if !host.set_running(session_id, false).await {
+        return WorkerDeadlineAction::Break;
+    }
     WorkerDeadlineAction::Continue
 }

@@ -11,7 +11,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_done_event
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
 ) {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     runtime.promote_terminal(&ctx.start_progress_tx);
@@ -21,7 +21,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_done_event
     record_terminal_run_telemetry(
         ctx,
         runtime,
-        state.as_ref(),
+        host.as_ref(),
         "run_complete",
         true,
         "completed",
@@ -46,7 +46,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_inter
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     runtime.promote_terminal(&ctx.start_progress_tx);
@@ -56,13 +56,13 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_inter
     record_terminal_run_telemetry(
         ctx,
         runtime,
-        state.as_ref(),
+        host.as_ref(),
         "run_interrupt",
         false,
         "interrupted",
     )
     .await;
-    record_interrupt_visible_telemetry(ctx, state.as_ref(), event).await;
+    record_interrupt_visible_telemetry(ctx, host.as_ref(), event).await;
     runtime.terminal_status = Some(SessionTurnStatus::Interrupted);
     let _ = ctx
         .store

@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::DaemonState;
 
 pub(in crate::daemon::scheduler::runtime::event_loop::tests) struct LoopFixture {
     pub(in crate::daemon::scheduler::runtime::event_loop::tests) state: Arc<DaemonState>,

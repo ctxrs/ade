@@ -1,4 +1,5 @@
-use crate::daemon::DaemonState;
+use std::path::Path;
+
 use ctx_session_tools::{NormalizedToolEvent, ToolOutputArtifactRef};
 
 pub(in crate::daemon::scheduler::runtime) use ctx_run_scheduler::tool_runtime::cwd_outside_worktree;
@@ -12,12 +13,13 @@ pub(super) struct ToolOutputArtifactScope {
 }
 
 pub(super) async fn maybe_spool_tool_output(
-    state: &DaemonState,
+    spool_enabled: bool,
+    spool_dir: &Path,
     store: &ctx_store::Store,
     tool_event: &NormalizedToolEvent,
     scope: ToolOutputArtifactScope,
 ) -> Option<ToolOutputArtifactRef> {
-    if !state.core.tool_output_spool_enabled {
+    if !spool_enabled {
         return None;
     }
     let tool_call_id = tool_event.tool_call_id.as_deref()?;
@@ -35,7 +37,7 @@ pub(super) async fn maybe_spool_tool_output(
 
     let artifact = match ctx_session_artifacts::spool_tool_output_artifact(
         store,
-        &state.core.tool_output_spool_dir,
+        spool_dir,
         ctx_session_artifacts::ToolOutputArtifactScope {
             session_id: scope.session_id,
             task_id: scope.task_id,

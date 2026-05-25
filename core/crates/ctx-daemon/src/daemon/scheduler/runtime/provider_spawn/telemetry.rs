@@ -1,21 +1,18 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Error;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{ExecutionEnvironment, Session};
-use ctx_observability::ops_events::OpsEvent;
-use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
-use ctx_observability::telemetry::TelemetryEvent;
 use serde_json::json;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::{
+    ProviderRunFailedOpsEvent, ProviderTurnLaunchHost, WorkerLifecycleHost,
+};
 
-use super::super::super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
+use super::super::super::terminal::{finalize_failed_turn_with_host, FailedTurnTerminalization};
 
 pub(super) async fn record_provider_spawn_metric(
-    state: &Arc<DaemonState>,
+    provider_launch: &ProviderTurnLaunchHost,
     perf_run_id: Option<String>,
     session: &Session,
     full_model_id: &str,
@@ -23,30 +20,15 @@ pub(super) async fn record_provider_spawn_metric(
     session_root_kind: &str,
     spawn_started_at: Instant,
 ) {
-    let spawn_ms = spawn_started_at.elapsed().as_millis() as u64;
-    let mut spawn_labels = HashMap::new();
-    spawn_labels.insert("provider_id".to_string(), session.provider_id.clone());
-    spawn_labels.insert("model_id".to_string(), full_model_id.to_string());
-    spawn_labels.insert(
-        "execution_environment".to_string(),
-        execution_environment.as_str().to_string(),
-    );
-    spawn_labels.insert(
-        "session_root_kind".to_string(),
-        session_root_kind.to_string(),
-    );
-    spawn_labels.insert("event".to_string(), "spawn".to_string());
-    let spawn_metric = PerfMetric {
-        name: "provider.spawn_ms".to_string(),
-        kind: PerfMetricKind::Histogram,
-        unit: "ms".to_string(),
-        value: spawn_ms as f64,
-        labels: spawn_labels,
-    };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(spawn_metric, perf_run_id, None, None)
+    provider_launch
+        .record_provider_spawn_metric(
+            perf_run_id,
+            session,
+            full_model_id,
+            execution_environment,
+            session_root_kind,
+            spawn_started_at,
+        )
         .await;
 }
 
@@ -65,7 +47,8 @@ pub(super) struct ProviderStartFailure<'a> {
 }
 
 pub(super) async fn handle_provider_start_failure(
-    state: &Arc<DaemonState>,
+    provider_launch: &ProviderTurnLaunchHost,
+    lifecycle: &WorkerLifecycleHost,
     failure: ProviderStartFailure<'_>,
 ) {
     let ProviderStartFailure {
@@ -82,40 +65,32 @@ pub(super) async fn handle_provider_start_failure(
         err,
     } = failure;
     if let Some(token) = mcp_token {
-        crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), token).await;
+        lifecycle.revoke_turn_mcp_token_value(token).await;
     }
     let duration_ms = run_started_at.elapsed().as_millis() as u64;
-    state
-        .telemetry
-        .telemetry
-        .emit(TelemetryEvent::provider_call(
-            session.provider_id.clone(),
-            full_model_id.to_string(),
-            Some(execution_environment.as_str().to_string()),
-            Some(session_root_kind.to_string()),
+    provider_launch
+        .emit_provider_call_telemetry(
+            session,
+            full_model_id,
+            execution_environment,
+            session_root_kind,
             false,
             duration_ms,
-        ))
+        )
         .await;
-    let mut fail_event = OpsEvent::new("error", "provider_run_failed");
-    fail_event.session_id = Some(session.id.0.to_string());
-    fail_event.worktree_id = Some(session.worktree_id.0.to_string());
-    fail_event.run_id = Some(run_id.0.to_string());
-    fail_event.turn_id = Some(turn_id.0.to_string());
-    fail_event.provider_id = Some(session.provider_id.clone());
-    fail_event.cwd = Some(workdir_str.to_string());
-    fail_event.worktree_root = Some(workdir_str.to_string());
-    fail_event.meta = Some(json!({
-        "model_id": full_model_id,
-        "reasoning_effort": session.reasoning_effort.clone(),
-        "execution_environment": execution_environment.as_str(),
-        "session_root_kind": session_root_kind,
-        "error": err.to_string(),
-    }));
-    state.telemetry.ops_events.emit(fail_event);
+    provider_launch.emit_provider_run_failed_event(ProviderRunFailedOpsEvent {
+        session,
+        run_id,
+        turn_id,
+        workdir_str,
+        full_model_id,
+        execution_environment,
+        session_root_kind,
+        err,
+    });
     let error_message = err.to_string();
-    let _ = finalize_failed_turn(
-        state,
+    let _ = finalize_failed_turn_with_host(
+        lifecycle,
         session.id,
         Some(run_id),
         turn_id,

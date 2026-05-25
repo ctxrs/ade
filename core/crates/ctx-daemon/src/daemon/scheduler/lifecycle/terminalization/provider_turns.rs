@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn handle_provider_exit(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     mut turn: RunningTurn,
 ) -> bool {
@@ -24,7 +24,7 @@ pub async fn handle_provider_exit(
     let finalized = if let Some(events_done) = turn.events_done.take() {
         wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
         finalize_provider_outcome_required(
-            state,
+            lifecycle,
             session_id,
             Some(run_id),
             turn_id,
@@ -34,7 +34,7 @@ pub async fn handle_provider_exit(
         .await
     } else {
         finalize_provider_outcome_required(
-            state,
+            lifecycle,
             session_id,
             Some(run_id),
             turn_id,
@@ -43,12 +43,12 @@ pub async fn handle_provider_exit(
         )
         .await
     };
-    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
+    lifecycle.revoke_turn_mcp_token(&mut turn.mcp_token).await;
     finalized
 }
 
 pub async fn handle_provider_stall(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     mut turn: RunningTurn,
 ) -> bool {
@@ -77,7 +77,7 @@ pub async fn handle_provider_stall(
         "provider stalled without reporting a terminal outcome before timeout",
     );
     let finalized = finalize_provider_outcome_required(
-        state,
+        lifecycle,
         session_id,
         Some(run_id),
         turn_id,
@@ -85,12 +85,12 @@ pub async fn handle_provider_stall(
         outcome,
     )
     .await;
-    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
+    lifecycle.revoke_turn_mcp_token(&mut turn.mcp_token).await;
     finalized
 }
 
 pub async fn fail_starting_turn(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     mut turn: RunningTurn,
     error_message: &str,
@@ -109,8 +109,8 @@ pub async fn fail_starting_turn(
     if let Some(events_done) = turn.events_done.take() {
         wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
     }
-    let _ = finalize_failed_turn(
-        state,
+    let _ = finalize_failed_turn_with_host(
+        lifecycle,
         session_id,
         Some(run_id),
         turn_id,
@@ -123,5 +123,5 @@ pub async fn fail_starting_turn(
         },
     )
     .await;
-    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
+    lifecycle.revoke_turn_mcp_token(&mut turn.mcp_token).await;
 }

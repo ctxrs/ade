@@ -23,7 +23,9 @@ pub(super) async fn prepare_provider_turn_runtime(
     request: ProviderTurnRuntimeSetupRequest<'_>,
 ) -> Result<ProviderTurnRuntimeSetup> {
     let ProviderTurnRuntimeSetupRequest {
-        state,
+        turn_runtime: _turn_runtime,
+        provider_launch,
+        lifecycle,
         store,
         session,
         run_id,
@@ -35,13 +37,14 @@ pub(super) async fn prepare_provider_turn_runtime(
         session_root_kind,
     } = request;
 
-    let base_env = load_provider_setup_base_env(state, session, full_model_id).await?;
+    let base_env = load_provider_setup_base_env(provider_launch, session, full_model_id).await?;
     let mut provider_env = base_env.provider_env;
     let provider_control_mode = base_env.provider_control_mode;
 
     let execution_context = prepare_provider_execution_context(
         ProviderExecutionContextRequest {
-            state,
+            provider_launch,
+            lifecycle,
             store,
             session,
             run_id,
@@ -62,7 +65,7 @@ pub(super) async fn prepare_provider_turn_runtime(
     if let Err(err) = apply_provider_turn_admission_env(
         &mut provider_env,
         ProviderTurnAdmissionEnvRequest {
-            state,
+            provider_launch,
             store,
             session,
             run_id,
@@ -75,7 +78,7 @@ pub(super) async fn prepare_provider_turn_runtime(
     )
     .await
     {
-        emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
+        emit_turn_start_failed(lifecycle, session, run_id, turn_id, message_id, &err).await;
         return Err(err);
     }
 
@@ -89,7 +92,7 @@ pub(super) async fn prepare_provider_turn_runtime(
         );
     }
     let prepared_adapter = match prepare_provider_adapter_for_turn(
-        state,
+        provider_launch,
         &runtime_provider_id,
         is_linux_sandbox,
     )
@@ -97,13 +100,13 @@ pub(super) async fn prepare_provider_turn_runtime(
     {
         Ok(prepared_adapter) => prepared_adapter,
         Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(lifecycle, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
     };
 
     prepare_provider_runtime_environment(ProviderRuntimeEnvironmentRequest {
-        state,
+        provider_launch,
         provider_env: &mut provider_env,
         runtime_provider_id: &runtime_provider_id,
         runtime_plan: &runtime_plan,
@@ -116,7 +119,7 @@ pub(super) async fn prepare_provider_turn_runtime(
     apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &provider_control_mode);
 
     emit_provider_setup_ready_event(ProviderSetupReadyEvent {
-        state,
+        provider_launch,
         session,
         run_id,
         turn_id,

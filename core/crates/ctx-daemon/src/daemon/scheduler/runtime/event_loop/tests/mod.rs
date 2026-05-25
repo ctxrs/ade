@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
+use crate::daemon::scheduler::lifecycle::RunningTurn;
 use ctx_core::models::{
     ExecutionEnvironment, SessionEventType, SessionTurn, SessionTurnStatus, VcsKind,
 };

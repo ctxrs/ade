@@ -13,16 +13,16 @@ use ctx_providers::adapters::{ProviderAdapter, TurnInput};
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 
-use crate::daemon::DaemonState;
-
 use super::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequest};
 use super::provider_spawn::{spawn_provider_turn, ProviderTurnSpawnRequest};
 use super::running_turn::{build_running_turn, RunningTurnParts};
 use super::turn_channels::TurnRuntimeChannels;
+use crate::daemon::scheduler::host::{ProviderTurnLaunchHost, WorkerLifecycleHost};
 use crate::daemon::scheduler::lifecycle::RunningTurn;
 
 pub(super) struct TurnLaunchRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
+    pub(super) lifecycle: &'a WorkerLifecycleHost,
     pub(super) store: &'a Store,
     pub(super) session: &'a Session,
     pub(super) adapter: Arc<dyn ProviderAdapter>,
@@ -49,7 +49,8 @@ pub(super) struct TurnLaunchRequest<'a> {
 
 pub(super) async fn launch_running_turn(request: TurnLaunchRequest<'_>) -> Result<RunningTurn> {
     let TurnLaunchRequest {
-        state,
+        provider_launch,
+        lifecycle,
         store,
         session,
         adapter,
@@ -86,7 +87,8 @@ pub(super) async fn launch_running_turn(request: TurnLaunchRequest<'_>) -> Resul
     let run_started_at = Instant::now();
 
     let handle = spawn_provider_turn(ProviderTurnSpawnRequest {
-        state,
+        provider_launch,
+        lifecycle,
         store,
         session,
         adapter: Arc::clone(&adapter),
@@ -108,7 +110,7 @@ pub(super) async fn launch_running_turn(request: TurnLaunchRequest<'_>) -> Resul
     .await?;
 
     spawn_turn_event_loop_for_session(TurnEventLoopSpawnRequest {
-        state,
+        host_weak: provider_launch.event_loop_host_weak(),
         store: store.clone(),
         session,
         full_model_id,

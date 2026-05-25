@@ -2,7 +2,7 @@ use ctx_core::models::{SessionEvent, SessionEventType};
 use ctx_session_tools::{sanitize_normalized_tool_event_payload, NormalizedToolEvent};
 use serde_json::Value;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 
 use self::ops::emit_tool_call_ops;
 use super::super::tool_runtime::{self, maybe_spool_tool_output};
@@ -14,17 +14,18 @@ mod persistence;
 
 pub(super) async fn prepare_tool_event_payload(
     ctx: &TurnEventLoop,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     event_type: &SessionEventType,
     tool_event: &NormalizedToolEvent,
 ) -> Value {
     if matches!(event_type, SessionEventType::ToolCall) {
-        emit_tool_call_ops(ctx, state, tool_event);
+        emit_tool_call_ops(ctx, host, tool_event);
     }
 
     let output_artifact = if matches!(event_type, SessionEventType::ToolResult) {
         maybe_spool_tool_output(
-            state,
+            host.tool_output_spool_enabled(),
+            host.tool_output_spool_dir(),
             &ctx.store,
             tool_event,
             tool_runtime::ToolOutputArtifactScope {

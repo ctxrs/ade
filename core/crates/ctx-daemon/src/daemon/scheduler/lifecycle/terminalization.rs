@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -8,11 +7,11 @@ use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_providers::adapters::{ProviderTurnOutcome, RunHandle};
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::WorkerLifecycleHost;
 
-use super::super::reconcile::reconcile_turn_terminal_state;
+use super::super::persistence::SchedulerPersistenceHost;
 use super::super::terminal::{
-    finalize_failed_turn, finalize_provider_outcome, FailedTurnTerminalization,
+    finalize_failed_turn_with_host, finalize_provider_outcome_with_host, FailedTurnTerminalization,
 };
 use super::RunningTurn;
 
@@ -55,12 +54,6 @@ fn abort_provider(handle: &mut RunHandle) {
 
 fn provider_protocol_violation(reason: &str, message: &str) -> ProviderTurnOutcome {
     ProviderTurnOutcome::protocol_violation(reason, message)
-}
-
-pub(super) async fn revoke_turn_mcp_token(state: &Arc<DaemonState>, token: &mut Option<String>) {
-    if let Some(token) = token.take() {
-        crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await;
-    }
 }
 
 pub(super) async fn wait_for_provider_outcome(

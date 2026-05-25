@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::Session;
 use ctx_settings_model::ProviderControlMode;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::ProviderTurnLaunchHost;
 
 use super::super::provider_env::{build_base_provider_env, BaseProviderEnvRequest};
 
@@ -15,19 +14,19 @@ pub(super) struct ProviderSetupBaseEnv {
 }
 
 pub(super) async fn load_provider_setup_base_env(
-    state: &Arc<DaemonState>,
+    provider_launch: &ProviderTurnLaunchHost,
     session: &Session,
     full_model_id: &str,
 ) -> Result<ProviderSetupBaseEnv> {
-    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
+    let settings = ctx_settings_service::load_settings(provider_launch.global_store()).await?;
     let provider_control_mode = settings
         .sandboxing
         .as_ref()
         .map(|s| s.provider_control_mode.clone())
         .unwrap_or_default();
     let provider_env = build_base_provider_env(BaseProviderEnvRequest {
-        daemon_url: &state.core.daemon_url,
-        data_root: &state.core.data_root,
+        daemon_url: provider_launch.daemon_url(),
+        data_root: provider_launch.data_root(),
         session,
         full_model_id,
         provider_control_mode: &provider_control_mode,

@@ -7,9 +7,8 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::MessageDelivery;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
-use crate::daemon::DaemonState;
-
-use crate::daemon::scheduler::lifecycle::{stop_running_turn, RunningTurn, StopReason};
+use crate::daemon::scheduler::host::SessionSchedulerWorkerHost;
+use crate::daemon::scheduler::lifecycle::{RunningTurn, StopReason};
 use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
 
 pub(super) enum SchedulerCommandAction {
@@ -19,7 +18,7 @@ pub(super) enum SchedulerCommandAction {
 
 pub(super) async fn handle_scheduler_command(
     cmd: Option<SchedulerCommand>,
-    state_weak: &Weak<DaemonState>,
+    host_weak: &Weak<SessionSchedulerWorkerHost>,
     session_id: SessionId,
     queue: &mut VecDeque<QueuedMessage>,
     running: &mut Option<RunningTurn>,
@@ -37,7 +36,7 @@ pub(super) async fn handle_scheduler_command(
         }
         Some(SchedulerCommand::Cancel) => {
             stop_running_for_command(
-                state_weak,
+                host_weak,
                 session_id,
                 running,
                 running_start_deadline,
@@ -49,7 +48,7 @@ pub(super) async fn handle_scheduler_command(
         }
         Some(SchedulerCommand::Interrupt(interrupt)) => {
             stop_running_for_command(
-                state_weak,
+                host_weak,
                 session_id,
                 running,
                 running_start_deadline,
@@ -61,7 +60,7 @@ pub(super) async fn handle_scheduler_command(
         }
         Some(SchedulerCommand::StorageEmergency) => {
             stop_running_for_command(
-                state_weak,
+                host_weak,
                 session_id,
                 running,
                 running_start_deadline,
@@ -92,7 +91,7 @@ fn enqueue_message(
 }
 
 async fn stop_running_for_command(
-    state_weak: &Weak<DaemonState>,
+    host_weak: &Weak<SessionSchedulerWorkerHost>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,
@@ -104,9 +103,15 @@ async fn stop_running_for_command(
         return SchedulerCommandAction::Continue;
     };
     *running_start_deadline = None;
-    let Some(state) = state_weak.upgrade() else {
+    let Some(host) = host_weak.upgrade() else {
         return SchedulerCommandAction::Break;
     };
-    *suspend_queue = stop_running_turn(&state, session_id, turn, reason, interrupt).await;
+    let Some(finalized) = host
+        .stop_running_turn(session_id, turn, reason, interrupt)
+        .await
+    else {
+        return SchedulerCommandAction::Break;
+    };
+    *suspend_queue = finalized;
     SchedulerCommandAction::Continue
 }

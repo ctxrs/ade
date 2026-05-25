@@ -15,7 +15,7 @@ pub(super) async fn handle_assistant_complete(
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     let provider_message_id = event
@@ -53,7 +53,7 @@ pub(super) async fn handle_assistant_complete(
             persist_assistant_complete_content(
                 ctx,
                 runtime,
-                &state,
+                host.as_ref(),
                 event,
                 content,
                 provider_message_id,

@@ -8,14 +8,14 @@ fn has_terminal_event(event_type: &SessionEventType) -> bool {
 }
 
 pub async fn finalize_start_failure_if_needed(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
     message_id: MessageId,
     error_message: &str,
 ) {
-    let Ok(store) = state.store_for_session(session_id).await else {
+    let Ok(store) = lifecycle.store_for_session(session_id).await else {
         return;
     };
     let turn = store
@@ -42,15 +42,16 @@ pub async fn finalize_start_failure_if_needed(
             .iter()
             .any(|event| has_terminal_event(&event.event_type))
         {
-            let _ =
-                reconcile_turn_terminal_state(state, session_id, run_id, turn_id, "start_failed")
-                    .await;
+            let _ = store
+                .repair_session_turn_projection_from_events(session_id, turn_id)
+                .await;
+            lifecycle.set_running(session_id, false).await;
             return;
         }
     }
 
-    let _ = finalize_failed_turn(
-        state,
+    let _ = finalize_failed_turn_with_host(
+        lifecycle,
         session_id,
         run_id,
         turn_id,

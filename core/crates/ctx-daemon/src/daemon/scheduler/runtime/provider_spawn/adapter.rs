@@ -5,7 +5,7 @@ use ctx_managed_installs::AgentServerConfigFile;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::ProviderTurnLaunchHost;
 
 pub(in crate::daemon::scheduler::runtime) struct PreparedProviderAdapter {
     pub(in crate::daemon::scheduler::runtime) adapter: Arc<dyn ProviderAdapter>,
@@ -14,19 +14,19 @@ pub(in crate::daemon::scheduler::runtime) struct PreparedProviderAdapter {
 }
 
 pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_adapter_for_turn(
-    state: &Arc<DaemonState>,
+    provider_launch: &ProviderTurnLaunchHost,
     runtime_provider_id: &str,
     is_linux_sandbox: bool,
 ) -> Result<PreparedProviderAdapter> {
     let install_target = provider_install_target_for_runtime(is_linux_sandbox);
     let adapter_cfg =
         ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_or_err(
-            &state.core.data_root,
+            provider_launch.data_root(),
         )
         .await
         .map_err(|err| anyhow!(err.to_string()))?;
     let adapter = ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target_with_cfg(
-        state.as_ref(),
+        provider_launch,
         &adapter_cfg,
         runtime_provider_id,
         install_target,

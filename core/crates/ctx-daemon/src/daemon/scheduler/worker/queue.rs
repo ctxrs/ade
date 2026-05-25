@@ -10,11 +10,9 @@ use tokio::time::Instant as TokioInstant;
 use ctx_core::models::{MessageDelivery, Session, SessionEventType};
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::scheduler::lifecycle::{finalize_start_failure_if_needed, RunningTurn};
-use crate::daemon::scheduler::persistence::emit_event;
-use crate::daemon::scheduler::runtime::start_turn;
+use crate::daemon::scheduler::host::SessionSchedulerWorkerHost;
+use crate::daemon::scheduler::lifecycle::RunningTurn;
 use crate::daemon::scheduler::QueuedMessage;
-use crate::daemon::DaemonState;
 
 pub(super) enum QueueStartOutcome {
     Idle,
@@ -23,7 +21,7 @@ pub(super) enum QueueStartOutcome {
 }
 
 pub(super) struct QueueStartContext<'a> {
-    pub(super) state_weak: &'a Weak<DaemonState>,
+    pub(super) host_weak: &'a Weak<SessionSchedulerWorkerHost>,
     pub(super) session: &'a mut Session,
     pub(super) store: &'a ctx_store::Store,
     pub(super) queue: &'a mut VecDeque<QueuedMessage>,
@@ -40,7 +38,7 @@ pub(super) async fn start_next_queued_turn(ctx: QueueStartContext<'_>) -> QueueS
     let Some(msg) = ctx.queue.pop_front() else {
         return QueueStartOutcome::Idle;
     };
-    let Some(state) = ctx.state_weak.upgrade() else {
+    let Some(host) = ctx.host_weak.upgrade() else {
         return QueueStartOutcome::StopWorker;
     };
     let msg_id = msg.message.id;
@@ -54,60 +52,68 @@ pub(super) async fn start_next_queued_turn(ctx: QueueStartContext<'_>) -> QueueS
         _ => ctx.session.clone(),
     };
     if matches!(msg.message.delivery, MessageDelivery::Queued) {
-        let _ = emit_event(
-            &state,
-            ctx.session.id,
-            msg.message.run_id,
-            msg.message.turn_id,
-            SessionEventType::MessageQueuePromoted,
-            json!({
-                "message_id": msg.message.id.0,
-                "previous_position": 0,
-            }),
-        )
-        .await;
+        let _ = host
+            .emit_event(
+                ctx.session.id,
+                msg.message.run_id,
+                msg.message.turn_id,
+                SessionEventType::MessageQueuePromoted,
+                json!({
+                    "message_id": msg.message.id.0,
+                    "previous_position": 0,
+                }),
+            )
+            .await;
     }
     // The runtime module owns provider/env/event-pump side effects; this helper only bridges
     // queue progression to the running-turn lifecycle tracked by the worker loop.
-    match start_turn(
-        &state,
-        &session_for_turn,
-        ctx.workdir,
-        ctx.session_root_kind,
-        msg,
-        Arc::clone(ctx.order_seq_state),
-    )
-    .await
+    match host
+        .start_turn(
+            &session_for_turn,
+            ctx.workdir,
+            ctx.session_root_kind,
+            msg,
+            Arc::clone(ctx.order_seq_state),
+        )
+        .await
     {
-        Ok(turn) => {
-            state.set_running(ctx.session.id, true).await;
-            let timeout = state.provider_inactivity_timeout().await;
+        Some(Ok(turn)) => {
+            if !host.set_running(ctx.session.id, true).await {
+                return QueueStartOutcome::StopWorker;
+            }
+            let timeout = host.provider_inactivity_timeout().await;
             *ctx.running_inactivity_timeout = Some(timeout);
             *ctx.running_inactivity_deadline = Some(TokioInstant::now() + timeout);
             *ctx.running_start_deadline = Some(turn.start_deadline);
             *ctx.running = Some(turn);
         }
-        Err(err) => {
+        Some(Err(err)) => {
             let err_string = format!("{err:#}");
             tracing::error!(
                 session_id = %ctx.session.id.0,
                 "failed to start turn: {err:#}"
             );
             if let Some(turn_id) = msg_turn_id {
-                finalize_start_failure_if_needed(
-                    &state,
-                    ctx.session.id,
-                    msg_run_id,
-                    turn_id,
-                    msg_id,
-                    &err_string,
-                )
-                .await;
+                if !host
+                    .finalize_start_failure_if_needed(
+                        ctx.session.id,
+                        msg_run_id,
+                        turn_id,
+                        msg_id,
+                        &err_string,
+                    )
+                    .await
+                {
+                    return QueueStartOutcome::StopWorker;
+                }
             }
-            state.set_running(ctx.session.id, false).await;
+            if !host.set_running(ctx.session.id, false).await {
+                return QueueStartOutcome::StopWorker;
+            }
             *ctx.running = None;
             *ctx.running_start_deadline = None;
         }
+        None => return QueueStartOutcome::StopWorker,
     }
     QueueStartOutcome::StartedOrFailed
 }

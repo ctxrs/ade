@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::ids::RunId;
@@ -10,10 +9,10 @@ use ctx_org_policy::admission::{
 };
 use ctx_sandbox_contract::ContainerNetworkMode;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::ProviderTurnLaunchHost;
 
 pub(super) struct ProviderTurnAdmissionEnvRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
     pub(super) store: &'a ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,
@@ -29,7 +28,7 @@ pub(super) async fn apply_provider_turn_admission_env(
     request: ProviderTurnAdmissionEnvRequest<'_>,
 ) -> Result<()> {
     let admission = admit_runtime_turn(
-        request.state.global_store(),
+        request.provider_launch.global_store(),
         request.store,
         RuntimeTurnAdmissionRequest {
             session: request.session,

@@ -4,11 +4,11 @@ const TURN_TERMINALIZATION_RETRY_LIMIT: usize = 3;
 const TURN_TERMINALIZATION_RETRY_BASE_MS: u64 = 50;
 
 async fn turn_finished_persisted(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     turn_id: TurnId,
 ) -> bool {
-    let Ok(store) = state.store_for_session(session_id).await else {
+    let Ok(store) = lifecycle.store_for_session(session_id).await else {
         return false;
     };
     match store
@@ -30,7 +30,7 @@ async fn turn_finished_persisted(
 }
 
 pub(in crate::daemon::scheduler::lifecycle) async fn finalize_provider_outcome_required(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
@@ -38,8 +38,8 @@ pub(in crate::daemon::scheduler::lifecycle) async fn finalize_provider_outcome_r
     outcome: ProviderTurnOutcome,
 ) -> bool {
     for attempt in 0..=TURN_TERMINALIZATION_RETRY_LIMIT {
-        match finalize_provider_outcome(
-            state,
+        match finalize_provider_outcome_with_host(
+            lifecycle,
             session_id,
             run_id,
             turn_id,
@@ -48,7 +48,7 @@ pub(in crate::daemon::scheduler::lifecycle) async fn finalize_provider_outcome_r
         )
         .await
         {
-            Ok(()) if turn_finished_persisted(state, session_id, turn_id).await => return true,
+            Ok(()) if turn_finished_persisted(lifecycle, session_id, turn_id).await => return true,
             Ok(()) => {
                 tracing::warn!(
                     session_id = %session_id.0,

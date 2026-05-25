@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct SubscriptionRuntimeCredentialRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
     pub(super) provider_env: &'a mut HashMap<String, String>,
     pub(super) runtime_provider_id: &'a str,
     pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
@@ -12,7 +12,7 @@ pub(super) async fn prepare_subscription_runtime_credentials(
     request: SubscriptionRuntimeCredentialRequest<'_>,
 ) -> Result<()> {
     let SubscriptionRuntimeCredentialRequest {
-        state,
+        provider_launch,
         provider_env,
         runtime_provider_id,
         runtime_plan,
@@ -21,21 +21,21 @@ pub(super) async fn prepare_subscription_runtime_credentials(
     let env = if is_linux_sandbox {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::subscription_env_for_active_account_with_runtime_root(
-                &state.core.data_root,
+                provider_launch.data_root(),
                 Path::new(root),
                 runtime_provider_id,
             )
             .await?
         } else {
             provider_accounts::subscription_env_for_active_account(
-                &state.core.data_root,
+                provider_launch.data_root(),
                 runtime_provider_id,
             )
             .await?
         }
     } else {
         provider_accounts::subscription_env_for_active_account(
-            &state.core.data_root,
+            provider_launch.data_root(),
             runtime_provider_id,
         )
         .await?

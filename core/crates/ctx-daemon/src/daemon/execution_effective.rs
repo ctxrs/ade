@@ -42,9 +42,22 @@ pub async fn effective_execution_settings_for_environment(
     execution_environment: ctx_core::models::ExecutionEnvironment,
 ) -> anyhow::Result<ExecutionSettings> {
     let store = state.store_for_workspace(workspace_id).await?;
-    ctx_settings_service::effective_execution_settings_for_environment(
+    effective_execution_settings_for_environment_parts(
         state.global_store(),
         &store,
+        execution_environment,
+    )
+    .await
+}
+
+pub async fn effective_execution_settings_for_environment_parts(
+    global_store: &ctx_store::Store,
+    workspace_store: &ctx_store::Store,
+    execution_environment: ctx_core::models::ExecutionEnvironment,
+) -> anyhow::Result<ExecutionSettings> {
+    ctx_settings_service::effective_execution_settings_for_environment(
+        global_store,
+        workspace_store,
         execution_environment,
     )
     .await

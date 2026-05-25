@@ -6,9 +6,8 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::models::Session;
 
-use crate::daemon::DaemonState;
-
-use super::lifecycle::{handle_provider_exit, RunningTurn};
+use super::host::SessionSchedulerWorkerHost;
+use super::lifecycle::RunningTurn;
 use super::SchedulerCommand;
 
 mod bootstrap;
@@ -25,17 +24,17 @@ use self::deadlines::{
 use self::queue::{start_next_queued_turn, QueueStartContext, QueueStartOutcome};
 
 pub(super) async fn session_worker(
-    state_weak: Weak<DaemonState>,
+    host_weak: Weak<SessionSchedulerWorkerHost>,
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
-    // Keep only a weak reference in the scheduler task so background workers do not
-    // keep DaemonState alive after tests or shutdown drop the owner.
-    let Some(state) = state_weak.upgrade() else {
+    // Keep only a weak host reference so background workers do not keep daemon
+    // assembly state alive after tests or shutdown drop the owner.
+    let Some(host) = host_weak.upgrade() else {
         return;
     };
     let mut session = session;
-    let Some(bootstrap) = bootstrap_worker(&state, &session).await else {
+    let Some(bootstrap) = bootstrap_worker(&host, &session).await else {
         return;
     };
     let WorkerBootstrap {
@@ -51,12 +50,12 @@ pub(super) async fn session_worker(
     let mut running_inactivity_deadline: Option<TokioInstant> = None;
     let mut running_start_deadline: Option<TokioInstant> = None;
     let mut suspend_queue = false;
-    drop(state);
+    drop(host);
 
     loop {
         if running.is_none() && !suspend_queue {
             match start_next_queued_turn(QueueStartContext {
-                state_weak: &state_weak,
+                host_weak: &host_weak,
                 session: &mut session,
                 store: &store,
                 queue: &mut queue,
@@ -81,7 +80,7 @@ pub(super) async fn session_worker(
                 if matches!(
                     handle_scheduler_command(
                         cmd,
-                        &state_weak,
+                        &host_weak,
                         session.id,
                         &mut queue,
                         &mut running,
@@ -101,24 +100,30 @@ pub(super) async fn session_worker(
             }, if running.is_some() => {
                 if let Some(turn) = running.take() {
                     running_start_deadline = None;
-                    let Some(state) = state_weak.upgrade() else {
+                    let Some(host) = host_weak.upgrade() else {
                         break;
                     };
-                    let finalized = handle_provider_exit(&state, session.id, turn).await;
+                    let Some(finalized) = host.handle_provider_exit(session.id, turn).await else {
+                        break;
+                    };
                     suspend_queue = !finalized;
-                    state.set_running(session.id, false).await;
-                } else if let Some(state) = state_weak.upgrade() {
-                    state.set_running(session.id, false).await;
+                    if !host.set_running(session.id, false).await {
+                        break;
+                    }
+                } else if let Some(host) = host_weak.upgrade() {
+                    if !host.set_running(session.id, false).await {
+                        break;
+                    }
                 } else {
                     break;
                 }
             }
             changed = event_head_rx.changed(), if running.is_some() => {
-                let Some(state) = state_weak.upgrade() else {
+                let Some(host) = host_weak.upgrade() else {
                     break;
                 };
                 if changed.is_err() {
-                    event_head_rx = state.subscribe_session_event_head(session.id).await;
+                    event_head_rx = host.subscribe_session_event_head(session.id).await;
                 }
                 refresh_inactivity_deadline(
                     running_inactivity_timeout,
@@ -132,7 +137,7 @@ pub(super) async fn session_worker(
             }, if running.is_some() && running_start_deadline.is_some() => {
                 if matches!(
                     handle_start_deadline_elapsed(
-                        &state_weak,
+                        &host_weak,
                         session.id,
                         &mut running,
                         &mut running_start_deadline,
@@ -150,7 +155,7 @@ pub(super) async fn session_worker(
             }, if running.is_some() && running_inactivity_deadline.is_some() => {
                 if matches!(
                     handle_inactivity_deadline_elapsed(
-                        &state_weak,
+                        &host_weak,
                         session.id,
                         &mut running,
                         &mut running_start_deadline,
@@ -163,5 +168,58 @@ pub(super) async fn session_worker(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Weak;
+    use std::time::Duration;
+
+    use chrono::Utc;
+    use tokio::sync::mpsc;
+
+    use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+    use ctx_core::models::{ExecutionEnvironment, Session, SessionStatus};
+
+    use super::*;
+    use crate::daemon::scheduler::host::SessionSchedulerWorkerHost;
+
+    fn test_session() -> Session {
+        let now = Utc::now();
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: None,
+            title: "test".to_string(),
+            agent_role: "default".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn session_worker_exits_when_owner_host_is_dropped() {
+        let (_tx, rx) = mpsc::channel(1);
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            session_worker(
+                Weak::<SessionSchedulerWorkerHost>::new(),
+                test_session(),
+                rx,
+            ),
+        )
+        .await
+        .expect("worker should exit when its weak owner host cannot upgrade");
     }
 }

@@ -1,7 +1,9 @@
 use ctx_core::models::SessionTurnStatus;
 use serde_json::Value;
 
-use crate::daemon::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
+use crate::daemon::scheduler::terminal::{
+    finalize_failed_turn_with_host, FailedTurnTerminalization,
+};
 
 use super::state::EventLoopRuntimeState;
 use super::telemetry::record_failed_turn_telemetry;
@@ -18,21 +20,21 @@ pub(super) async fn fail_turn(
     runtime: &mut EventLoopRuntimeState,
     failure: TurnFailurePayload,
 ) {
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     record_failed_turn_telemetry(
         ctx,
         runtime,
-        state.as_ref(),
+        host.as_ref(),
         failure.error_message.clone(),
         failure.details.clone(),
         failure.kind.clone(),
     )
     .await;
     runtime.terminal_status = Some(SessionTurnStatus::Failed);
-    let _ = finalize_failed_turn(
-        &state,
+    let _ = finalize_failed_turn_with_host(
+        host.as_ref(),
         ctx.session_id,
         Some(ctx.run_id),
         ctx.turn_id,

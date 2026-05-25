@@ -2,14 +2,17 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::helpers::read_codex_context_window_metrics;
 use super::failure::TurnFailurePayload;
 use super::TurnEventLoop;
 
-pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, state: &DaemonState) {
+pub(super) async fn record_first_provider_event_metric(
+    ctx: &TurnEventLoop,
+    host: &TurnEventLoopHost,
+) {
     let first_ms = ctx.run_started_at.elapsed().as_millis() as u64;
     let mut first_labels = HashMap::new();
     first_labels.insert("provider_id".to_string(), ctx.provider_id.clone());
@@ -30,21 +33,17 @@ pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, stat
         value: first_ms as f64,
         labels: first_labels,
     };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(first_metric, ctx.perf_run_id.clone(), None, None)
+    host.record_perf_metric(first_metric, ctx.perf_run_id.clone())
         .await;
 }
 
 pub(super) async fn claim_init_provider_session_ref(
     ctx: &mut TurnEventLoop,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     payload: &mut Value,
 ) -> Option<TurnFailurePayload> {
     if payload.get("crp_session_id").is_some() {
-        state
-            .emit_compat_payload_reject_counter("scheduler.init_event", "crp_session_id", None)
+        host.emit_compat_payload_reject_counter("scheduler.init_event", "crp_session_id", None)
             .await;
     }
 

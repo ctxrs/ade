@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
@@ -8,7 +7,7 @@ use ctx_harness_sources::HarnessRuntimeSourceMode;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::ProviderTurnLaunchHost;
 use ctx_managed_installs as installer;
 
 #[path = "credentials/codex.rs"]
@@ -25,7 +24,7 @@ use subscription::{
 };
 
 pub(in crate::daemon::scheduler::runtime) struct ProviderRuntimeEnvironmentRequest<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
+    pub(in crate::daemon::scheduler::runtime) provider_launch: &'a ProviderTurnLaunchHost,
     pub(in crate::daemon::scheduler::runtime) provider_env: &'a mut HashMap<String, String>,
     pub(in crate::daemon::scheduler::runtime) runtime_provider_id: &'a str,
     pub(in crate::daemon::scheduler::runtime) runtime_plan:
@@ -40,7 +39,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_runtime_envi
     request: ProviderRuntimeEnvironmentRequest<'_>,
 ) -> Result<()> {
     let ProviderRuntimeEnvironmentRequest {
-        state,
+        provider_launch,
         provider_env,
         runtime_provider_id,
         runtime_plan,
@@ -52,7 +51,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_runtime_envi
     let credential_mode = provider_runtime_credential_mode(runtime_source_mode);
     if runtime_provider_id == CODEX_PROVIDER_ID {
         prepare_codex_runtime_credentials(CodexRuntimeCredentialRequest {
-            state,
+            provider_launch,
             provider_env,
             runtime_provider_id,
             runtime_plan,
@@ -62,7 +61,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_runtime_envi
         .await?;
     } else if credential_mode == ProviderRuntimeCredentialMode::Subscription {
         prepare_subscription_runtime_credentials(SubscriptionRuntimeCredentialRequest {
-            state,
+            provider_launch,
             provider_env,
             runtime_provider_id,
             runtime_plan,
@@ -86,7 +85,7 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_runtime_envi
         provider_env,
         adapter_cfg,
         runtime_provider_id,
-        &state.core.data_root,
+        provider_launch.data_root(),
         Some(install_target),
     );
     installer::ensure_codex_cli_command_env_for_target(

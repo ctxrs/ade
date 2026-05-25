@@ -1,13 +1,13 @@
 use ctx_observability::ops_events::OpsEvent;
 use serde_json::{json, Value};
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 
 use super::super::TurnEventLoop;
 
 pub(super) fn emit_failed_turn_ops_event(
     ctx: &TurnEventLoop,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,
@@ -28,5 +28,5 @@ pub(super) fn emit_failed_turn_ops_event(
         "details": details,
         "kind": kind,
     }));
-    state.telemetry.ops_events.emit(fail_event);
+    host.emit_ops_event(fail_event);
 }

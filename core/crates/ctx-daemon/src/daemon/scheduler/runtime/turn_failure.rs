@@ -1,15 +1,15 @@
-use std::sync::Arc;
-
 use serde_json::json;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::Session;
 
-use crate::daemon::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::WorkerLifecycleHost;
+use crate::daemon::scheduler::terminal::{
+    finalize_failed_turn_with_host, FailedTurnTerminalization,
+};
 
 pub(super) async fn emit_turn_start_failed(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session: &Session,
     run_id: RunId,
     turn_id: TurnId,
@@ -17,8 +17,8 @@ pub(super) async fn emit_turn_start_failed(
     err: &anyhow::Error,
 ) {
     let error_message = err.to_string();
-    let _ = finalize_failed_turn(
-        state,
+    let _ = finalize_failed_turn_with_host(
+        lifecycle,
         session.id,
         Some(run_id),
         turn_id,

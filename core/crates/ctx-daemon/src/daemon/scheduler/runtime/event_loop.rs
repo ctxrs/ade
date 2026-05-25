@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 use crate::daemon::scheduler::TurnStartProgress;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::Session;
@@ -21,7 +22,7 @@ mod terminal;
 mod tools;
 
 pub(super) struct TurnEventLoop {
-    pub(super) state_weak: Weak<DaemonState>,
+    pub(super) host_weak: Weak<TurnEventLoopHost>,
     pub(super) store: ctx_store::Store,
     pub(super) session_id: ctx_core::ids::SessionId,
     pub(super) task_id: ctx_core::ids::TaskId,
@@ -49,13 +50,13 @@ pub(super) struct TurnEventLoop {
 }
 
 impl TurnEventLoop {
-    fn state(&self) -> Option<Arc<DaemonState>> {
-        self.state_weak.upgrade()
+    fn host(&self) -> Option<Arc<TurnEventLoopHost>> {
+        self.host_weak.upgrade()
     }
 }
 
 pub(super) struct TurnEventLoopSpawnRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) host_weak: Weak<TurnEventLoopHost>,
     pub(super) store: ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) full_model_id: &'a str,
@@ -80,7 +81,7 @@ pub(super) struct TurnEventLoopSpawnRequest<'a> {
 
 pub(super) fn spawn_turn_event_loop_for_session(request: TurnEventLoopSpawnRequest<'_>) {
     spawn_turn_event_loop(TurnEventLoop {
-        state_weak: Arc::downgrade(request.state),
+        host_weak: request.host_weak,
         store: request.store,
         session_id: request.session.id,
         task_id: request.session.task_id,

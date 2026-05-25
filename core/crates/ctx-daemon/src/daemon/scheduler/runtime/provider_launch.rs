@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 
 use ctx_core::models::Session;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::ProviderTurnLaunchHost;
 
 use super::turn_start::turn_start_deadline;
 
@@ -20,7 +19,7 @@ pub(super) struct PreparedProviderLaunchEnvironment {
 }
 
 pub(super) async fn prepare_provider_launch_environment(
-    state: &Arc<DaemonState>,
+    provider_launch: &ProviderTurnLaunchHost,
     session: &Session,
     runtime_provider_id: &str,
     workdir: &Path,
@@ -37,7 +36,7 @@ pub(super) async fn prepare_provider_launch_environment(
         .and_then(|value| ctx_core::boolish::parse_boolish(value))
         .unwrap_or(false);
     let mcp_token =
-        mcp::issue_mcp_token_if_enabled(state, session, provider_env, mcp_disabled).await;
+        mcp::issue_mcp_token_if_enabled(provider_launch, session, provider_env, mcp_disabled).await;
     let codex_home = provider_env
         .get("CODEX_HOME")
         .map(|value| PathBuf::from(value.as_str()));

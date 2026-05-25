@@ -1,12 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_session_tools::model_resolution::compose_model_id;
 
-use crate::daemon::storage_guard;
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnRuntimeHost;
 
 pub(super) struct TurnRuntimeContext {
     pub(super) store: ctx_store::Store,
@@ -18,15 +16,15 @@ pub(super) struct TurnRuntimeContext {
 }
 
 pub(super) async fn prepare_turn_runtime_context(
-    state: &Arc<DaemonState>,
+    host: &TurnRuntimeHost,
     session: &Session,
     workdir: &Path,
 ) -> Result<TurnRuntimeContext> {
-    state.wait_for_worktree_bootstrap(session.worktree_id).await;
-    state.core.update_drain.reject_if_draining().await?;
-    storage_guard::preflight_turn_start(state, workdir).await?;
+    host.wait_for_worktree_bootstrap(session.worktree_id).await;
+    host.reject_if_update_draining().await?;
+    host.preflight_turn_start(workdir).await?;
 
-    let store = state.store_for_session(session.id).await?;
+    let store = host.store_for_session(session.id).await?;
     let workdir_root = workdir.to_path_buf();
     let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
     let workdir_str = workdir_root.to_string_lossy().to_string();

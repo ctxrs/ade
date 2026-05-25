@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use serde_json::json;
 
 use ctx_core::ids::SessionId;
@@ -7,17 +5,13 @@ use ctx_core::models::SessionEventType;
 use ctx_providers::adapters::ProviderTurnOutcome;
 use ctx_session_tools::interrupt_telemetry::{payload_fields, InterruptTelemetryContext};
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::WorkerLifecycleHost;
 
-use super::super::super::persistence::emit_event;
+use super::super::super::persistence::emit_event_with_host;
 use super::super::RunningTurn;
-pub(super) use telemetry::{record_interrupt_request_telemetry, record_provider_cancel_telemetry};
-
-#[path = "interruption/telemetry.rs"]
-mod telemetry;
 
 pub(super) async fn emit_interrupt_requested_event(
-    state: &Arc<DaemonState>,
+    lifecycle: &WorkerLifecycleHost,
     session_id: SessionId,
     turn: &RunningTurn,
     interrupt: Option<&InterruptTelemetryContext>,
@@ -33,8 +27,8 @@ pub(super) async fn emit_interrupt_requested_event(
             }
         }
     }
-    let _ = emit_event(
-        state,
+    let _ = emit_event_with_host(
+        lifecycle,
         session_id,
         Some(turn.run_id),
         Some(turn.turn_id),

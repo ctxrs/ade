@@ -297,6 +297,7 @@ const {
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
   scanSubagentSpawnHostStateRatchet,
+  scanSchedulerHostStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,
@@ -2588,6 +2589,7 @@ test("appstate guard rejects session message command broad handle fields", () =>
       impl DaemonHandle {
         pub fn session_message_command(&self) -> SessionMessageCommandHandle {
           let state = Arc::clone(&self.state);
+          let spawner = SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.state));
           SessionMessageCommandHandle::new(state)
         }
       }
@@ -2597,9 +2599,58 @@ test("appstate guard rejects session message command broad handle fields", () =>
   assert.deepEqual(new Set(fieldViolations), new Set([
     "session message command capability stores broad handle or runtime bag",
     "session message command capability exposes generic full-state field",
-    "session message scheduler spawner stores strong daemon state seam",
+    "session message scheduler spawner stores broad daemon state seam",
     "session message command assembly hides strong daemon state scheduler seam",
   ]));
+});
+
+test("appstate guard rejects scheduler host/runtime broad daemon-state seams", () => {
+  const hostViolations = scanSchedulerHostStateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/scheduler/host.rs",
+    contents: `
+      pub(in crate::daemon) struct SessionSchedulerWorkerHost {
+        state: Arc<DaemonState>,
+        state_weak: Weak<DaemonState>,
+        event_loop_state: EventLoopState,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(hostViolations), new Set([
+    "scheduler host/runtime surface depends on broad daemon state",
+    "scheduler host/runtime surface exposes generic daemon-state field",
+  ]));
+
+  const runtimeViolations = scanSchedulerHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/scheduler/runtime/event_loop/provider_events.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub(in crate::daemon::scheduler) struct TurnEventLoop {
+        state_weak: Weak<DaemonState>,
+      }
+      async fn process(ctx: TurnEventLoopContext) {
+        let state = ctx.state();
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(runtimeViolations), new Set([
+    "scheduler host/runtime surface depends on broad daemon state",
+    "scheduler host/runtime surface exposes generic daemon-state field",
+  ]));
+
+  const testFixtureViolations = scanSchedulerHostStateRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/scheduler/runtime/event_loop/tests/fixtures/setup.rs",
+    contents: `
+      pub struct Fixture {
+        state: Arc<DaemonState>,
+      }
+    `,
+  });
+
+  assert.deepEqual(testFixtureViolations, []);
 });
 
 test("appstate guard rejects session subagent read broad route handles", () => {
@@ -3002,6 +3053,7 @@ test("appstate guard rejects subagent spawn host daemon-state seams", () => {
 
   assert.deepEqual(assemblyViolations, [
     "task worktree host assembly keeps removed workspace runtime seam",
+    "subagent spawn/control assembly hides daemon state capture",
     "subagent spawn/control assembly hides daemon state capture",
     "subagent spawn/control assembly hides daemon state capture",
     "subagent spawn/control assembly hides daemon state capture",

@@ -2,14 +2,14 @@ use ctx_observability::ops_events::OpsEvent;
 use ctx_session_tools::{build_tool_ops_meta_from_normalized, NormalizedToolEvent};
 use serde_json::{json, Value};
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 
 use super::super::super::tool_runtime::cwd_outside_worktree;
 use super::super::TurnEventLoop;
 
 pub(super) fn emit_tool_call_ops(
     ctx: &TurnEventLoop,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     tool_event: &NormalizedToolEvent,
 ) {
     let tool_meta = build_tool_ops_meta_from_normalized(tool_event);
@@ -41,7 +41,7 @@ pub(super) fn emit_tool_call_ops(
     } else {
         Some(Value::Object(meta))
     };
-    state.telemetry.ops_events.emit(event);
+    host.emit_ops_event(event);
 
     if let Some(cwd) = tool_meta.cwd.as_deref() {
         if cwd_outside_worktree(cwd, &ctx.workdir_root, ctx.workdir_canonical.as_ref()) {
@@ -58,7 +58,7 @@ pub(super) fn emit_tool_call_ops(
                 "reason": "cwd_outside_worktree",
                 "tool_call_id": tool_meta.tool_call_id,
             }));
-            state.telemetry.ops_events.emit(warn_event);
+            host.emit_ops_event(warn_event);
         }
     }
 }

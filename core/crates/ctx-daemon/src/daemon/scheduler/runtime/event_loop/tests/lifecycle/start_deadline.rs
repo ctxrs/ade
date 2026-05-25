@@ -24,28 +24,30 @@ async fn start_deadline_failure_finalizes_starting_turn_as_failed() {
     let (_start_progress_tx, start_progress_rx) =
         tokio::sync::watch::channel(TurnStartProgress::Pending);
 
-    fail_starting_turn(
-        &fixture.state,
-        fixture.session_id,
-        RunningTurn {
-            adapter,
-            handle,
-            run_id: fixture.run_id,
-            turn_id: fixture.turn_id,
-            message_id: fixture.message_id,
-            provider_id: "fake".to_string(),
-            model_id: "model".to_string(),
-            execution_environment_label: "host".to_string(),
-            session_root_kind: "primary".to_string(),
-            event_tx,
-            events_done: None,
-            start_progress: start_progress_rx,
-            start_deadline: tokio::time::Instant::now(),
-            mcp_token: None,
-        },
-        "provider did not report turn start before deadline",
-    )
-    .await;
+    fixture
+        .state
+        .session_scheduler_worker_host()
+        .fail_starting_turn(
+            fixture.session_id,
+            RunningTurn {
+                adapter,
+                handle,
+                run_id: fixture.run_id,
+                turn_id: fixture.turn_id,
+                message_id: fixture.message_id,
+                provider_id: "fake".to_string(),
+                model_id: "model".to_string(),
+                execution_environment_label: "host".to_string(),
+                session_root_kind: "primary".to_string(),
+                event_tx,
+                events_done: None,
+                start_progress: start_progress_rx,
+                start_deadline: tokio::time::Instant::now(),
+                mcp_token: None,
+            },
+            "provider did not report turn start before deadline",
+        )
+        .await;
 
     let turn = fixture
         .store

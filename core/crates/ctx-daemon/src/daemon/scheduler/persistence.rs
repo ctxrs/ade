@@ -1,14 +1,34 @@
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType};
+use ctx_store::Store;
 
 use crate::daemon::DaemonState;
 
 mod retry;
 
 pub use retry::{is_transient_store_error, sleep_store_write_retry, STORE_WRITE_RETRY_LIMIT};
+
+#[async_trait]
+pub(in crate::daemon::scheduler) trait SchedulerPersistenceHost:
+    Send + Sync
+{
+    async fn store_for_session(&self, session_id: ctx_core::ids::SessionId) -> Result<Store>;
+
+    async fn publish_event(&self, event: SessionEvent);
+}
+
+#[async_trait]
+impl SchedulerPersistenceHost for std::sync::Arc<DaemonState> {
+    async fn store_for_session(&self, session_id: ctx_core::ids::SessionId) -> Result<Store> {
+        self.as_ref().store_for_session(session_id).await
+    }
+
+    async fn publish_event(&self, event: SessionEvent) {
+        DaemonState::publish_event(self, event).await;
+    }
+}
 
 fn maybe_fail_persist_assistant_message() -> Result<()> {
     if let Err(err) =
@@ -51,15 +71,18 @@ pub async fn append_session_event_with_retry(
     }
 }
 
-pub async fn emit_event(
-    state: &Arc<DaemonState>,
+pub async fn emit_event_with_host<H>(
+    host: &H,
     session_id: ctx_core::ids::SessionId,
     run_id: Option<RunId>,
     turn_id: Option<TurnId>,
     event_type: SessionEventType,
     payload_json: serde_json::Value,
-) -> Result<SessionEvent> {
-    let store = state.store_for_session(session_id).await?;
+) -> Result<SessionEvent>
+where
+    H: SchedulerPersistenceHost + ?Sized,
+{
+    let store = host.store_for_session(session_id).await?;
     let event = append_session_event_with_retry(
         &store,
         session_id,
@@ -69,13 +92,12 @@ pub async fn emit_event(
         payload_json,
     )
     .await?;
-    state.publish_event(event.clone()).await;
+    host.publish_event(event.clone()).await;
     Ok(event)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn persist_assistant_message(
-    _state: &DaemonState,
     store: &ctx_store::Store,
     _workspace_id: ctx_core::ids::WorkspaceId,
     message_id: ctx_core::ids::MessageId,

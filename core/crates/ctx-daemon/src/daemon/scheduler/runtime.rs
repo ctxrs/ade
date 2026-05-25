@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use ctx_core::models::Session;
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::DaemonState;
+use super::host::{TurnRuntimeHost, WorkerLifecycleHost};
 
 mod event_loop;
 mod execution_plan;
@@ -37,13 +37,15 @@ use super::lifecycle::RunningTurn;
 use super::QueuedMessage;
 
 pub async fn start_turn(
-    state: &Arc<DaemonState>,
+    turn_runtime: &TurnRuntimeHost,
+    lifecycle: &WorkerLifecycleHost,
     session: &Session,
     workdir: &Path,
     session_root_kind: &str,
     queued: QueuedMessage,
     order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
+    let provider_launch = turn_runtime.provider_launch_host();
     let TurnRuntimeContext {
         store,
         workdir_root,
@@ -51,10 +53,10 @@ pub async fn start_turn(
         workdir_str,
         execution_environment,
         full_model_id,
-    } = prepare_turn_runtime_context(state, session, workdir).await?;
+    } = prepare_turn_runtime_context(turn_runtime, session, workdir).await?;
 
     let turn_start = prepare_turn_start(PrepareTurnStartRequest {
-        state,
+        turn_runtime,
         store: &store,
         session,
         workdir_str: &workdir_str,
@@ -73,7 +75,9 @@ pub async fn start_turn(
     let context_window_metrics = turn_start.context_window_metrics;
 
     let provider_runtime = prepare_provider_turn_runtime(ProviderTurnRuntimeSetupRequest {
-        state,
+        turn_runtime,
+        provider_launch,
+        lifecycle,
         store: &store,
         session,
         run_id,
@@ -92,7 +96,7 @@ pub async fn start_turn(
     let turn_input =
         prepare_turn_input(&store, session, &message, &full_model_id, &mut provider_env).await?;
     let launch_environment = prepare_provider_launch_environment(
-        state,
+        provider_launch,
         session,
         &runtime_provider_id,
         workdir,
@@ -104,7 +108,8 @@ pub async fn start_turn(
     let start_deadline_duration = launch_environment.start_deadline_duration;
 
     launch_running_turn(TurnLaunchRequest {
-        state,
+        provider_launch,
+        lifecycle,
         store: &store,
         session,
         adapter,

@@ -65,6 +65,7 @@ use crate::daemon::sessions::{
 use super::{
     blobs::BlobHandle,
     route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
+    scheduler::SessionSchedulerWorkerHost,
     state::{
         session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup,
         SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WeakSessionStoreLookup,
@@ -484,7 +485,9 @@ impl DaemonHandle {
             Arc::clone(&self.state.core.update_drain),
             self.state.core.data_root.clone(),
             self.session_title_model_mode(),
-            SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.state)),
+            SessionMessageSchedulerSpawner::new(Arc::downgrade(
+                &self.state.session_scheduler_worker_host(),
+            )),
         )
     }
 
@@ -578,8 +581,9 @@ impl DaemonHandle {
             }
         });
         let session_stores = self.session_store_lookup();
-        let scheduler_spawner =
-            SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(&self.state));
+        let scheduler_spawner = SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(
+            &self.state.session_scheduler_worker_host(),
+        ));
         let publish_host = SessionSubagentMcpControlPublicationHost::new(
             session_stores.clone(),
             self.protected_workspace_store_lookup(),
@@ -3059,12 +3063,12 @@ impl SessionTitleModelModeHandle {
 
 #[derive(Clone)]
 pub(in crate::daemon) struct SessionMessageSchedulerSpawner {
-    state: Weak<DaemonState>,
+    host: Weak<SessionSchedulerWorkerHost>,
 }
 
 impl SessionMessageSchedulerSpawner {
-    pub(in crate::daemon) fn new(state: Weak<DaemonState>) -> Self {
-        Self { state }
+    pub(in crate::daemon) fn new(host: Weak<SessionSchedulerWorkerHost>) -> Self {
+        Self { host }
     }
 
     pub(in crate::daemon) async fn ensure_scheduler(
@@ -3072,10 +3076,10 @@ impl SessionMessageSchedulerSpawner {
         runtime: &SessionRuntime<crate::daemon::scheduler::SchedulerCommand>,
         session: Session,
     ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
-        let state = self.state.clone();
+        let host = self.host.clone();
         runtime
             .ensure_scheduler(session, move |session, rx| {
-                crate::daemon::scheduler::session_worker(state, session, rx)
+                crate::daemon::scheduler::session_worker(host, session, rx)
             })
             .await
     }

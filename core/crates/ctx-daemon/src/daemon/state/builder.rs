@@ -96,6 +96,7 @@ impl DaemonState {
                 runtime_parts.harness_runtime,
                 runtime_parts.execution_setup,
             ),
+            scheduler_worker_host: std::sync::OnceLock::new(),
         }
     }
 }

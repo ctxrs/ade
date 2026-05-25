@@ -10605,24 +10605,19 @@ function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
     typeName: "SessionMessageSchedulerSpawner",
   });
   if (spawnerStruct) {
-    const allowedWeakDaemonState = "Weak<DaemonState>";
-    const normalizedSpawner = spawnerStruct.text.replaceAll(allowedWeakDaemonState, "");
     const broadSpawnerRegex =
-      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState|StoreManager|WorkspaceRuntime)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu;
     for (
-      let broad = broadSpawnerRegex.exec(normalizedSpawner);
+      let broad = broadSpawnerRegex.exec(spawnerStruct.text);
       broad;
-      broad = broadSpawnerRegex.exec(normalizedSpawner)
+      broad = broadSpawnerRegex.exec(spawnerStruct.text)
     ) {
-      const prefixWithoutAllowed = spawnerStruct.text
-        .slice(0, broad.index)
-        .replaceAll(allowedWeakDaemonState, "");
-      const offset = spawnerStruct.index + prefixWithoutAllowed.length;
+      const offset = spawnerStruct.index + broad.index;
       const line = contents.slice(0, offset).split(/\r?\n/u).length;
       violations.push({
         filePath,
         line,
-        name: "session message scheduler spawner stores strong daemon state seam",
+        name: "session message scheduler spawner stores broad daemon state seam",
         text: lines[line - 1]?.trim() ?? broad[0],
       });
     }
@@ -10634,7 +10629,7 @@ function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
   });
   if (assemblyBlock) {
     const hiddenStrongStateRegex =
-      /\bArc::clone\s*\(\s*&self\.state\s*\)|SessionMessageSchedulerSpawner::new\s*\(\s*Arc::clone\s*\(\s*&self\.state\s*\)/gu;
+      /\bArc::clone\s*\(\s*&self\.state\s*\)|SessionMessageSchedulerSpawner::new\s*\(\s*Arc::(?:clone|downgrade)\s*\(\s*&self\.state\s*\)/gu;
     for (
       let hidden = hiddenStrongStateRegex.exec(assemblyBlock.text);
       hidden;
@@ -10649,6 +10644,69 @@ function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
         text: lines[line - 1]?.trim() ?? hidden[0],
       });
     }
+  }
+
+  return violations;
+}
+
+function isSchedulerHostStateRatchetPath(filePath) {
+  if (filePath.includes("/tests/")) {
+    return false;
+  }
+  const ratchetedFiles = new Set([
+    "core/crates/ctx-daemon/src/daemon/scheduler/host.rs",
+    "core/crates/ctx-daemon/src/daemon/scheduler/runtime.rs",
+    "core/crates/ctx-daemon/src/daemon/scheduler/worker.rs",
+    "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop.rs",
+    "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption.rs",
+    "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/terminalization.rs",
+  ]);
+  if (ratchetedFiles.has(filePath)) {
+    return true;
+  }
+  return [
+    "core/crates/ctx-daemon/src/daemon/scheduler/runtime/",
+    "core/crates/ctx-daemon/src/daemon/scheduler/worker/",
+    "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/terminalization/",
+  ].some((prefix) => filePath.startsWith(prefix));
+}
+
+function scanSchedulerHostStateRatchet({ filePath, contents }) {
+  if (!isSchedulerHostStateRatchetPath(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadStateRegex =
+    /\b(?:DaemonState|DaemonHandle|SessionsHandle|WorkspacesHandle|ProvidersHandle|StoreManager|WorkspaceRuntime)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>|\bstate_weak\b|\bevent_loop_state\b|\bctx\s*\.\s*state\s*\(/gu;
+  for (
+    let broad = broadStateRegex.exec(contents);
+    broad;
+    broad = broadStateRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, broad.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "scheduler host/runtime surface depends on broad daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  const genericStateFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|daemon_state|state|state_weak|event_loop_state)\s*:/gmu;
+  for (
+    let generic = genericStateFieldRegex.exec(contents);
+    generic;
+    generic = genericStateFieldRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, generic.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "scheduler host/runtime surface exposes generic daemon-state field",
+      text: lines[line - 1]?.trim() ?? generic[0],
+    });
   }
 
   return violations;
@@ -11083,20 +11141,10 @@ function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
       const hiddenStateRegex =
         /\bArc::clone\s*\(\s*&self\.state\s*\)|\bArc::downgrade\s*\(\s*&self\.state\s*\)|\bself\.task_session_admission_workspace_runtime\s*\(\s*\)/gu;
       for (
-        let hidden = hiddenStateRegex.exec(assemblyBlock.text);
-        hidden;
-        hidden = hiddenStateRegex.exec(assemblyBlock.text)
-      ) {
-        const before = assemblyBlock.text.slice(
-          Math.max(0, hidden.index - 120),
-          hidden.index,
-        );
-        if (
-          hidden[0].startsWith("Arc::downgrade") &&
-          /SessionSubagentMcpControlSchedulerSpawner::new\s*\(\s*$/u.test(before)
-        ) {
-          continue;
-        }
+      let hidden = hiddenStateRegex.exec(assemblyBlock.text);
+      hidden;
+      hidden = hiddenStateRegex.exec(assemblyBlock.text)
+    ) {
         const offset = assemblyBlock.index + hidden.index;
         const line = contents.slice(0, offset).split(/\r?\n/u).length;
         violations.push({
@@ -14622,6 +14670,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSchedulerHostStateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanFinalSessionRouteCapabilityRatchet({
         filePath: relativePath,
         contents,
@@ -14830,6 +14882,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSubagentSpawnHostStateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSchedulerHostStateRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -15659,6 +15715,7 @@ module.exports = {
   scanSessionSubagentMcpControlHandleFieldRatchet,
   scanSessionSubagentMcpControlHandleRatchet,
   scanSubagentSpawnHostStateRatchet,
+  scanSchedulerHostStateRatchet,
   scanFinalSessionRouteCapabilityRatchet,
   scanSessionSubagentReadDaemonImplementationRatchet,
   scanSessionSubagentReadHandleFieldRatchet,

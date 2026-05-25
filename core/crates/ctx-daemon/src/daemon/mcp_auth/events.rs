@@ -1,10 +1,20 @@
 use ctx_mcp_auth::McpAuthContext;
-use ctx_observability::ops_events::OpsEvent;
+use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 
 use crate::daemon::DaemonState;
 
 pub(super) fn emit_mcp_token_event(
     state: &DaemonState,
+    level: &str,
+    event_name: &str,
+    ctx: McpAuthContext,
+    meta: serde_json::Value,
+) {
+    emit_mcp_token_event_with_ops(&state.telemetry.ops_events, level, event_name, ctx, meta);
+}
+
+pub(super) fn emit_mcp_token_event_with_ops(
+    ops_events: &OpsEvents,
     level: &str,
     event_name: &str,
     ctx: McpAuthContext,
@@ -18,7 +28,7 @@ pub(super) fn emit_mcp_token_event(
         "capabilities": ctx.capabilities.names(),
         "detail": meta,
     }));
-    state.telemetry.ops_events.emit(event);
+    ops_events.emit(event);
 }
 
 pub fn emit_mcp_token_denied(

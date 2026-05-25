@@ -18,8 +18,9 @@ use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use tokio::sync::mpsc;
 
+use crate::daemon::scheduler::SessionSchedulerWorkerHost;
 use crate::daemon::{
-    session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
 };
 
 pub(in crate::daemon) type SessionSubagentMcpControlFuture<T> =
@@ -541,12 +542,12 @@ impl SessionSubagentMcpControlHandle {
 
 #[derive(Clone)]
 pub(in crate::daemon) struct SessionSubagentMcpControlSchedulerSpawner {
-    state: Weak<DaemonState>,
+    host: Weak<SessionSchedulerWorkerHost>,
 }
 
 impl SessionSubagentMcpControlSchedulerSpawner {
-    pub(in crate::daemon) fn new(state: Weak<DaemonState>) -> Self {
-        Self { state }
+    pub(in crate::daemon) fn new(host: Weak<SessionSchedulerWorkerHost>) -> Self {
+        Self { host }
     }
 
     pub(in crate::daemon) async fn ensure_scheduler(
@@ -554,10 +555,10 @@ impl SessionSubagentMcpControlSchedulerSpawner {
         runtime: &SessionRuntime<crate::daemon::scheduler::SchedulerCommand>,
         session: Session,
     ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
-        let state = self.state.clone();
+        let host = self.host.clone();
         runtime
             .ensure_scheduler(session, move |session, rx| {
-                crate::daemon::scheduler::session_worker(state, session, rx)
+                crate::daemon::scheduler::session_worker(host, session, rx)
             })
             .await
     }

@@ -2,7 +2,7 @@ use ctx_core::models::SessionEvent;
 use ctx_session_tools::interrupt_telemetry::{latency_bucket, metric_labels};
 use serde_json::Value;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_observability::telemetry::TelemetryEvent;
 
@@ -14,7 +14,7 @@ mod failed_turn;
 pub(super) async fn record_terminal_run_telemetry(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     event_label: &'static str,
     provider_call_success: bool,
     session_status: &'static str,
@@ -38,40 +38,31 @@ pub(super) async fn record_terminal_run_telemetry(
             event_label,
         ),
     };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(run_metric, ctx.perf_run_id.clone(), None, None)
+    host.record_perf_metric(run_metric, ctx.perf_run_id.clone())
         .await;
-    state
-        .telemetry
-        .telemetry
-        .emit(TelemetryEvent::provider_call(
-            ctx.provider_id.clone(),
-            ctx.model_id.clone(),
-            Some(ctx.execution_environment_label.clone()),
-            Some(ctx.session_root_kind.clone()),
-            provider_call_success,
-            duration_ms,
-        ))
-        .await;
-    state
-        .telemetry
-        .telemetry
-        .emit(TelemetryEvent::session_completed(
-            ctx.provider_id.clone(),
-            ctx.model_id.clone(),
-            Some(ctx.execution_environment_label.clone()),
-            Some(ctx.session_root_kind.clone()),
-            session_status.to_string(),
-            duration_ms,
-        ))
-        .await;
+    host.emit_telemetry(TelemetryEvent::provider_call(
+        ctx.provider_id.clone(),
+        ctx.model_id.clone(),
+        Some(ctx.execution_environment_label.clone()),
+        Some(ctx.session_root_kind.clone()),
+        provider_call_success,
+        duration_ms,
+    ))
+    .await;
+    host.emit_telemetry(TelemetryEvent::session_completed(
+        ctx.provider_id.clone(),
+        ctx.model_id.clone(),
+        Some(ctx.execution_environment_label.clone()),
+        Some(ctx.session_root_kind.clone()),
+        session_status.to_string(),
+        duration_ms,
+    ))
+    .await;
 }
 
 pub(super) async fn record_interrupt_visible_telemetry(
     ctx: &TurnEventLoop,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     event: &SessionEvent,
 ) {
     let Some(requested_at_ms) = event
@@ -97,23 +88,17 @@ pub(super) async fn record_interrupt_visible_telemetry(
             "turn_interrupted_visible",
         ),
     };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(interrupt_metric, ctx.perf_run_id.clone(), None, None)
+    host.record_perf_metric(interrupt_metric, ctx.perf_run_id.clone())
         .await;
-    state
-        .telemetry
-        .telemetry
-        .emit(TelemetryEvent::session_interrupt_latency(
-            ctx.provider_id.clone(),
-            ctx.model_id.clone(),
-            Some(ctx.execution_environment_label.clone()),
-            Some(ctx.session_root_kind.clone()),
-            latency_ms,
-            bucket.clone(),
-        ))
-        .await;
+    host.emit_telemetry(TelemetryEvent::session_interrupt_latency(
+        ctx.provider_id.clone(),
+        ctx.model_id.clone(),
+        Some(ctx.execution_environment_label.clone()),
+        Some(ctx.session_root_kind.clone()),
+        latency_ms,
+        bucket.clone(),
+    ))
+    .await;
     let interrupt_id = event
         .payload_json
         .get("interrupt_id")
@@ -132,11 +117,11 @@ pub(super) async fn record_interrupt_visible_telemetry(
 pub(super) async fn record_failed_turn_telemetry(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &DaemonState,
+    host: &TurnEventLoopHost,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,
 ) {
-    record_terminal_run_telemetry(ctx, runtime, state, "run_failed", false, "failed").await;
-    failed_turn::emit_failed_turn_ops_event(ctx, state, error_message, details, kind);
+    record_terminal_run_telemetry(ctx, runtime, host, "run_failed", false, "failed").await;
+    failed_turn::emit_failed_turn_ops_event(ctx, host, error_message, details, kind);
 }

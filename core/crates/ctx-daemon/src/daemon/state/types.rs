@@ -12,6 +12,7 @@ use ctx_worktree_vcs_service::{
     GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
     WorktreeVcsSnapshotCacheEntry,
 };
+use std::sync::OnceLock;
 
 use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
 
@@ -99,6 +100,8 @@ pub struct DaemonState {
     pub(crate) telemetry: TelemetryRuntime,
     pub(crate) transport: TransportRuntime,
     pub(crate) execution: ExecutionRuntime,
+    pub(in crate::daemon) scheduler_worker_host:
+        OnceLock<Arc<crate::daemon::scheduler::SessionSchedulerWorkerHost>>,
 }
 
 pub enum StoreLookup {

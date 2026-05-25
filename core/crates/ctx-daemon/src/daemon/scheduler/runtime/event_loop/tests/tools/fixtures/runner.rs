@@ -10,7 +10,10 @@ impl ToolEventLoopFixture {
         let (start_progress_tx, _start_progress_rx) =
             tokio::sync::watch::channel(TurnStartProgress::Pending);
         let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
-            state_weak: Arc::downgrade(&self.state),
+            host_weak: self
+                .state
+                .session_scheduler_worker_host()
+                .event_loop_host_weak(),
             store: self.store.clone(),
             session_id: self.session_id,
             task_id: self.task_id,

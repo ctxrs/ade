@@ -12,7 +12,7 @@ use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::Store;
 
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::{ProviderTurnLaunchHost, WorkerLifecycleHost};
 
 mod adapter;
 mod hooks;
@@ -25,7 +25,8 @@ use telemetry::{
 };
 
 pub(super) struct ProviderTurnSpawnRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
+    pub(super) lifecycle: &'a WorkerLifecycleHost,
     pub(super) store: &'a Store,
     pub(super) session: &'a Session,
     pub(super) adapter: Arc<dyn ProviderAdapter>,
@@ -49,7 +50,8 @@ pub(super) async fn spawn_provider_turn(
     request: ProviderTurnSpawnRequest<'_>,
 ) -> Result<RunHandle> {
     let ProviderTurnSpawnRequest {
-        state,
+        provider_launch,
+        lifecycle,
         store,
         session,
         adapter,
@@ -70,7 +72,7 @@ pub(super) async fn spawn_provider_turn(
     } = request;
     let spawn_started_at = Instant::now();
     let provider_run_hooks = build_provider_run_hooks(
-        state,
+        provider_launch,
         store,
         session,
         execution_environment,
@@ -88,7 +90,7 @@ pub(super) async fn spawn_provider_turn(
     {
         Ok(handle) => {
             record_provider_spawn_metric(
-                state,
+                provider_launch,
                 perf_run_id,
                 session,
                 full_model_id,
@@ -101,7 +103,8 @@ pub(super) async fn spawn_provider_turn(
         }
         Err(err) => {
             handle_provider_start_failure(
-                state,
+                provider_launch,
+                lifecycle,
                 ProviderStartFailure {
                     session,
                     run_id,

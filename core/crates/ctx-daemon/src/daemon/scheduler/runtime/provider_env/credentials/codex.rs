@@ -2,7 +2,7 @@ use super::*;
 use anyhow::anyhow;
 
 pub(super) struct CodexRuntimeCredentialRequest<'a> {
-    pub(super) state: &'a Arc<DaemonState>,
+    pub(super) provider_launch: &'a ProviderTurnLaunchHost,
     pub(super) provider_env: &'a mut HashMap<String, String>,
     pub(super) runtime_provider_id: &'a str,
     pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
@@ -14,7 +14,7 @@ pub(super) async fn prepare_codex_runtime_credentials(
     request: CodexRuntimeCredentialRequest<'_>,
 ) -> Result<()> {
     let CodexRuntimeCredentialRequest {
-        state,
+        provider_launch,
         provider_env,
         runtime_provider_id,
         runtime_plan,
@@ -36,7 +36,7 @@ pub(super) async fn prepare_codex_runtime_credentials(
         if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 let env = provider_accounts::codex_env_for_active_account_with_runtime_root(
-                    &state.core.data_root,
+                    provider_launch.data_root(),
                     Path::new(root),
                 )
                 .await?;
@@ -45,8 +45,8 @@ pub(super) async fn prepare_codex_runtime_credentials(
                 }
             }
         } else {
-            let env =
-                provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
+            let env = provider_accounts::codex_env_for_active_account(provider_launch.data_root())
+                .await?;
             for (key, value) in env {
                 provider_env.insert(key, value);
             }

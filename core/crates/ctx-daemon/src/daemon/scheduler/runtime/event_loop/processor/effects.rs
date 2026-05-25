@@ -1,16 +1,14 @@
-use std::sync::Arc;
-
 use super::super::dispatch::handle_persisted_provider_event;
 use super::super::state::EventLoopRuntimeState;
 use super::super::terminal::is_truthful_start_activity;
 use super::super::TurnEventLoop;
-use crate::daemon::DaemonState;
+use crate::daemon::scheduler::host::TurnEventLoopHost;
 use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
 use ctx_session_tools::NormalizedToolEvent;
 
 pub(super) async fn handle_persisted_provider_event_effects(
     ctx: &TurnEventLoop,
-    state: &Arc<DaemonState>,
+    host: &TurnEventLoopHost,
     runtime: &mut EventLoopRuntimeState,
     event: SessionEvent,
     raw_payload: serde_json::Value,
@@ -23,7 +21,7 @@ pub(super) async fn handle_persisted_provider_event_effects(
             | SessionEventType::ToolResult
     );
     if !publish_after_persist {
-        state.publish_event(event.clone()).await;
+        host.publish_event(event.clone()).await;
     }
 
     if is_truthful_start_activity(&event.event_type)
@@ -46,6 +44,6 @@ pub(super) async fn handle_persisted_provider_event_effects(
         .await;
 
     if publish_after_persist {
-        state.publish_event(event.clone()).await;
+        host.publish_event(event.clone()).await;
     }
 }

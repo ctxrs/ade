@@ -14,7 +14,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_finis
     let Some(status) = terminal_status_from_finished_payload(&event.payload_json) else {
         return;
     };
-    let Some(state) = ctx.state() else {
+    let Some(host) = ctx.host() else {
         return;
     };
     runtime.promote_terminal(&ctx.start_progress_tx);
@@ -26,7 +26,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_finis
             record_terminal_run_telemetry(
                 ctx,
                 runtime,
-                state.as_ref(),
+                host.as_ref(),
                 "run_complete",
                 true,
                 "completed",
@@ -44,7 +44,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_finis
             record_failed_turn_telemetry(
                 ctx,
                 runtime,
-                state.as_ref(),
+                host.as_ref(),
                 error_message,
                 event.payload_json.get("details").cloned(),
                 event.payload_json.get("kind").cloned(),
@@ -55,7 +55,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop) async fn handle_turn_finis
             record_terminal_run_telemetry(
                 ctx,
                 runtime,
-                state.as_ref(),
+                host.as_ref(),
                 "run_interrupt",
                 false,
                 "interrupted",
