@@ -242,6 +242,11 @@ const sessionControlHandleApiPaths = new Set([
   "core/crates/ctx-http/src/api/sessions/control/ask_user.rs",
 ]);
 
+const sessionControlEffectSurfacePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
+]);
+
 const sessionFileCompletionsHandleApiPaths = new Set([
   "core/crates/ctx-http/src/api/sessions/file_completions.rs",
 ]);
@@ -307,6 +312,10 @@ const sessionSubagentReadDaemonImplementationPaths = new Set([
 
 const sessionControlDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/control_route.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/auth.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/auth/events.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/auth/runtime.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
 ]);
 
 const sessionTitleModelModeDaemonImplementationPaths = new Set([
@@ -9893,8 +9902,16 @@ function scanSessionControlDaemonImplementationRatchet({ filePath, contents }) {
       regex: /\bSessionsHandle\b/gu,
     },
     {
+      name: "session control daemon implementation uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "session control daemon implementation uses broad provider handle",
+      regex: /\bProvidersHandle\b/gu,
+    },
+    {
       name: "session control daemon implementation accepts daemon state",
-      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+      regex: /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu,
     },
   ];
   for (const check of checks) {
@@ -9921,8 +9938,16 @@ function scanSessionControlDaemonImplementationRatchet({ filePath, contents }) {
           regex: /\bSessionsHandle\b/gu,
         },
         {
+          name: "session control capability impl uses broad workspace handle",
+          regex: /\bWorkspacesHandle\b/gu,
+        },
+        {
+          name: "session control capability impl uses broad provider handle",
+          regex: /\bProvidersHandle\b/gu,
+        },
+        {
           name: "session control capability impl accepts daemon state",
-          regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+          regex: /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu,
         },
       ];
       for (const check of implChecks) {
@@ -9937,6 +9962,111 @@ function scanSessionControlDaemonImplementationRatchet({ filePath, contents }) {
           });
         }
       }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/auth.rs") {
+    const authChecks = [
+      {
+        name: "session control auth implementation reuses full-state runtime prep helper",
+        regex: /\bprepare_session_auth_runtime\s*\(\s*state\b/gu,
+      },
+      {
+        name: "session control auth implementation reuses full-state auth event sink",
+        regex: /\bspawn_session_auth_event_sink\s*\(\s*Arc::clone\s*\(\s*&?state\s*\)/gu,
+      },
+    ];
+    for (const check of authChecks) {
+      for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/sessions/auth/runtime.rs") {
+    const authRuntimeChecks = [
+      {
+        name: "session control auth runtime reuses full-state worktree execution helper",
+        regex: /\bresolve_existing_worktree_execution\s*\(\s*state\b/gu,
+      },
+      {
+        name: "session control auth runtime reuses full-state install-target helper",
+        regex: /\beffective_install_target_for_environment\s*\(\s*state\s*\.\s*as_ref\s*\(\s*\)/gu,
+      },
+      {
+        name: "session control auth runtime reuses full-state provider adapter helper",
+        regex: /\bensure_provider_adapter_for_target_with_cfg\s*\(\s*state\s*\.\s*as_ref\s*\(\s*\)/gu,
+      },
+      {
+        name: "session control auth runtime reuses full-state provider auth context helper",
+        regex: /\bprovider_auth_context_for_worktree_runtime\s*\(\s*state\s*\.\s*as_ref\s*\(\s*\)/gu,
+      },
+    ];
+    for (const check of authRuntimeChecks) {
+      for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+function scanSessionControlAssemblyRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+  const block = rustFunctionBlockForName({ contents, fnName: "session_control" });
+  if (!block) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "session control assembly captures full daemon state",
+      regex: /\bArc::clone\s*\(\s*&self\.state\s*\)/gu,
+    },
+    {
+      name: "session control assembly reuses full-state cancel helper",
+      regex:
+        /\b(?:crate::daemon::sessions::)?command_dispatch::cancel_session\s*\(\s*&state\b/gu,
+    },
+    {
+      name: "session control assembly reuses full-state interrupt helper",
+      regex:
+        /\b(?:crate::daemon::sessions::)?command_dispatch::interrupt_session\s*\(\s*&state\b/gu,
+    },
+    {
+      name: "session control assembly reuses full-state auth helper",
+      regex: /\brun_session_authentication\s*\(\s*&state\b/gu,
+    },
+    {
+      name: "session control assembly reuses full-state ask-user helper",
+      regex: /\bsubmit_ask_user_answer\s*\(\s*&state\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (let match = check.regex.exec(block.text); match; match = check.regex.exec(block.text)) {
+      const offset = block.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
     }
   }
   return violations;
@@ -10453,23 +10583,34 @@ function scanSessionReadModelsHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionControlEffectSurfacePaths.has(filePath)) {
     return [];
   }
   const violations = [];
   const lines = contents.split(/\r?\n/u);
-  for (const typeName of [
-    "SessionControlHandle",
+  const controlTypeNames = [
+    "SessionControlEffectsParts",
     "SessionControlEffects",
+    "SessionControlHandleParts",
+    "SessionControlHandle",
+    "SessionControlCommandHost",
+    "SessionAuthHost",
+    "SessionAuthRuntimeHost",
+    "SessionAuthEventHost",
+    "SessionAskUserHost",
+  ];
+  const fileCompletionTypeNames = [
     "SessionFileCompletionsHandle",
     "SessionFileCompletionsEffects",
-  ]) {
+  ];
+
+  for (const typeName of [...controlTypeNames, ...fileCompletionTypeNames]) {
     const structBlock = rustStructBlockForType({ contents, typeName });
     if (!structBlock) {
       continue;
     }
     const broadFieldRegex =
-      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      /\b(?:SessionsHandle|WorkspacesHandle|ProvidersHandle|DaemonHandle|DaemonState)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu;
     for (
       let broad = broadFieldRegex.exec(structBlock.text);
       broad;
@@ -10486,7 +10627,9 @@ function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
     }
 
     const genericEscapeFieldRegex =
-      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers)\s*:/gmu;
+      controlTypeNames.includes(typeName)
+        ? /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|daemon_state|state|sessions|workspaces|providers|services|runtime|provider_services)\s*:/gmu
+        : /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:daemon|state|sessions|workspaces|providers)\s*:/gmu;
     for (
       let generic = genericEscapeFieldRegex.exec(structBlock.text);
       generic;
@@ -10500,6 +10643,43 @@ function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
         name: "session control capability exposes generic full-state field",
         text: lines[line - 1]?.trim() ?? generic[0],
       });
+    }
+  }
+
+  for (const typeName of controlTypeNames) {
+    for (const impl of rustImplBlocksForType({ contents, typeName })) {
+      const broadMethodRegex =
+        /\bDaemonHandle\b|\bSessionsHandle\b|\bWorkspacesHandle\b|\bProvidersHandle\b|\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu;
+      for (
+        let broad = broadMethodRegex.exec(impl.text);
+        broad;
+        broad = broadMethodRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + broad.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session control capability method uses broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? broad[0],
+        });
+      }
+      const genericEscapeMethodRegex =
+        /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+(?:daemon|daemon_state|state|sessions|workspaces|providers|services|runtime|provider_services)\s*\(/gu;
+      for (
+        let generic = genericEscapeMethodRegex.exec(impl.text);
+        generic;
+        generic = genericEscapeMethodRegex.exec(impl.text)
+      ) {
+        const offset = impl.index + generic.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "session control capability exposes generic full-state method",
+          text: lines[line - 1]?.trim() ?? generic[0],
+        });
+      }
     }
   }
   return violations;
@@ -14727,11 +14907,11 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
-      ...scanSessionControlHandleFieldRatchet({
+      ...scanSessionReadModelsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
-      ...scanSessionReadModelsHandleFieldRatchet({
+      ...scanSessionControlAssemblyRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -14939,6 +15119,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionArtifactsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionControlHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -15793,6 +15977,7 @@ module.exports = {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionControlAssemblyRatchet,
   scanSessionControlDaemonImplementationRatchet,
   scanSessionControlHandleFieldRatchet,
   scanSessionControlHandleRatchet,

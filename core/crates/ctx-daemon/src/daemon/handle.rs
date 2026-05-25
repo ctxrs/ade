@@ -66,6 +66,7 @@ use super::{
     blobs::BlobHandle,
     route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
     scheduler::SessionSchedulerWorkerHost,
+    session_control_effects::{SessionControlHandle, SessionControlHandleParts},
     state::{
         session_store_access_anyhow, DaemonState, ProtectedWorkspaceStoreLookup,
         SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WeakSessionStoreLookup,
@@ -371,76 +372,18 @@ impl DaemonHandle {
     }
 
     pub fn session_control(&self) -> SessionControlHandle {
-        let cancel_session = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |session_id: SessionId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::sessions::command_dispatch::cancel_session(&state, session_id)
-                        .await
-                }) as SessionControlFuture<_>
-            }
-        });
-        let interrupt_session = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |session_id: SessionId, request_started: std::time::Instant| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::sessions::command_dispatch::interrupt_session(
-                        &state,
-                        session_id,
-                        request_started,
-                    )
-                    .await
-                }) as SessionControlFuture<_>
-            }
-        });
-        let authenticate_session = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |session_id: SessionId, method_id: Option<String>| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    let store = state
-                        .existing_session_store_for_write(session_id)
-                        .await
-                        .map_err(session_store_access_auth_error)?;
-                    let session = store
-                        .get_session(session_id)
-                        .await
-                        .map_err(|_| {
-                            crate::daemon::sessions::auth::SessionAuthError::Internal(
-                                "failed to load session".to_string(),
-                            )
-                        })?
-                        .ok_or(crate::daemon::sessions::auth::SessionAuthError::NotFound(
-                            "session",
-                        ))?;
-                    crate::daemon::sessions::auth::run_session_authentication(
-                        &state, &store, &session, method_id,
-                    )
-                    .await
-                }) as SessionControlFuture<_>
-            }
-        });
-        let submit_ask_user_answer = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |session_id: SessionId,
-                  submission: crate::daemon::sessions::ask_user::SubmitAskUserAnswer| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::sessions::ask_user::submit_ask_user_answer(
-                        &state, session_id, submission,
-                    )
-                    .await
-                }) as SessionControlFuture<_>
-            }
-        });
-        SessionControlHandle::new(SessionControlEffects::new(SessionControlEffectsParts {
-            cancel_session,
-            interrupt_session,
-            authenticate_session,
-            submit_ask_user_answer,
-        }))
+        SessionControlHandle::new(SessionControlHandleParts {
+            session_stores: self.session_store_lookup(),
+            session_runtime: Arc::clone(&self.state.sessions),
+            scheduler_spawner: SessionMessageSchedulerSpawner::new(Arc::downgrade(
+                &self.state.session_scheduler_worker_host(),
+            )),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            provider_launch: self.provider_workspace_launch_runtime(),
+            session_publication: self.session_publication_effects(),
+            ask_user_question: Arc::clone(&self.state.core.ask_user_question),
+            provider_unknown_events: self.state.telemetry.provider_unknown_events.clone(),
+        })
     }
 
     pub fn session_file_completions(&self) -> SessionFileCompletionsHandle {
@@ -2481,7 +2424,6 @@ pub(in crate::daemon) type TaskAdmissionFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskLifecycleFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;
-type SessionControlFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type SessionArtifactsFuture<T> =
     Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub(in crate::daemon) type TaskMetadataFuture<T> =
@@ -2502,164 +2444,6 @@ type TaskAdmissionModelCatalogLoader = Arc<
         + Send
         + Sync,
 >;
-
-fn session_store_access_auth_error(
-    error: crate::daemon::SessionStoreAccessError,
-) -> crate::daemon::sessions::auth::SessionAuthError {
-    match error {
-        crate::daemon::SessionStoreAccessError::NotFound => {
-            crate::daemon::sessions::auth::SessionAuthError::NotFound("session")
-        }
-        crate::daemon::SessionStoreAccessError::LookupUnavailable(error) => {
-            crate::daemon::sessions::auth::SessionAuthError::Internal(error.to_string())
-        }
-        crate::daemon::SessionStoreAccessError::StoreUnavailable => {
-            crate::daemon::sessions::auth::SessionAuthError::Internal(
-                "workspace store unavailable".to_string(),
-            )
-        }
-    }
-}
-
-type SessionControlCancelEffect = Arc<
-    dyn Fn(
-            SessionId,
-        ) -> SessionControlFuture<
-            Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError>,
-        > + Send
-        + Sync,
->;
-type SessionControlInterruptEffect = Arc<
-    dyn Fn(
-            SessionId,
-            std::time::Instant,
-        ) -> SessionControlFuture<
-            Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError>,
-        > + Send
-        + Sync,
->;
-type SessionControlAuthEffect = Arc<
-    dyn Fn(
-            SessionId,
-            Option<String>,
-        )
-            -> SessionControlFuture<Result<(), crate::daemon::sessions::auth::SessionAuthError>>
-        + Send
-        + Sync,
->;
-type SessionControlAskUserEffect = Arc<
-    dyn Fn(
-            SessionId,
-            crate::daemon::sessions::ask_user::SubmitAskUserAnswer,
-        ) -> SessionControlFuture<
-            Result<(), crate::daemon::sessions::ask_user::SubmitAskUserAnswerError>,
-        > + Send
-        + Sync,
->;
-
-pub(in crate::daemon) struct SessionControlEffectsParts {
-    cancel_session: SessionControlCancelEffect,
-    interrupt_session: SessionControlInterruptEffect,
-    authenticate_session: SessionControlAuthEffect,
-    submit_ask_user_answer: SessionControlAskUserEffect,
-}
-
-pub(in crate::daemon) struct SessionControlEffects {
-    cancel_session: SessionControlCancelEffect,
-    interrupt_session: SessionControlInterruptEffect,
-    authenticate_session: SessionControlAuthEffect,
-    submit_ask_user_answer: SessionControlAskUserEffect,
-}
-
-impl SessionControlEffects {
-    pub(in crate::daemon) fn new(parts: SessionControlEffectsParts) -> Arc<Self> {
-        Arc::new(Self {
-            cancel_session: parts.cancel_session,
-            interrupt_session: parts.interrupt_session,
-            authenticate_session: parts.authenticate_session,
-            submit_ask_user_answer: parts.submit_ask_user_answer,
-        })
-    }
-
-    pub(in crate::daemon) async fn cancel_session(
-        &self,
-        session_id: SessionId,
-    ) -> Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError> {
-        (self.cancel_session)(session_id).await
-    }
-
-    pub(in crate::daemon) async fn interrupt_session(
-        &self,
-        session_id: SessionId,
-        request_started: std::time::Instant,
-    ) -> Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError> {
-        (self.interrupt_session)(session_id, request_started).await
-    }
-
-    pub(in crate::daemon) async fn authenticate_session(
-        &self,
-        session_id: SessionId,
-        method_id: Option<String>,
-    ) -> Result<(), crate::daemon::sessions::auth::SessionAuthError> {
-        (self.authenticate_session)(session_id, method_id).await
-    }
-
-    pub(in crate::daemon) async fn submit_ask_user_answer(
-        &self,
-        session_id: SessionId,
-        submission: crate::daemon::sessions::ask_user::SubmitAskUserAnswer,
-    ) -> Result<(), crate::daemon::sessions::ask_user::SubmitAskUserAnswerError> {
-        (self.submit_ask_user_answer)(session_id, submission).await
-    }
-}
-
-#[derive(Clone)]
-pub struct SessionControlHandle {
-    effects: Arc<SessionControlEffects>,
-}
-
-impl SessionControlHandle {
-    pub(in crate::daemon) fn new(effects: Arc<SessionControlEffects>) -> Self {
-        Self { effects }
-    }
-
-    pub(in crate::daemon) async fn cancel_session(
-        &self,
-        session_id: SessionId,
-    ) -> Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError> {
-        self.effects.cancel_session(session_id).await
-    }
-
-    pub(in crate::daemon) async fn interrupt_session(
-        &self,
-        session_id: SessionId,
-        request_started: std::time::Instant,
-    ) -> Result<(), crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError> {
-        self.effects
-            .interrupt_session(session_id, request_started)
-            .await
-    }
-
-    pub(in crate::daemon) async fn authenticate_session(
-        &self,
-        session_id: SessionId,
-        method_id: Option<String>,
-    ) -> Result<(), crate::daemon::sessions::auth::SessionAuthError> {
-        self.effects
-            .authenticate_session(session_id, method_id)
-            .await
-    }
-
-    pub(in crate::daemon) async fn submit_ask_user_answer(
-        &self,
-        session_id: SessionId,
-        submission: crate::daemon::sessions::ask_user::SubmitAskUserAnswer,
-    ) -> Result<(), crate::daemon::sessions::ask_user::SubmitAskUserAnswerError> {
-        self.effects
-            .submit_ask_user_answer(session_id, submission)
-            .await
-    }
-}
 
 #[derive(Clone)]
 pub struct SessionFileCompletionsHandle {
@@ -4672,6 +4456,50 @@ impl ProviderWorkspaceLaunchRuntime {
         self.workspace_stores
             .store_for_workspace(workspace_id)
             .await
+    }
+
+    pub(in crate::daemon) async fn resolve_existing_worktree_execution(
+        &self,
+        store: &Store,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<crate::daemon::workspaces::ResolvedExistingWorktreeExecution> {
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
+        let base_effective =
+            ctx_settings_service::effective_execution_settings(self.global_store(), store)
+                .await
+                .context("loading workspace execution settings")?;
+        let data_plane =
+            ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(self, &worktree)
+                .await
+                .context("resolving worktree data plane")?;
+        let effective = ctx_worktree_data_plane::apply_data_plane_to_execution_settings(
+            &base_effective,
+            &data_plane,
+        )
+        .context("applying worktree data plane to execution settings")?;
+        Ok(
+            crate::daemon::workspaces::ResolvedExistingWorktreeExecution {
+                worktree,
+                effective,
+            },
+        )
+    }
+
+    pub(in crate::daemon) async fn effective_install_target_for_environment(
+        &self,
+        workspace_id: WorkspaceId,
+        execution_environment: ExecutionEnvironment,
+    ) -> anyhow::Result<InstallTarget> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        ctx_settings_service::effective_install_target_for_environment(
+            self.global_store(),
+            &store,
+            execution_environment,
+        )
+        .await
     }
 
     pub(in crate::daemon) async fn install_target_for_workspace(

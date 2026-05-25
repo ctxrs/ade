@@ -274,6 +274,7 @@ const {
   scanSessionArtifactsDaemonImplementationRatchet,
   scanSessionArtifactsHandleFieldRatchet,
   scanSessionArtifactsHandleRatchet,
+  scanSessionControlAssemblyRatchet,
   scanSessionControlDaemonImplementationRatchet,
   scanSessionControlHandleFieldRatchet,
   scanSessionControlHandleRatchet,
@@ -2258,6 +2259,40 @@ test("appstate guard rejects session control broad daemon seams", () => {
   ]));
 });
 
+test("appstate guard rejects hidden daemon-state session control assembly seams", () => {
+  const violations = scanSessionControlAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn session_control(&self) -> SessionControlHandle {
+          let hidden = Arc::clone(&self.state);
+          let cancel_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |session_id: SessionId, request_started: std::time::Instant| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                crate::daemon::sessions::command_dispatch::cancel_session(&state, session_id).await?;
+                crate::daemon::sessions::command_dispatch::interrupt_session(&state, session_id, request_started).await?;
+                crate::daemon::sessions::auth::run_session_authentication(&state, &store, &session, None).await?;
+                crate::daemon::sessions::ask_user::submit_ask_user_answer(&state, session_id, submission).await
+              })
+            }
+          });
+          todo!()
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session control assembly captures full daemon state",
+    "session control assembly reuses full-state cancel helper",
+    "session control assembly reuses full-state interrupt helper",
+    "session control assembly reuses full-state auth helper",
+    "session control assembly reuses full-state ask-user helper",
+  ]));
+});
+
 test("appstate guard rejects session control broad handle fields", () => {
   const fieldViolations = scanSessionControlHandleFieldRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
@@ -2283,6 +2318,132 @@ test("appstate guard rejects session control broad handle fields", () => {
     "session control capability stores broad handle or daemon state",
     "session control capability exposes generic full-state field",
   ]);
+});
+
+test("appstate guard rejects session_control_effects mini-app-state escape hatches", () => {
+  const violations = scanSessionControlHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
+    contents: `
+      pub struct SessionControlHandleParts {
+        daemon: DaemonHandle,
+        services: SessionAuthHost,
+        runtime: SessionControlRuntime,
+        provider_services: ProviderServices,
+      }
+      pub struct SessionControlCommandHost {
+        state: Arc<DaemonState>,
+      }
+      pub struct SessionAuthHost {
+        state: Arc<DaemonState>,
+      }
+      pub struct SessionAuthRuntimeHost {
+        state: Arc<DaemonState>,
+      }
+      pub struct SessionAuthEventHost {
+        state: Arc<DaemonState>,
+      }
+      pub struct SessionAskUserHost {
+        state: Arc<DaemonState>,
+      }
+      impl SessionAuthRuntimeHost {
+        fn daemon_state(&self) -> &Arc<DaemonState> {
+          &self.state
+        }
+
+        pub fn services(&self) -> &SessionAuthHost {
+          todo!()
+        }
+      }
+      impl SessionControlHandle {
+        pub fn state(&self, state: SessionsHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session control capability stores broad handle or daemon state",
+    "session control capability exposes generic full-state field",
+    "session control capability method uses broad handle or daemon state",
+    "session control capability exposes generic full-state method",
+  ]));
+});
+
+test("appstate guard rejects auth runtime full-state helper backdoors", () => {
+  const violations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/auth/runtime.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+
+      pub(super) async fn prepare_session_auth_runtime(
+        state: &Arc<DaemonState>,
+      ) {
+        let _ = resolve_existing_worktree_execution(state, store, &workspace, worktree_id).await;
+        let _ = effective_install_target_for_environment(state.as_ref(), workspace_id, execution_environment).await;
+        let _ = ensure_provider_adapter_for_target_with_cfg(state.as_ref(), &cfg, &provider_id, install_target).await;
+        let _ = provider_auth_context_for_worktree_runtime(state.as_ref(), &worktree, &provider_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(new Set(violations), new Set([
+    "session control daemon implementation accepts daemon state",
+    "session control auth runtime reuses full-state worktree execution helper",
+    "session control auth runtime reuses full-state install-target helper",
+    "session control auth runtime reuses full-state provider adapter helper",
+    "session control auth runtime reuses full-state provider auth context helper",
+  ]));
+});
+
+test("appstate guard rejects auth/event/ask-user daemon-state surfaces after migration", () => {
+  const authViolations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/auth.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+
+      pub async fn run_session_authentication(
+        state: &Arc<DaemonState>,
+      ) {
+        let _ = prepare_session_auth_runtime(state, store, session).await;
+        let _ = spawn_session_auth_event_sink(Arc::clone(state), store.clone(), session.id);
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(authViolations), new Set([
+    "session control daemon implementation accepts daemon state",
+    "session control auth implementation reuses full-state runtime prep helper",
+    "session control auth implementation reuses full-state auth event sink",
+  ]));
+
+  const eventViolations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/auth/events.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+
+      pub(super) fn spawn_session_auth_event_sink(state: Arc<DaemonState>) {}
+      pub(super) async fn append_auth_notice(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(eventViolations), new Set([
+    "session control daemon implementation accepts daemon state",
+  ]));
+
+  const askUserViolations = scanSessionControlDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+
+      pub async fn submit_ask_user_answer(
+        state: &Arc<DaemonState>,
+      ) {}
+
+      async fn store_for_ask_user_session(
+        state: &Arc<DaemonState>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(askUserViolations), new Set([
+    "session control daemon implementation accepts daemon state",
+  ]));
 });
 
 test("appstate guard rejects stale session file-completion broad helper", () => {

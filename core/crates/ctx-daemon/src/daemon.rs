@@ -48,6 +48,7 @@ mod route_capabilities;
 mod route_files;
 mod runtime;
 pub mod scheduler;
+mod session_control_effects;
 pub mod sessions;
 pub mod settings;
 mod state;
@@ -83,14 +84,14 @@ pub use handle::{
     ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
     ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
     RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
-    SessionArtifactsHandle, SessionControlHandle, SessionFileCompletionsHandle,
-    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpReadHandle,
-    SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle,
-    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
-    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle,
-    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
-    WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceAttachmentsHandle,
-    WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
+    SessionArtifactsHandle, SessionFileCompletionsHandle, SessionMessageCommandHandle,
+    SessionReadModelsHandle, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
+    SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle, TaskCreationHandle,
+    TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
+    TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TerminalRouteHandle,
+    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WebSessionRouteHandle,
+    WorkspaceActiveHandle, WorkspaceAttachmentsHandle, WorkspaceDeletionHandle,
+    WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
     WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
     WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
@@ -111,6 +112,7 @@ pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal};
 pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
+pub use session_control_effects::SessionControlHandle;
 pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;

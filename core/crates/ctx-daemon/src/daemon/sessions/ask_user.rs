@@ -1,11 +1,8 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
+#[cfg(test)]
 use ctx_core::ids::SessionId;
-use ctx_core::models::SessionEventType;
-use ctx_providers::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome};
-
-use crate::daemon::{DaemonState, StoreLookup};
+use ctx_providers::ask_user_question::AskUserQuestionOutcome;
 
 #[derive(Debug)]
 pub struct SubmitAskUserAnswer {
@@ -23,91 +20,12 @@ pub enum SubmitAskUserAnswerError {
     NoPendingQuestion,
 }
 
-pub async fn submit_ask_user_answer(
-    state: &Arc<DaemonState>,
-    session_id: SessionId,
-    submission: SubmitAskUserAnswer,
-) -> Result<(), SubmitAskUserAnswerError> {
-    let store = store_for_ask_user_session(state, session_id).await?;
-    if store
-        .get_session(session_id)
-        .await
-        .map_err(|_| SubmitAskUserAnswerError::LoadSession)?
-        .is_none()
-    {
-        return Err(SubmitAskUserAnswerError::SessionNotFound);
-    }
-
-    let tool_call_id = submission.tool_call_id.trim().to_string();
-    if tool_call_id.is_empty() {
-        return Err(SubmitAskUserAnswerError::MissingToolCallId);
-    }
-
-    let answers_for_event = submission.answers.clone();
-    let ok = state
-        .core
-        .ask_user_question
-        .submit(
-            &session_id.0.to_string(),
-            &tool_call_id,
-            AskUserQuestionAnswer {
-                outcome: submission.outcome,
-                answers: submission.answers,
-            },
-        )
-        .await;
-
-    if !ok {
-        return Err(SubmitAskUserAnswerError::NoPendingQuestion);
-    }
-
-    if let Ok(event) = store
-        .append_session_event(
-            session_id,
-            None,
-            None,
-            SessionEventType::Notice,
-            serde_json::json!({
-                "kind": "ask_user_question_answered",
-                "tool_call_id": tool_call_id,
-                "outcome": submission.outcome.as_str(),
-                "answers": answers_for_event,
-            }),
-        )
-        .await
-    {
-        state.publish_event(event).await;
-    }
-
-    Ok(())
-}
-
-async fn store_for_ask_user_session(
-    state: &Arc<DaemonState>,
-    session_id: SessionId,
-) -> Result<ctx_store::Store, SubmitAskUserAnswerError> {
-    let store = match state.lookup_session_store(session_id).await {
-        StoreLookup::Found(store) => store,
-        StoreLookup::Missing | StoreLookup::Deleting => {
-            return Err(SubmitAskUserAnswerError::SessionNotFound);
-        }
-        StoreLookup::Unavailable(err) => {
-            return Err(SubmitAskUserAnswerError::StoreUnavailable(err));
-        }
-    };
-    if store
-        .is_archived_subagent_session(session_id)
-        .await
-        .map_err(SubmitAskUserAnswerError::StoreUnavailable)?
-    {
-        return Err(SubmitAskUserAnswerError::SessionNotFound);
-    }
-    Ok(store)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use crate::daemon::{DaemonHandle, DaemonState};
     use ctx_core::models::ExecutionEnvironment;
     use ctx_store::StoreManager;
 
@@ -173,6 +91,57 @@ mod tests {
         session.id
     }
 
+    async fn submit_ask_user_answer_for_test(
+        state: &Arc<DaemonState>,
+        session_id: SessionId,
+        submission: SubmitAskUserAnswer,
+    ) -> Result<(), SubmitAskUserAnswerError> {
+        DaemonHandle::new(Arc::clone(state))
+            .session_control()
+            .submit_ask_user_answer(session_id, submission)
+            .await
+    }
+
+    async fn make_workspace_store_unopenable_for_session(
+        root: &std::path::Path,
+        state: &Arc<DaemonState>,
+        session_id: SessionId,
+    ) {
+        let store = state.store_for_session(session_id).await.unwrap();
+        let session = store.get_session(session_id).await.unwrap().unwrap();
+        state.cleanup_session(session.id).await;
+        state
+            .core
+            .stores
+            .evict_workspace(session.workspace_id)
+            .await;
+
+        let workspace_store_path = root
+            .join("db")
+            .join("workspaces")
+            .join(session.workspace_id.0.to_string());
+        match tokio::fs::metadata(&workspace_store_path).await {
+            Ok(metadata) if metadata.is_dir() => tokio::fs::remove_dir_all(&workspace_store_path)
+                .await
+                .expect("remove workspace store dir"),
+            Ok(_) => tokio::fs::remove_file(&workspace_store_path)
+                .await
+                .expect("remove workspace store file"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("stat workspace store path: {error:#}"),
+        }
+        tokio::fs::create_dir_all(
+            workspace_store_path
+                .parent()
+                .expect("workspace store parent"),
+        )
+        .await
+        .expect("create workspace store parent");
+        tokio::fs::write(&workspace_store_path, b"blocked workspace store")
+            .await
+            .expect("block workspace store");
+    }
+
     #[tokio::test]
     async fn submit_ask_user_answer_fulfills_pending_question_and_records_notice() {
         let root = tempfile::tempdir().unwrap();
@@ -186,7 +155,7 @@ mod tests {
 
         let mut answers = HashMap::new();
         answers.insert("choice".to_string(), "ship".to_string());
-        submit_ask_user_answer(
+        submit_ask_user_answer_for_test(
             &state,
             session_id,
             SubmitAskUserAnswer {
@@ -221,7 +190,7 @@ mod tests {
         let state = test_state(root.path()).await;
         let session_id = create_session(&state, root.path()).await;
 
-        let error = submit_ask_user_answer(
+        let error = submit_ask_user_answer_for_test(
             &state,
             session_id,
             SubmitAskUserAnswer {
@@ -242,7 +211,7 @@ mod tests {
         let state = test_state(root.path()).await;
         let session_id = create_session(&state, root.path()).await;
 
-        let error = submit_ask_user_answer(
+        let error = submit_ask_user_answer_for_test(
             &state,
             session_id,
             SubmitAskUserAnswer {
@@ -262,9 +231,118 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state = test_state(root.path()).await;
 
-        let error = submit_ask_user_answer(
+        let error = submit_ask_user_answer_for_test(
             &state,
             SessionId::new(),
+            SubmitAskUserAnswer {
+                tool_call_id: "tool-1".to_string(),
+                outcome: AskUserQuestionOutcome::Submitted,
+                answers: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, SubmitAskUserAnswerError::SessionNotFound));
+    }
+
+    #[tokio::test]
+    async fn submit_ask_user_answer_rejects_deleting_workspace_as_missing_session() {
+        let root = tempfile::tempdir().unwrap();
+        let state = test_state(root.path()).await;
+        let session_id = create_session(&state, root.path()).await;
+        let store = state.store_for_session(session_id).await.unwrap();
+        let session = store.get_session(session_id).await.unwrap().unwrap();
+        state
+            .core
+            .stores
+            .begin_workspace_delete(session.workspace_id)
+            .await;
+
+        let error = submit_ask_user_answer_for_test(
+            &state,
+            session_id,
+            SubmitAskUserAnswer {
+                tool_call_id: "tool-1".to_string(),
+                outcome: AskUserQuestionOutcome::Submitted,
+                answers: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, SubmitAskUserAnswerError::SessionNotFound));
+        state
+            .core
+            .stores
+            .finish_workspace_delete(session.workspace_id)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn submit_ask_user_answer_rejects_unavailable_workspace_store() {
+        let root = tempfile::tempdir().unwrap();
+        let state = test_state(root.path()).await;
+        let session_id = create_session(&state, root.path()).await;
+        make_workspace_store_unopenable_for_session(root.path(), &state, session_id).await;
+
+        let error = submit_ask_user_answer_for_test(
+            &state,
+            session_id,
+            SubmitAskUserAnswer {
+                tool_call_id: "tool-1".to_string(),
+                outcome: AskUserQuestionOutcome::Submitted,
+                answers: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SubmitAskUserAnswerError::StoreUnavailable(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn submit_ask_user_answer_rejects_archived_subagent_session() {
+        let root = tempfile::tempdir().unwrap();
+        let state = test_state(root.path()).await;
+        let parent_id = create_session(&state, root.path()).await;
+        let store = state.store_for_session(parent_id).await.unwrap();
+        let parent = store.get_session(parent_id).await.unwrap().unwrap();
+        let task = store
+            .create_task(parent.workspace_id, "child-task".to_string(), None)
+            .await
+            .unwrap();
+        let child = store
+            .create_session(
+                task.id,
+                parent.workspace_id,
+                parent.worktree_id,
+                ExecutionEnvironment::Host,
+                "fake".to_string(),
+                "model".to_string(),
+                "implementer".to_string(),
+                Some(parent.id),
+                Some("sub_agent".to_string()),
+                None,
+            )
+            .await
+            .unwrap();
+        state
+            .global_store()
+            .upsert_workspace_session_index(child.id, child.workspace_id)
+            .await
+            .unwrap();
+        assert!(store
+            .archive_subagent_session(parent.id, child.id)
+            .await
+            .unwrap());
+
+        let error = submit_ask_user_answer_for_test(
+            &state,
+            child.id,
             SubmitAskUserAnswer {
                 tool_call_id: "tool-1".to_string(),
                 outcome: AskUserQuestionOutcome::Submitted,

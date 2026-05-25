@@ -1,17 +1,15 @@
-use std::sync::Arc;
-
 use ctx_core::ids::SessionId;
 use ctx_core::models::SessionEventType;
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::order_seq::attach_order_seq;
 use tokio::sync::mpsc;
 
-use crate::daemon::DaemonState;
+use crate::daemon::session_control_effects::SessionAuthEventHost;
 
 use super::SessionAuthError;
 
-pub(super) fn spawn_session_auth_event_sink(
-    state: Arc<DaemonState>,
+pub(in crate::daemon) fn spawn_session_auth_event_sink(
+    host: SessionAuthEventHost,
     store: ctx_store::Store,
     session_id: SessionId,
 ) -> mpsc::Sender<NormalizedEvent> {
@@ -22,13 +20,12 @@ pub(super) fn spawn_session_auth_event_sink(
             let mut payload = event.payload_json.clone();
             if matches!(event.event_type, SessionEventType::Init) {
                 if payload.get("crp_session_id").is_some() {
-                    state
-                        .emit_compat_payload_reject_counter(
-                            "sessions.auth_event_init",
-                            "crp_session_id",
-                            None,
-                        )
-                        .await;
+                    host.emit_compat_payload_reject_counter(
+                        "sessions.auth_event_init",
+                        "crp_session_id",
+                        None,
+                    )
+                    .await;
                 }
                 if let Some(provider_session_id) = payload
                     .get("provider_session_id")
@@ -55,7 +52,7 @@ pub(super) fn spawn_session_auth_event_sink(
                 }
             }
             if payload.is_object() && should_attach_order_seq(&event) {
-                let order_seq_state = state.session_order_seq_state(&store, session_id).await;
+                let order_seq_state = host.session_order_seq_state(&store, session_id).await;
                 let mut order_seq_state = order_seq_state.lock().await;
                 attach_order_seq(
                     &mut order_seq_state,
@@ -69,7 +66,7 @@ pub(super) fn spawn_session_auth_event_sink(
                 .append_session_event(session_id, None, None, event_type, payload)
                 .await
             {
-                state.publish_event(appended_event).await;
+                host.publish_event(appended_event).await;
             }
         }
     });
@@ -95,8 +92,8 @@ fn should_attach_order_seq(event: &NormalizedEvent) -> bool {
             .is_some_and(|kind| kind == "reasoning_summary" || kind == "ask_user_question"))
 }
 
-pub(super) async fn append_auth_notice(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn append_auth_notice(
+    host: &SessionAuthEventHost,
     store: &ctx_store::Store,
     session_id: SessionId,
     payload: serde_json::Value,
@@ -105,6 +102,6 @@ pub(super) async fn append_auth_notice(
         .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
         .await
         .map_err(|_| SessionAuthError::Internal("failed to append auth event".to_string()))?;
-    state.publish_event(event).await;
+    host.publish_event(event).await;
     Ok(())
 }

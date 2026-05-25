@@ -50,6 +50,19 @@ impl ProtectedWorkspaceStoreLookup {
         &self,
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<Store> {
+        match self.lookup_workspace_store(workspace_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace {} not found", workspace_id.0)
+            }
+            StoreLookup::Unavailable(err) => Err(err),
+        }
+    }
+
+    pub(in crate::daemon) async fn lookup_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> StoreLookup {
         match self.stores.workspace_access_outcome(workspace_id).await {
             Ok(WorkspaceStoreAccessOutcome::Access(access)) => {
                 if access.kind.triggers_open_side_effects() {
@@ -57,12 +70,11 @@ impl ProtectedWorkspaceStoreLookup {
                     protected.insert(workspace_id);
                     self.stores.evict_workspaces_to_cap(&protected).await;
                 }
-                Ok(access.store)
+                StoreLookup::Found(access.store)
             }
-            Ok(WorkspaceStoreAccessOutcome::Missing | WorkspaceStoreAccessOutcome::Deleting) => {
-                anyhow::bail!("workspace {} not found", workspace_id.0)
-            }
-            Err(err) => Err(err),
+            Ok(WorkspaceStoreAccessOutcome::Missing) => StoreLookup::Missing,
+            Ok(WorkspaceStoreAccessOutcome::Deleting) => StoreLookup::Deleting,
+            Err(err) => StoreLookup::Unavailable(err),
         }
     }
 
@@ -136,19 +148,12 @@ impl ProtectedWorkspaceStoreLookup {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Store, WorkspaceStoreAccessError> {
-        match self.stores.workspace_access_outcome(workspace_id).await {
-            Ok(WorkspaceStoreAccessOutcome::Access(access)) => {
-                if access.kind.triggers_open_side_effects() {
-                    let mut protected = self.protected_workspace_store_ids().await;
-                    protected.insert(workspace_id);
-                    self.stores.evict_workspaces_to_cap(&protected).await;
-                }
-                Ok(access.store)
-            }
-            Ok(WorkspaceStoreAccessOutcome::Missing | WorkspaceStoreAccessOutcome::Deleting) => {
+        match self.lookup_workspace_store(workspace_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
                 Err(WorkspaceStoreAccessError::NotFound)
             }
-            Err(err) => Err(WorkspaceStoreAccessError::Unavailable(err)),
+            StoreLookup::Unavailable(err) => Err(WorkspaceStoreAccessError::Unavailable(err)),
         }
     }
 }
@@ -229,6 +234,32 @@ impl SessionStoreLookup {
             .get_workspace_id_for_session(session_id)
             .await
             .map_err(SessionStoreAccessError::LookupUnavailable)
+    }
+
+    pub(in crate::daemon) async fn lookup_session_store(
+        &self,
+        session_id: SessionId,
+    ) -> StoreLookup {
+        let workspace_id = match self.workspace_id_for_session(session_id).await {
+            Ok(Some(workspace_id)) => workspace_id,
+            Ok(None) => return StoreLookup::Missing,
+            Err(SessionStoreAccessError::LookupUnavailable(error)) => {
+                return StoreLookup::Unavailable(error);
+            }
+            Err(SessionStoreAccessError::NotFound) => return StoreLookup::Missing,
+            Err(SessionStoreAccessError::StoreUnavailable) => {
+                return StoreLookup::Unavailable(anyhow::anyhow!("workspace store unavailable"));
+            }
+        };
+        match self
+            .workspace_stores
+            .lookup_workspace_store(workspace_id)
+            .await
+        {
+            StoreLookup::Found(store) => StoreLookup::Found(store),
+            StoreLookup::Missing | StoreLookup::Deleting => StoreLookup::Deleting,
+            StoreLookup::Unavailable(error) => StoreLookup::Unavailable(error),
+        }
     }
 
     pub(in crate::daemon) async fn existing_session_store_allow_archived(
