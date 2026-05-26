@@ -316,6 +316,9 @@
     "sdlc:verify-metrics:report": "node scripts/sdlc_verify_metrics_report.cjs",
     "sdlc:verify-metrics:report:json": "node scripts/sdlc_verify_metrics_report.cjs --json",
     "release:proof:status": "node scripts/release_power_sdlc_status.cjs",
+    "sdlc:status": "node scripts/sdlc_status.cjs",
+    "sdlc:ledger:parity": "node scripts/sdlc_ledger_parity.cjs",
+    "sdlc:branch-protection": "node scripts/verify_branch_protection.cjs",
     "rust:package-scripts:sync": "node scripts/sync_rust_package_scripts.cjs",
     "rust:package-scripts:check": "node scripts/sync_rust_package_scripts.cjs --check",
     "rust:crate:clippy:codex-crp": "node scripts/rust_crate_task.cjs --crate codex-crp --task clippy",
@@ -568,10 +571,7 @@
     "rust:ctx-http:test:sandbox-runtime-container-e2e": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-container-e2e",
     "rust:ctx-http:test:sandbox-runtime-resource-governance": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-resource-governance",
     "rust:ctx-http:test:sandbox-runtime-memory-leak": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-memory-leak",
-    "rust:ctx-http:test:all": "node scripts/ctx_http_suite_task.cjs --suite all",
-    "sdlc:status": "node scripts/sdlc_status.cjs",
-    "sdlc:ledger:parity": "node scripts/sdlc_ledger_parity.cjs",
-    "sdlc:branch-protection": "node scripts/verify_branch_protection.cjs"
+    "rust:ctx-http:test:all": "node scripts/ctx_http_suite_task.cjs --suite all"
   },
   "devDependencies": {
     "@bazel/bazelisk": "1.28.1",

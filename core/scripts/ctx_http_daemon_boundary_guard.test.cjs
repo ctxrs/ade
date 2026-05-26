@@ -2923,6 +2923,82 @@ test("appstate guard scans moved session route handle definitions", () => {
   assert(violations.includes("session VCS capability stores broad handle or daemon state"));
 });
 
+test("appstate guard scans moved workspace stream route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs";
+  const contents = `
+    pub struct WorkspaceActiveHandle {
+      state: Arc<DaemonState>,
+    }
+
+    pub(in crate::daemon) struct WorkspaceActiveHandleParts {
+      daemon: DaemonHandle,
+    }
+
+    pub(in crate::daemon) struct WorkspaceActiveEffectsParts {
+      with_state: Arc<dyn Fn() -> WorkspaceActiveFuture<()>>,
+    }
+
+    pub(in crate::daemon) struct WorkspaceActiveEffects {
+      workspaces: WorkspacesHandle,
+    }
+
+    pub struct WorkspaceStreamHandle {
+      sessions: SessionsHandle,
+    }
+
+    pub(in crate::daemon) struct WorkspaceStreamHandleParts {
+      state: Arc<DaemonState>,
+    }
+
+    pub(in crate::daemon) struct WorkspaceStreamEffectsParts {
+      with_daemon: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+    }
+
+    pub(in crate::daemon) struct WorkspaceStreamEffects {
+      daemon: DaemonHandle,
+    }
+
+    pub struct WorkspaceVcsStreamHandle {
+      daemon: DaemonHandle,
+    }
+
+    pub(in crate::daemon) struct WorkspaceVcsStreamHandleParts {
+      workspace_runtime: WorkspaceRuntime,
+    }
+
+    pub struct WorkspaceVcsStreamRuntime {
+      state: DaemonState,
+    }
+
+    pub(in crate::daemon) struct WorkspaceVcsStreamRuntimeParts {
+      workspace_runtime: WorkspaceRuntime,
+    }
+  `;
+
+  const violations = [
+    ...scanWorkspaceActiveHandleFieldRatchet({ filePath, contents }),
+    ...scanWorkspaceStreamHandleFieldRatchet({ filePath, contents }),
+    ...scanWorkspaceVcsStreamHandleFieldRatchet({ filePath, contents }),
+  ].map((violation) => violation.name);
+
+  assert(violations.includes("workspace active capability stores broad handle or daemon state"));
+  assert(violations.includes("workspace active effects stores broad handle or daemon state"));
+  assert(
+    violations.includes(
+      "workspace active effects exposes generic full-state escape hatch",
+    ),
+  );
+  assert(violations.includes("workspace stream capability stores broad handle or daemon state"));
+  assert(violations.includes("workspace stream effects stores broad handle or daemon state"));
+  assert(
+    violations.includes(
+      "workspace stream effects exposes generic full-state escape hatch",
+    ),
+  );
+  assert(violations.includes("workspace VCS stream capability stores broad handle or daemon state"));
+  assert(violations.includes("workspace VCS stream runtime stores broad handle or daemon state"));
+});
+
 test("appstate guard rejects session artifacts broad route handles", () => {
   const handlerViolations = scanSessionArtifactsHandleRatchet({
     filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",

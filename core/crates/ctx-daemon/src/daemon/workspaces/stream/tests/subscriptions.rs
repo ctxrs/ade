@@ -1926,9 +1926,11 @@ async fn workspace_vcs_refresh_suppresses_fresh_snapshots_and_invokes_effect_for
             Box::pin(async move {
                 calls.lock().await.push((worktree.id, summary, details));
                 Ok(())
-            }) as crate::daemon::handle::WorkspaceVcsStreamRefreshFuture
+            })
+                as crate::daemon::workspace_stream_route_handles::WorkspaceVcsStreamRefreshFuture
         }
-    }) as crate::daemon::handle::WorkspaceVcsStreamRefreshEffect;
+    })
+        as crate::daemon::workspace_stream_route_handles::WorkspaceVcsStreamRefreshEffect;
     let handle = DaemonHandle::new(Arc::clone(&state))
         .workspace_vcs_stream_with_refresh_effect(refresh_effect);
 

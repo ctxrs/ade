@@ -32,6 +32,14 @@ const daemonSessionRouteHandlesPath = path.join(
   "daemon",
   "session_route_handles.rs",
 );
+const daemonWorkspaceStreamRouteHandlesPath = path.join(
+  coreRoot,
+  "crates",
+  "ctx-daemon",
+  "src",
+  "daemon",
+  "workspace_stream_route_handles.rs",
+);
 const daemonRouteHandlesScanRoots = [
   "core/crates/ctx-http/src/",
   "core/crates/ctx-http/tests/",
@@ -622,6 +630,10 @@ const taskRouteHandleFieldRatchetPaths = new Set([
 const sessionRouteHandleFieldRatchetPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/session_route_handles.rs",
+]);
+const workspaceStreamRouteHandleFieldRatchetPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs",
 ]);
 
 const runArchiveApiRoots = [
@@ -10513,10 +10525,15 @@ function isWorkspaceVcsHttpModulePath(filePath) {
 }
 
 function workspaceVcsStreamCapabilityPresent() {
-  if (!fs.existsSync(daemonHandlePath)) {
-    return false;
+  for (const definitionPath of [daemonHandlePath, daemonWorkspaceStreamRouteHandlesPath]) {
+    if (
+      fs.existsSync(definitionPath) &&
+      /\bWorkspaceVcsStreamHandle\b/u.test(fs.readFileSync(definitionPath, "utf8"))
+    ) {
+      return true;
+    }
   }
-  return /\bWorkspaceVcsStreamHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+  return false;
 }
 
 function mergeQueueApiCapabilityPresent() {
@@ -13123,7 +13140,7 @@ function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
 }
 
 function scanWorkspaceStreamHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!workspaceStreamRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
 
@@ -13409,7 +13426,7 @@ function scanWorkspaceActiveDaemonImplementationRatchet({ filePath, contents }) 
 }
 
 function scanWorkspaceActiveHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!workspaceStreamRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
 
@@ -17085,6 +17102,24 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionVcsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+  if (fs.existsSync(daemonWorkspaceStreamRouteHandlesPath)) {
+    const relativePath = repoRelative(daemonWorkspaceStreamRouteHandlesPath);
+    const contents = fs.readFileSync(daemonWorkspaceStreamRouteHandlesPath, "utf8");
+    violations.push(
+      ...scanWorkspaceStreamHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceActiveHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceVcsStreamHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),

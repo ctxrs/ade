@@ -68,6 +68,7 @@ pub mod web_sessions;
 mod workspace_route_handles;
 #[cfg(test)]
 mod workspace_runtime;
+mod workspace_stream_route_handles;
 pub mod workspaces;
 
 #[cfg(test)]
@@ -87,7 +88,7 @@ pub use handle::{
     DaemonHandle, DaemonShutdownHandle, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle,
     MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ResourceUtilizationHandle,
     RunArchiveHandle, SettingsHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
-    WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
+    WebSessionRouteHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
@@ -141,6 +142,9 @@ pub use workspace_route_handles::{
     WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
     WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
     WorkspaceRegistryHandle, WorkspaceWorktreeHandle,
+};
+pub use workspace_stream_route_handles::{
+    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
 };
 pub use workspaces::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 

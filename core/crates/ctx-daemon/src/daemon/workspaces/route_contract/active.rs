@@ -6,7 +6,7 @@ use ctx_route_contracts::workspaces::{
 
 use super::super::{WorkspaceHydrationError, WorkspaceRouteError};
 use super::common::workspace_hydration_route_error;
-use crate::daemon::handle::WorkspaceActiveHandle;
+use crate::daemon::WorkspaceActiveHandle;
 
 impl WorkspaceActiveHandle {
     pub async fn workspace_active_snapshot_for_route(
