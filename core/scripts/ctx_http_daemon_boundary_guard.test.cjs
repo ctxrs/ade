@@ -158,6 +158,7 @@ const {
   mergeQueueIsolationStorePatternsForPath,
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
+  workspaceDeletionCapabilityPresent,
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
@@ -222,6 +223,7 @@ const {
   scanRepoOnboardingHandleDefinitionFiles,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,
+  scanWorkspaceRouteHandleDefinitionFiles,
   scanResourceUtilizationDaemonImplementationRatchet,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
@@ -5079,6 +5081,67 @@ test("appstate guard scans moved repo onboarding handle definitions in live path
       [
         "core/crates/ctx-daemon/src/daemon/route_handles.rs",
         "repo onboarding capability exposes generic full-state escape hatch",
+      ],
+    ],
+  );
+});
+
+test("appstate guard detects workspace deletion capability in moved workspace route handle file", () => {
+  assert.equal(
+    workspaceDeletionCapabilityPresent({
+      readFileForRelativePath(relativePath) {
+        if (
+          relativePath !==
+          "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs"
+        ) {
+          return null;
+        }
+        return "pub struct WorkspaceDeletionHandle {}";
+      },
+    }),
+    true,
+  );
+});
+
+test("appstate guard scans moved workspace route handle definitions in live path", () => {
+  const violations = scanWorkspaceRouteHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (
+        relativePath !==
+        "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs"
+      ) {
+        return null;
+      }
+      return `
+        pub struct WorkspaceDeletionHandle {
+          daemon: DaemonHandle,
+        }
+
+        pub struct WorkspaceRegistryHandle {
+          state: Arc<DaemonState>,
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name]),
+    [
+      [
+        "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
+        "workspace registry capability stores broad handle or daemon state",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
+        "workspace registry capability exposes generic full-state escape hatch",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
+        "workspace deletion capability stores broad handle or daemon state",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
+        "workspace deletion capability exposes generic full-state escape hatch",
       ],
     ],
   );

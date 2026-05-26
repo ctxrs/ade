@@ -62,6 +62,7 @@ mod test_support_access;
 pub mod tool_cgroup;
 pub mod updates;
 pub mod web_sessions;
+mod workspace_route_handles;
 #[cfg(test)]
 mod workspace_runtime;
 pub mod workspaces;
@@ -91,12 +92,7 @@ pub use handle::{
     SessionVcsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
     TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
     TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle,
-    WorkspaceActiveHandle, WorkspaceAttachmentsHandle, WorkspaceDeletionHandle,
-    WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
-    WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
-    WorkspacePrimaryBranchHandle, WorkspacePromptBootstrapConfigHandle,
-    WorkspaceProviderModelPreferenceHandle, WorkspaceRegistryHandle, WorkspaceStreamHandle,
-    WorkspaceVcsStreamHandle, WorkspaceWorktreeHandle,
+    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
@@ -129,6 +125,13 @@ pub(in crate::daemon) use state::{
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     CacheSweepConfig, SessionStoreAccessError, StoreLookup, TimedEntry, WorkspaceStoreAccessError,
+};
+pub use workspace_route_handles::{
+    WorkspaceAttachmentsHandle, WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle,
+    WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle,
+    WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle, WorkspacePrimaryBranchHandle,
+    WorkspacePromptBootstrapConfigHandle, WorkspaceProviderModelPreferenceHandle,
+    WorkspaceRegistryHandle, WorkspaceWorktreeHandle,
 };
 pub use workspaces::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 

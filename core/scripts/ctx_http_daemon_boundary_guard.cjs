@@ -10527,11 +10527,22 @@ function mergeQueueApiCapabilityPresent() {
   return /\bMergeQueueApiHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
 }
 
-function workspaceDeletionCapabilityPresent() {
-  if (!fs.existsSync(daemonHandlePath)) {
-    return false;
+function workspaceDeletionCapabilityPresent({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  for (const relativePath of workspaceRouteHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents && /\bWorkspaceDeletionHandle\b/u.test(contents)) {
+      return true;
+    }
   }
-  return /\bWorkspaceDeletionHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+  return false;
 }
 
 function workspaceDeletionRouteExtractorPresent() {
@@ -13573,6 +13584,15 @@ const repoOnboardingHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_handles.rs",
 ]);
 
+const workspaceRouteHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
+]);
+
+function isWorkspaceRouteHandleDefinitionPath(filePath) {
+  return workspaceRouteHandleDefinitionPaths.has(filePath);
+}
+
 function scanRepoOnboardingHandleFieldRatchet({ filePath, contents }) {
   if (!repoOnboardingHandleDefinitionPaths.has(filePath)) {
     return [];
@@ -13650,6 +13670,52 @@ function scanRepoOnboardingHandleDefinitionFiles({
       }),
     );
   }
+  return violations;
+}
+
+function scanWorkspaceRouteHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+  workspaceDeletionCapability = workspaceDeletionCapabilityPresent({
+    readFileForRelativePath,
+  }),
+} = {}) {
+  const violations = [];
+  const scans = [
+    scanWorkspaceOrgPolicyHandleFieldRatchet,
+    scanWorkspacePromptBootstrapConfigHandleFieldRatchet,
+    scanWorkspaceExecutionConfigHandleFieldRatchet,
+    scanWorkspaceFileCompletionsHandleFieldRatchet,
+    scanWorkspaceHarnessContainerHandleFieldRatchet,
+    scanWorkspaceWorktreeHandleFieldRatchet,
+    scanWorkspaceRegistryHandleFieldRatchet,
+    ({ filePath, contents }) =>
+      scanWorkspaceDeletionHandleFieldRatchet({
+        filePath,
+        contents,
+        workspaceDeletionCapability,
+      }),
+    scanWorkspaceMergeQueueConfigHandleFieldRatchet,
+    scanWorkspaceAttachmentsHandleFieldRatchet,
+    scanWorkspacePrimaryBranchHandleFieldRatchet,
+    scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
+  ];
+
+  for (const relativePath of workspaceRouteHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    for (const scan of scans) {
+      violations.push(...scan({ filePath: relativePath, contents }));
+    }
+  }
+
   return violations;
 }
 
@@ -13900,7 +13966,7 @@ function scanWorkspaceOrgPolicyDaemonImplementationRatchet({ filePath, contents 
 }
 
 function scanWorkspaceOrgPolicyHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14058,7 +14124,7 @@ function scanWorkspacePromptBootstrapConfigDaemonImplementationRatchet({
 }
 
 function scanWorkspacePromptBootstrapConfigHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14223,7 +14289,7 @@ function scanWorkspaceExecutionConfigDaemonImplementationRatchet({ filePath, con
 }
 
 function scanWorkspaceExecutionConfigHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14378,7 +14444,7 @@ function scanWorkspaceFileCompletionsDaemonImplementationRatchet({ filePath, con
 }
 
 function scanWorkspaceFileCompletionsHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14534,7 +14600,7 @@ function scanWorkspaceHarnessContainerDaemonImplementationRatchet({ filePath, co
 }
 
 function scanWorkspaceHarnessContainerHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14705,7 +14771,7 @@ function scanWorkspaceWorktreeDaemonImplementationRatchet({ filePath, contents }
 }
 
 function scanWorkspaceWorktreeHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -14910,7 +14976,7 @@ function scanWorkspaceRegistryDaemonImplementationRatchet({ filePath, contents }
 }
 
 function scanWorkspaceRegistryHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -15263,7 +15329,7 @@ function scanWorkspaceDeletionHandleFieldRatchet({
     }
   };
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (isWorkspaceRouteHandleDefinitionPath(filePath)) {
     scanStruct("WorkspaceDeletionHandle", "workspace deletion capability");
   }
   if (pathMatchesAnyRoot(filePath, workspaceDeletionDaemonImplementationRoots)) {
@@ -15432,7 +15498,7 @@ function scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
 }
 
 function scanWorkspaceMergeQueueConfigHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -15655,7 +15721,7 @@ function scanWorkspaceAttachmentsHandleFieldRatchet({ filePath, contents }) {
     }
   };
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (isWorkspaceRouteHandleDefinitionPath(filePath)) {
     scanStruct("WorkspaceAttachmentsHandle", "workspace attachments capability");
   }
   if (
@@ -15878,7 +15944,7 @@ function scanWorkspacePrimaryBranchDaemonImplementationRatchet({ filePath, conte
 }
 
 function scanWorkspacePrimaryBranchHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -16037,7 +16103,7 @@ function scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet({
 }
 
 function scanWorkspaceProviderModelPreferenceHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isWorkspaceRouteHandleDefinitionPath(filePath)) {
     return [];
   }
 
@@ -16580,62 +16646,18 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
-      ...scanWorkspaceOrgPolicyHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspacePromptBootstrapConfigHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceExecutionConfigHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceFileCompletionsHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceHarnessContainerHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceWorktreeHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceRegistryHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceDeletionHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
-      }),
       ...scanWorkspaceCompositionStateCutRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceMergeQueueConfigHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceAttachmentsHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspacePrimaryBranchHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
-      ...scanWorkspaceProviderModelPreferenceHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
     );
   }
   violations.push(...scanRepoOnboardingHandleDefinitionFiles());
+  violations.push(
+    ...scanWorkspaceRouteHandleDefinitionFiles({
+      workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+    }),
+  );
 
   const daemonFiles = [];
   if (fs.existsSync(daemonRootPath)) {
@@ -16865,11 +16887,13 @@ function scanRepo() {
         workspaceDeletionCapability: hasWorkspaceDeletionCapability,
         workspaceDeletionRouteMigrated: hasWorkspaceDeletionRouteMigrated,
       }),
-      ...scanWorkspaceDeletionHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-        workspaceDeletionCapability: hasWorkspaceDeletionCapability,
-      }),
+      ...(isWorkspaceRouteHandleDefinitionPath(relativePath)
+        ? []
+        : scanWorkspaceDeletionHandleFieldRatchet({
+            filePath: relativePath,
+            contents,
+            workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+          })),
       ...scanWorkspaceMergeQueueConfigDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -16888,10 +16912,12 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
-      ...scanWorkspaceAttachmentsHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
+      ...(isWorkspaceRouteHandleDefinitionPath(relativePath)
+        ? []
+        : scanWorkspaceAttachmentsHandleFieldRatchet({
+            filePath: relativePath,
+            contents,
+          })),
       ...scanWorkspacePrimaryBranchDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -17466,6 +17492,7 @@ module.exports = {
   globalIdRoutingStorePatternsForPath,
   harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,
+  isWorkspaceRouteHandleDefinitionPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
   liveProviderCanaryStorePatternsForPath,
@@ -17547,6 +17574,7 @@ module.exports = {
   scanRepoOnboardingHandleDefinitionFiles,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,
+  scanWorkspaceRouteHandleDefinitionFiles,
   scanResourceUtilizationDaemonImplementationRatchet,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
