@@ -571,7 +571,8 @@
     "rust:ctx-http:test:sandbox-runtime-container-e2e": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-container-e2e",
     "rust:ctx-http:test:sandbox-runtime-resource-governance": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-resource-governance",
     "rust:ctx-http:test:sandbox-runtime-memory-leak": "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-memory-leak",
-    "rust:ctx-http:test:all": "node scripts/ctx_http_suite_task.cjs --suite all"
+    "rust:ctx-http:test:all": "node scripts/ctx_http_suite_task.cjs --suite all",
+    "sdlc:ledger:append": "node scripts/release_evidence_ledger_append.cjs"
   },
   "devDependencies": {
     "@bazel/bazelisk": "1.28.1",
