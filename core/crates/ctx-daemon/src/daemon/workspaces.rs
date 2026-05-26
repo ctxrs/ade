@@ -40,6 +40,7 @@ pub use harness_container::{
     ensure_workspace_harness_container, stop_workspace_harness_container,
     workspace_harness_container_status, WorkspaceHarnessContainerError,
 };
+pub(in crate::daemon) use hydration::WorkspaceActiveHydrationRuntime;
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 pub use model_preferences::{
     WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
@@ -48,6 +49,7 @@ pub use retry::retry_global_index_write;
 pub(in crate::daemon::workspaces) use route_config::workspace_store_route_error;
 pub(in crate::daemon::workspaces) use route_config::WorkspaceRouteError;
 pub use run_archive::RunArchiveIngestError;
+pub(in crate::daemon) use runtime::WorkspaceActiveCacheRuntime;
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub(in crate::daemon) use task_worktree_host::{TaskWorktreeHost, TaskWorktreeHostParts};

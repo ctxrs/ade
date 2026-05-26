@@ -77,7 +77,10 @@ use super::{
         WebSessionLaunchError, WebSessionLaunchHost, WebSessionLaunchRequest,
         WebSessionWorkerRuntimeHost,
     },
-    workspaces::{TaskWorktreeHost, TaskWorktreeHostParts, WorkspaceDeletionRuntimeDeps},
+    workspaces::{
+        TaskWorktreeHost, TaskWorktreeHostParts, WorkspaceActiveCacheRuntime,
+        WorkspaceActiveHydrationRuntime, WorkspaceDeletionRuntimeDeps,
+    },
 };
 
 #[derive(Clone)]
@@ -202,6 +205,10 @@ impl DaemonHandle {
     }
 
     pub fn merge_queue_api(&self) -> MergeQueueApiHandle {
+        MergeQueueApiHandle::new(self.merge_queue_route_host())
+    }
+
+    fn merge_queue_route_host(&self) -> Arc<crate::daemon::merge_queue::MergeQueueRouteHost> {
         let workspace_stores = self.protected_workspace_store_lookup();
         let session_stores =
             SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
@@ -212,16 +219,14 @@ impl DaemonHandle {
                 Box::pin(async move { publisher.publish_merge_queue_notice(notice_event).await })
                     as MergeQueueNoticePublicationFuture
             });
-        MergeQueueApiHandle::new(Arc::new(
-            crate::daemon::merge_queue::MergeQueueRouteHost::new(
-                self.state.core.stores.clone(),
-                self.state.global_store().clone(),
-                workspace_stores,
-                session_stores,
-                Arc::clone(&self.state.transport.merge_queue),
-                self.state.telemetry.ops_events.clone(),
-                publish_merge_queue_notice,
-            ),
+        Arc::new(crate::daemon::merge_queue::MergeQueueRouteHost::new(
+            self.state.core.stores.clone(),
+            self.state.global_store().clone(),
+            workspace_stores,
+            session_stores,
+            Arc::clone(&self.state.transport.merge_queue),
+            self.state.telemetry.ops_events.clone(),
+            publish_merge_queue_notice,
         ))
     }
 
@@ -1028,45 +1033,52 @@ impl DaemonHandle {
     }
 
     pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+        let hydration = WorkspaceActiveHydrationRuntime::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+        );
+        let cache = WorkspaceActiveCacheRuntime::new(
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot_cache),
+            Arc::clone(&self.state.workspaces.workspace_active_heads_cache),
+        );
+        let merge_queue = self.merge_queue_route_host();
         let ensure_workspace_active_snapshot_hydrated = Arc::new({
-            let state = Arc::clone(&self.state);
+            let hydration = hydration.clone();
             move |workspace_id: WorkspaceId| {
-                let state = Arc::clone(&state);
+                let hydration = hydration.clone();
                 Box::pin(async move {
-                    state
+                    hydration
                         .ensure_workspace_active_snapshot_hydrated(workspace_id)
                         .await
                 }) as WorkspaceActiveFuture<_>
             }
         });
         let activate_workspace_merge_queue = Arc::new({
-            let state = Arc::clone(&self.state);
+            let merge_queue = Arc::clone(&merge_queue);
             move |workspace_id: WorkspaceId| {
-                let state = Arc::clone(&state);
+                let merge_queue = Arc::clone(&merge_queue);
                 Box::pin(async move {
-                    crate::daemon::merge_queue::activate_workspace_merge_queue(
-                        &state,
-                        workspace_id,
-                    )
-                    .await;
+                    ctx_merge_queue::activate_workspace_merge_queue(&merge_queue, workspace_id)
+                        .await;
                 }) as WorkspaceActiveFuture<_>
             }
         });
         let cache_workspace_active_snapshot = Arc::new({
-            let state = Arc::clone(&self.state);
+            let cache = cache.clone();
             move |snapshot: WorkspaceActiveSnapshot| {
-                let state = Arc::clone(&state);
+                let cache = cache.clone();
                 Box::pin(async move {
-                    state.cache_workspace_active_snapshot(snapshot).await;
+                    cache.cache_workspace_active_snapshot(snapshot).await;
                 }) as WorkspaceActiveFuture<_>
             }
         });
         let cache_workspace_active_heads = Arc::new({
-            let state = Arc::clone(&self.state);
+            let cache = cache.clone();
             move |heads: WorkspaceActiveHeadBatch| {
-                let state = Arc::clone(&state);
+                let cache = cache.clone();
                 Box::pin(async move {
-                    state.cache_workspace_active_heads(heads).await;
+                    cache.cache_workspace_active_heads(heads).await;
                 }) as WorkspaceActiveFuture<_>
             }
         });
@@ -1089,32 +1101,35 @@ impl DaemonHandle {
         );
         let session_stores =
             SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
+        let hydration = WorkspaceActiveHydrationRuntime::new(
+            self.state.global_store().clone(),
+            workspace_stores.clone(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+        );
+        let merge_queue = self.merge_queue_route_host();
         let lifecycle_host = Arc::new(WorkspaceStreamSessionLifecycleHost::new(
             self.state.global_store().clone(),
             Arc::clone(&self.state.workspaces.workspace_active_snapshot),
             Arc::clone(&self.state.providers),
         ));
         let ensure_workspace_active_snapshot_hydrated = Arc::new({
-            let state = Arc::clone(&self.state);
+            let hydration = hydration.clone();
             move |workspace_id: WorkspaceId| {
-                let state = Arc::clone(&state);
+                let hydration = hydration.clone();
                 Box::pin(async move {
-                    state
+                    hydration
                         .ensure_workspace_active_snapshot_hydrated(workspace_id)
                         .await
                 }) as WorkspaceStreamFuture<_>
             }
         });
         let activate_workspace_merge_queue = Arc::new({
-            let state = Arc::clone(&self.state);
+            let merge_queue = Arc::clone(&merge_queue);
             move |workspace_id: WorkspaceId| {
-                let state = Arc::clone(&state);
+                let merge_queue = Arc::clone(&merge_queue);
                 Box::pin(async move {
-                    crate::daemon::merge_queue::activate_workspace_merge_queue(
-                        &state,
-                        workspace_id,
-                    )
-                    .await;
+                    ctx_merge_queue::activate_workspace_merge_queue(&merge_queue, workspace_id)
+                        .await;
                 }) as WorkspaceStreamFuture<_>
             }
         });

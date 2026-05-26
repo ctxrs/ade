@@ -4,7 +4,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{SessionHeadSnapshot, WorkspaceActiveTaskSummary};
 use ctx_store::Store;
 
-use crate::daemon::state::WorkspaceRuntime;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
 #[derive(Debug)]
 pub(in crate::daemon::workspaces::hydration) struct WorkspaceSnapshotHydrationPayload {
@@ -91,12 +91,11 @@ pub(super) async fn load_workspace_snapshot_hydration_payload<
 }
 
 pub(super) async fn apply_workspace_snapshot_hydration_payload(
-    runtime: &WorkspaceRuntime,
+    active_snapshot: &WorkspaceActiveSnapshotHub,
     workspace_id: WorkspaceId,
     payload: WorkspaceSnapshotHydrationPayload,
 ) {
-    runtime
-        .workspace_active_snapshot
+    active_snapshot
         .hydrate_snapshot(
             workspace_id,
             payload.snapshot_rev,

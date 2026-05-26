@@ -10067,6 +10067,62 @@ function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const block = rustFunctionBlockForName({ contents, fnName: "workspace_stream" });
+  if (!block) {
+    return [
+      {
+        filePath,
+        line: 1,
+        name: "workspace stream capability assembly missing",
+        text: "workspace_stream",
+      },
+    ];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace stream assembly captures full daemon state",
+      regex:
+        /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)|\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace stream assembly uses state-capturing closure",
+      regex:
+        /\blet\s+state\s*=\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)[\s\S]*?\bmove\s*\|/gu,
+    },
+    {
+      name: "workspace stream assembly uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b|\b(?:self|handle)\s*\.\s*workspaces\s*\(/gu,
+    },
+    {
+      name: "workspace stream assembly uses old broad active loader",
+      regex: /\bload_workspace_active_(?:snapshot|heads)\s*\(/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(block.text); match; match = check.regex.exec(block.text)) {
+      const offset = block.index + match.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function isWorkspaceVcsHttpModulePath(filePath) {
   return workspaceVcsHttpModuleRoots.some((root) =>
     root.endsWith("/") ? filePath.startsWith(root) : filePath === root
@@ -12821,6 +12877,16 @@ function scanWorkspaceActiveAssemblyRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
   const checks = [
+    {
+      name: "workspace active assembly captures full daemon state",
+      regex:
+        /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)|\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace active assembly uses state-capturing closure",
+      regex:
+        /\blet\s+state\s*=\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)[\s\S]*?\bmove\s*\|/gu,
+    },
     {
       name: "workspace active assembly uses broad workspace handle",
       regex: /\bWorkspacesHandle\b|\b(?:self|handle)\s*\.\s*workspaces\s*\(/gu,
@@ -15927,6 +15993,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceStreamAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceActiveHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -16980,6 +17050,7 @@ module.exports = {
   scanWorkspaceActiveDaemonImplementationRatchet,
   scanWorkspaceActiveHandleFieldRatchet,
   scanWorkspaceActiveRouteExtractorRatchet,
+  scanWorkspaceStreamAssemblyRatchet,
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,

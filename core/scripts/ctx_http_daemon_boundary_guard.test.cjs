@@ -313,6 +313,7 @@ const {
   scanWorkspaceActiveDaemonImplementationRatchet,
   scanWorkspaceActiveHandleFieldRatchet,
   scanWorkspaceActiveRouteExtractorRatchet,
+  scanWorkspaceStreamAssemblyRatchet,
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
@@ -4431,6 +4432,16 @@ test("appstate guard rejects workspace active assembly through broad active load
     contents: `
       impl DaemonHandle {
         pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+          let state = Arc::clone(&self.state);
+          let hydrate = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                state.ensure_workspace_active_snapshot_hydrated(workspace_id).await
+              })
+            }
+          });
           let workspaces = self.workspaces();
           let load = workspaces.load_workspace_active_snapshot(workspace_id);
           WorkspaceActiveHandle::new(parts)
@@ -4439,8 +4450,39 @@ test("appstate guard rejects workspace active assembly through broad active load
     `,
   }).map((violation) => violation.name);
 
+  assert(violations.includes("workspace active assembly captures full daemon state"));
+  assert(violations.includes("workspace active assembly uses state-capturing closure"));
   assert(violations.includes("workspace active assembly uses broad workspace handle"));
   assert(violations.includes("workspace active assembly uses old broad active loader"));
+});
+
+test("appstate guard rejects workspace stream hidden full-state assembly", () => {
+  const violations = scanWorkspaceStreamAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn workspace_stream(&self) -> WorkspaceStreamHandle {
+          let hydrate = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                state.ensure_workspace_active_snapshot_hydrated(workspace_id).await
+              })
+            }
+          });
+          let workspaces = self.workspaces();
+          let load = workspaces.load_workspace_active_heads(workspace_id);
+          WorkspaceStreamHandle::new(parts)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace stream assembly captures full daemon state"));
+  assert(violations.includes("workspace stream assembly uses state-capturing closure"));
+  assert(violations.includes("workspace stream assembly uses broad workspace handle"));
+  assert(violations.includes("workspace stream assembly uses old broad active loader"));
 });
 
 test("appstate guard rejects resource utilization route extraction outside resource route", () => {

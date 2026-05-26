@@ -52,7 +52,12 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
         }],
     };
 
-    apply_workspace_snapshot_hydration_payload(&runtime, workspace_id, payload).await;
+    apply_workspace_snapshot_hydration_payload(
+        &runtime.workspace_active_snapshot,
+        workspace_id,
+        payload,
+    )
+    .await;
 
     let snapshot = runtime
         .workspace_active_snapshot
