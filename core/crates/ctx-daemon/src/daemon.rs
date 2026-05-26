@@ -24,6 +24,7 @@ mod lifecycle;
 mod listener;
 pub mod logs;
 pub mod maintenance;
+mod maintenance_route_handles;
 mod managed_auto_update;
 mod managed_installs_host;
 mod mcp_auth;
@@ -85,9 +86,8 @@ pub use diagnostics::DiagnosticsSnapshotError;
 pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 pub(crate) use handle::route_handles_from_state;
 pub use handle::{
-    DaemonHandle, DaemonShutdownHandle, MergeQueueApiHandle, MobileRuntimeHandle,
-    MobileSecureProxyHandle, ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle,
-    UpdateActivityHandle, UpdateDrainHandle,
+    DaemonHandle, MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle,
+    ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use launch_route_handles::ProviderWorkspaceLaunchRuntime;
@@ -98,6 +98,9 @@ pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
 pub(in crate::daemon) use lifecycle::{DaemonShutdownHost, DaemonShutdownHostParts};
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;
+pub use maintenance_route_handles::{
+    DaemonShutdownHandle, UpdateActivityHandle, UpdateDrainHandle,
+};
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,

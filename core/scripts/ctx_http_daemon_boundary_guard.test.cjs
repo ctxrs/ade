@@ -196,6 +196,7 @@ const {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
+  scanMaintenanceRouteHandleDefinitionFiles,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
   scanTransportHandleRouteExtractorRatchet,
@@ -1258,6 +1259,57 @@ test("appstate daemon shutdown handle ratchet rejects broad fields and wrong rou
   );
   assert(
     hostViolations.includes("daemon shutdown host stores callback effect seam"),
+  );
+});
+
+test("appstate daemon shutdown handle ratchet scans moved maintenance route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/maintenance_route_handles.rs";
+  const violations = scanMaintenanceRouteHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (relativePath !== filePath) {
+        return null;
+      }
+      return `
+        pub struct UpdateActivityHandle {
+          global_store: Store,
+        }
+
+        pub struct UpdateDrainHandle {
+          update_drain: Arc<UpdateDrainCoordinator>,
+        }
+
+        pub struct DaemonShutdownHandle {
+          state: Arc<DaemonState>,
+          daemon: DaemonHandle,
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name, violation.text]),
+    [
+      [
+        filePath,
+        "daemon shutdown capability stores broad handle or daemon state",
+        "state: Arc<DaemonState>,",
+      ],
+      [
+        filePath,
+        "daemon shutdown capability stores broad handle or daemon state",
+        "daemon: DaemonHandle,",
+      ],
+      [
+        filePath,
+        "daemon shutdown capability exposes generic full-state escape hatch",
+        "state: Arc<DaemonState>,",
+      ],
+      [
+        filePath,
+        "daemon shutdown capability exposes generic full-state escape hatch",
+        "daemon: DaemonHandle,",
+      ],
+    ],
   );
 });
 

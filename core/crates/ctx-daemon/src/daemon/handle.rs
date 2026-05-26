@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -15,10 +15,9 @@ use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_session_vcs_service::vcs::SessionVcsDiffBaseQuery;
-use ctx_store::{Store, StoreManager};
+use ctx_store::Store;
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
-use ctx_update_service::UpdateDrainCoordinator;
 use ctx_worktree_vcs_service::{WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseQuery};
 use tokio::sync::{broadcast, Mutex};
 
@@ -43,6 +42,7 @@ use super::{
         ExecutionLaunchHandle, LinuxSandboxRuntimeHandle, ProviderWorkspaceLaunchRuntime,
         TerminalRouteHandle, WebSessionRouteHandle,
     },
+    maintenance_route_handles::{DaemonShutdownHandle, UpdateActivityHandle, UpdateDrainHandle},
     provider_route_handles::{
         ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
         ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
@@ -1627,46 +1627,6 @@ impl MergeQueueApiHandle {
 }
 
 #[derive(Clone)]
-pub struct UpdateActivityHandle {
-    global_store: Store,
-    stores: StoreManager,
-    update_drain: Arc<UpdateDrainCoordinator>,
-    data_root: PathBuf,
-}
-
-impl UpdateActivityHandle {
-    pub(in crate::daemon) fn new(
-        global_store: Store,
-        stores: StoreManager,
-        update_drain: Arc<UpdateDrainCoordinator>,
-        data_root: PathBuf,
-    ) -> Self {
-        Self {
-            global_store,
-            stores,
-            update_drain,
-            data_root,
-        }
-    }
-
-    pub(in crate::daemon) fn global_store(&self) -> &Store {
-        &self.global_store
-    }
-
-    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
-        &self.stores
-    }
-
-    pub(in crate::daemon) fn update_drain(&self) -> &UpdateDrainCoordinator {
-        self.update_drain.as_ref()
-    }
-
-    pub(in crate::daemon) fn data_root(&self) -> &Path {
-        &self.data_root
-    }
-}
-
-#[derive(Clone)]
 pub struct SettingsHandle {
     store: Store,
     telemetry: Telemetry,
@@ -1855,76 +1815,5 @@ impl ResourceUtilizationHandle {
 
     pub(in crate::daemon) fn resource_sampler(&self) -> &Mutex<ResourceSampler> {
         self.resource_sampler.as_ref()
-    }
-}
-
-#[derive(Clone)]
-pub struct UpdateDrainHandle {
-    global_store: Store,
-    stores: StoreManager,
-    update_drain: Arc<UpdateDrainCoordinator>,
-}
-
-impl UpdateDrainHandle {
-    pub(in crate::daemon) fn new(
-        global_store: Store,
-        stores: StoreManager,
-        update_drain: Arc<UpdateDrainCoordinator>,
-    ) -> Self {
-        Self {
-            global_store,
-            stores,
-            update_drain,
-        }
-    }
-
-    pub(in crate::daemon) fn global_store(&self) -> &Store {
-        &self.global_store
-    }
-
-    pub(in crate::daemon) fn stores(&self) -> &StoreManager {
-        &self.stores
-    }
-
-    pub(in crate::daemon) fn update_drain(&self) -> Arc<UpdateDrainCoordinator> {
-        Arc::clone(&self.update_drain)
-    }
-}
-
-#[derive(Clone)]
-pub struct DaemonShutdownHandle {
-    local_shutdown_token: Option<String>,
-    shutdown_host: DaemonShutdownHost,
-}
-
-impl DaemonShutdownHandle {
-    pub(in crate::daemon) fn new(
-        local_shutdown_token: Option<String>,
-        shutdown_host: DaemonShutdownHost,
-    ) -> Self {
-        Self {
-            local_shutdown_token,
-            shutdown_host,
-        }
-    }
-
-    pub(in crate::daemon) fn local_shutdown_token_authorized(
-        &self,
-        supplied: Option<&str>,
-    ) -> bool {
-        let Some(expected) = self.local_shutdown_token.as_deref() else {
-            return false;
-        };
-        supplied.is_some_and(|value| value == expected)
-    }
-
-    pub(in crate::daemon) async fn request_shutdown(
-        &self,
-        reason: String,
-    ) -> Result<
-        crate::daemon::DaemonTurnActivitySummary,
-        crate::daemon::maintenance::DaemonShutdownError,
-    > {
-        crate::daemon::maintenance::request_daemon_shutdown(&self.shutdown_host, reason).await
     }
 }

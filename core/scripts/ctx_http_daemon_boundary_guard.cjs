@@ -645,9 +645,16 @@ const workspaceStreamRouteHandleFieldRatchetPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs",
 ]);
+const maintenanceRouteHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/maintenance_route_handles.rs",
+]);
 const launchRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   daemonLaunchRouteHandlesRelativePath,
+]);
+const daemonShutdownHandleDefinitionPaths = new Set([
+  ...launchRouteHandleDefinitionPaths,
+  ...maintenanceRouteHandleDefinitionPaths,
 ]);
 
 const runArchiveApiRoots = [
@@ -7880,7 +7887,7 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
     }
   }
 
-  if (launchRouteHandleDefinitionPaths.has(filePath)) {
+  if (daemonShutdownHandleDefinitionPaths.has(filePath)) {
     const staleEffectRegex = /\bDaemonShutdownEffect\b/gu;
     for (
       let match = staleEffectRegex.exec(contents);
@@ -13931,6 +13938,31 @@ function scanRepoOnboardingHandleDefinitionFiles({
   return violations;
 }
 
+function scanMaintenanceRouteHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  for (const relativePath of maintenanceRouteHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    violations.push(
+      ...scanDaemonShutdownHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+  return violations;
+}
+
 function scanWorkspaceRouteHandleDefinitionFiles({
   readFileForRelativePath = (relativePath) => {
     const filePath = path.join(repoRoot, relativePath);
@@ -17140,6 +17172,7 @@ function scanRepo() {
       }),
     );
   }
+  violations.push(...scanMaintenanceRouteHandleDefinitionFiles());
   violations.push(...scanRepoOnboardingHandleDefinitionFiles());
   violations.push(
     ...scanWorkspaceRouteHandleDefinitionFiles({
@@ -18037,6 +18070,7 @@ module.exports = {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
+  scanMaintenanceRouteHandleDefinitionFiles,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
   scanTransportHandleRouteExtractorRatchet,
