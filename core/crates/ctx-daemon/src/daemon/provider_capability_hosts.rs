@@ -21,6 +21,7 @@ use super::{
     handle::ProviderWorkspaceLaunchRuntime, ProviderAdminHandle, ProviderBootstrapHandle,
     ProviderInstallHandle, ProviderStatusHandle, ProviderUsageHandle,
 };
+use crate::daemon::web_sessions::WebSessionWorkerRuntimeHost;
 
 pub(in crate::daemon) fn current_ctx_version_for_provider_runtime() -> Option<String> {
     match ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION")) {
@@ -154,6 +155,24 @@ impl ProviderRuntimeHost for ProviderBootstrapHandle {
 }
 
 impl ProviderRuntimeHost for ProviderWorkspaceLaunchRuntime {
+    fn data_root(&self) -> &Path {
+        self.data_root()
+    }
+
+    fn current_ctx_version(&self) -> Option<String> {
+        current_ctx_version_for_provider_runtime()
+    }
+
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        self.providers()
+    }
+
+    fn publish_provider_install_ops_events(&self, events: Vec<ProviderInstallOpsEvent>) {
+        emit_provider_install_ops_events(self.ops_events(), events);
+    }
+}
+
+impl ProviderRuntimeHost for WebSessionWorkerRuntimeHost {
     fn data_root(&self) -> &Path {
         self.data_root()
     }
@@ -362,6 +381,7 @@ macro_rules! impl_managed_install_host_for_provider_runtime_handle {
 impl_managed_install_host_for_provider_runtime_handle!(ProviderAdminHandle);
 impl_managed_install_host_for_provider_runtime_handle!(ProviderInstallHandle);
 impl_managed_install_host_for_provider_runtime_handle!(ProviderStatusHandle);
+impl_managed_install_host_for_provider_runtime_handle!(WebSessionWorkerRuntimeHost);
 
 #[async_trait]
 impl ctx_provider_runtime::provider_launch::install::ProviderInstallHost for ProviderInstallHandle {

@@ -504,6 +504,15 @@ const terminalLaunchProductionRoots = [
   "core/crates/ctx-daemon/src/daemon/terminals/launch/",
 ];
 
+const webSessionLaunchProductionRoots = [
+  "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+  "core/crates/ctx-daemon/src/daemon/web_sessions/launch/",
+];
+
+const webSessionWorkerProductionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+]);
+
 const taskCreationPlaceholderExtractorApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_task.rs",
 ];
@@ -8086,6 +8095,22 @@ function scanTransportHandleRouteExtractorRatchet({ filePath, contents }) {
 function scanWebSessionRouteHandleRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
+  const hasAdjacentTestCfg = (line) => {
+    for (let index = line - 2; index >= Math.max(0, line - 5); index -= 1) {
+      const text = lines[index]?.trim() ?? "";
+      if (!text) {
+        continue;
+      }
+      if (/#\s*\[\s*cfg\s*\(\s*(?:test|any\s*\([^)]*\btest\b)/u.test(text)) {
+        return true;
+      }
+      if (/^#\s*\[/u.test(text)) {
+        continue;
+      }
+      return false;
+    }
+    return false;
+  };
 
   if (
     filePath === "core/crates/ctx-daemon/src/daemon/web_sessions.rs" ||
@@ -8109,18 +8134,64 @@ function scanWebSessionRouteHandleRatchet({ filePath, contents }) {
   }
 
   if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const webSessionRouteBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "web_session_route",
+    });
+    if (webSessionRouteBlock) {
+      const stateCloneRegex = /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)/gu;
+      for (
+        let match = stateCloneRegex.exec(webSessionRouteBlock.text);
+        match;
+        match = stateCloneRegex.exec(webSessionRouteBlock.text)
+      ) {
+        const offset = webSessionRouteBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route assembly captures full daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const stateCapturingLaunchRegex =
+        /\b(?:create_web_session|launch)\s*=\s*Arc\s*::\s*new\s*\(\s*\{[\s\S]*?\bstate\s*=\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)[\s\S]*?\bmove\s*\|/gu;
+      for (
+        let match = stateCapturingLaunchRegex.exec(webSessionRouteBlock.text);
+        match;
+        match = stateCapturingLaunchRegex.exec(webSessionRouteBlock.text)
+      ) {
+        const offset = webSessionRouteBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route assembly uses state-capturing launch closure",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
     const block = rustStructBlockForType({ contents, typeName: "WebSessionRouteHandle" });
     if (block) {
       const broadFieldRegex =
-        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
       const genericEscapeFieldRegex =
         /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport|effects|callbacks|handler)\s*:/gmu;
+      const callbackFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?:CreateWebSessionEffect|CreateWebSessionFuture)\b/gmu;
+      const callbackShapeFieldRegex =
+        /\bdyn\s+Fn(?:Mut|Once)?\b|:\s*fn\s*\(/gu;
 
       for (
         let match = broadFieldRegex.exec(block.text);
         match;
         match = broadFieldRegex.exec(block.text)
       ) {
+        if (match[0] === "WebSessionRouteHandle") {
+          continue;
+        }
         const offset = block.index + match.index;
         const line = contents.slice(0, offset).split(/\r?\n/u).length;
         violations.push({
@@ -8142,6 +8213,428 @@ function scanWebSessionRouteHandleRatchet({ filePath, contents }) {
           filePath,
           line,
           name: "web-session route capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackFieldRegex.exec(block.text);
+        match;
+        match = callbackFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route capability stores production callback effect",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackShapeFieldRegex.exec(block.text);
+        match;
+        match = callbackShapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route capability stores production callback shape",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const allowedWebSessionRouteFields = new Set(["web_sessions", "launch"]);
+      const fieldDeclarationRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu;
+      for (
+        let match = fieldDeclarationRegex.exec(block.text);
+        match;
+        match = fieldDeclarationRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const fieldName = match[1];
+        if (allowedWebSessionRouteFields.has(fieldName)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route capability exposes unexpected production field",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const launchEnumBlock = rustEnumBlockForType({
+      contents,
+      typeName: "WebSessionRouteLaunch",
+    });
+    if (launchEnumBlock) {
+      const broadVariantRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const callbackVariantRegex =
+        /\b(?:CreateWebSessionEffect|CreateWebSessionFuture)\b|\bdyn\s+Fn(?:Mut|Once)?\b|\bfn\s*\(/gu;
+
+      for (
+        let match = broadVariantRegex.exec(launchEnumBlock.text);
+        match;
+        match = broadVariantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route launch enum stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackVariantRegex.exec(launchEnumBlock.text);
+        match;
+        match = callbackVariantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route launch enum stores production callback effect",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const variantRegex = /^\s*([A-Z][A-Za-z0-9_]*)\s*(?:\(|,|\{)/gmu;
+      for (
+        let match = variantRegex.exec(launchEnumBlock.text);
+        match;
+        match = variantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const variantName = match[1];
+        if (variantName === "Host") {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session route launch enum exposes unexpected production variant",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const callbackAliasRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?type\s+(?:CreateWebSessionFuture|CreateWebSessionEffect)\b/gmu;
+    for (
+      let match = callbackAliasRegex.exec(contents);
+      match;
+      match = callbackAliasRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      if (hasAdjacentTestCfg(line)) {
+        continue;
+      }
+      violations.push({
+        filePath,
+        line,
+        name: "web-session route production callback effect alias remains",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+
+    const callbackShapeAliasRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:(?!;)[\s\S])*(?:\bdyn\s+Fn(?:Mut|Once)?\b|\bfn\s*\()/gmu;
+    for (
+      let match = callbackShapeAliasRegex.exec(contents);
+      match;
+      match = callbackShapeAliasRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      if (hasAdjacentTestCfg(line)) {
+        continue;
+      }
+      const aliasName = match[1];
+      const aliasUseRegex = new RegExp(`\\b${aliasName}\\b`, "gu");
+      const hasProductionAliasUse = (candidateBlock) => {
+        if (!candidateBlock) {
+          return false;
+        }
+        for (
+          let useMatch = aliasUseRegex.exec(candidateBlock.text);
+          useMatch;
+          useMatch = aliasUseRegex.exec(candidateBlock.text)
+        ) {
+          const offset = candidateBlock.index + useMatch.index;
+          const useLine = contents.slice(0, offset).split(/\r?\n/u).length;
+          if (!hasAdjacentTestCfg(useLine)) {
+            aliasUseRegex.lastIndex = 0;
+            return true;
+          }
+        }
+        aliasUseRegex.lastIndex = 0;
+        return false;
+      };
+      if (!hasProductionAliasUse(block) && !hasProductionAliasUse(launchEnumBlock)) {
+        continue;
+      }
+      violations.push({
+        filePath,
+        line,
+        name: "web-session route production callback-shaped alias remains",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  const isWebSessionLaunchProductionPath =
+    webSessionLaunchProductionRoots.some((root) => filePath.startsWith(root)) &&
+    !filePath.includes("/tests");
+  if (isWebSessionLaunchProductionPath) {
+    const daemonStateRegex = /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    const broadHandleRegex =
+      /\b(?:DaemonHandle|TransportHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|WebSessionRouteHandle|ProviderWorkspaceLaunchRuntime|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b/gu;
+    for (
+      let match = daemonStateRegex.exec(contents);
+      match;
+      match = daemonStateRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "web-session launch production helper mentions DaemonState",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+    for (
+      let match = broadHandleRegex.exec(contents);
+      match;
+      match = broadHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "web-session launch production helper mentions broad daemon or route handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (webSessionWorkerProductionPaths.has(filePath)) {
+    const workerBackdoorRegex = /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bProviderWorkspaceLaunchRuntime\b/gu;
+    for (
+      let match = workerBackdoorRegex.exec(contents);
+      match;
+      match = workerBackdoorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "web-session worker prep mentions broad daemon state or provider workspace runtime",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (isWebSessionLaunchProductionPath) {
+    const block = rustStructBlockForType({ contents, typeName: "WebSessionLaunchHost" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|TransportHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|WebSessionRouteHandle|ProviderWorkspaceLaunchRuntime|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport|route|routes|handle|handles)\s*:/gmu;
+      const callbackShapeFieldRegex =
+        /\bdyn\s+Fn(?:Mut|Once)?\b|:\s*fn\s*\(/gu;
+      const expectedWebSessionLaunchHostFields = new Map([
+        ["global_store", /^Store$/u],
+        ["workspace_stores", /^ProtectedWorkspaceStoreLookup$/u],
+        ["data_root", /^PathBuf$/u],
+        ["worker_runtime", /^WebSessionWorkerRuntimeHost$/u],
+        ["web_sessions", /^Arc\s*<\s*WebSessionManager\s*>$/u],
+      ]);
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session launch host stores broad daemon or route handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session launch host exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackShapeFieldRegex.exec(block.text);
+        match;
+        match = callbackShapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session launch host stores production callback shape",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const callbackShapeAliasRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:(?!;)[\s\S])*(?:\bdyn\s+Fn(?:Mut|Once)?\b|\bfn\s*\()/gmu;
+      for (
+        let match = callbackShapeAliasRegex.exec(contents);
+        match;
+        match = callbackShapeAliasRegex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const aliasName = match[1];
+        const aliasUseRegex = new RegExp(`\\b${aliasName}\\b`, "gu");
+        let usesAliasInHost = false;
+        for (
+          let useMatch = aliasUseRegex.exec(block.text);
+          useMatch;
+          useMatch = aliasUseRegex.exec(block.text)
+        ) {
+          const offset = block.index + useMatch.index;
+          const useLine = contents.slice(0, offset).split(/\r?\n/u).length;
+          if (!hasAdjacentTestCfg(useLine)) {
+            usesAliasInHost = true;
+            break;
+          }
+        }
+        aliasUseRegex.lastIndex = 0;
+        if (!usesAliasInHost) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session launch host stores production callback-shaped alias",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const fieldDeclarationRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^,\n]+),?\s*$/gmu;
+      for (
+        let match = fieldDeclarationRegex.exec(block.text);
+        match;
+        match = fieldDeclarationRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const fieldName = match[1];
+        const fieldType = match[2].trim();
+        const expectedType = expectedWebSessionLaunchHostFields.get(fieldName);
+        if (!expectedType) {
+          violations.push({
+            filePath,
+            line,
+            name: "web-session launch host exposes unexpected production field",
+            text: lines[line - 1]?.trim() ?? match[0],
+          });
+          continue;
+        }
+        if (expectedType.test(fieldType)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "web-session launch host field type differs from narrow contract",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/web_sessions.rs") {
+    const block = rustStructBlockForType({ contents, typeName: "WebSessionWorkerRuntimeHost" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|TransportHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|WebSessionRouteHandle|ProviderWorkspaceLaunchRuntime|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport|route|routes|handle|handles|workspace|workspace_stores|harness|daemon_url|auth_token)\s*:/gmu;
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session worker runtime host stores broad daemon or route handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "web-session worker runtime host exposes generic full-state escape hatch",
           text: lines[line - 1]?.trim() ?? match[0],
         });
       }

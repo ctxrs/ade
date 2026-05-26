@@ -1,16 +1,19 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 mod context;
 
 use context::resolve_web_session_launch_context;
 use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_settings_model::ExecutionSettings;
+use ctx_store::Store;
 use ctx_transport_runtime::web_sessions::{
     validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionLaunchPolicyError,
-    WebSessionLaunchPolicyErrorKind, WebSessionViewport,
+    WebSessionLaunchPolicyErrorKind, WebSessionManager, WebSessionViewport,
 };
 
-use crate::daemon::web_sessions::prepare_web_session_worker;
-use crate::daemon::DaemonState;
+use crate::daemon::web_sessions::{prepare_web_session_worker, WebSessionWorkerRuntimeHost};
+use crate::daemon::ProtectedWorkspaceStoreLookup;
 
 pub struct WebSessionLaunchRequest {
     pub session_id: Option<SessionId>,
@@ -18,6 +21,82 @@ pub struct WebSessionLaunchRequest {
     pub url: String,
     pub viewport: Option<WebSessionViewport>,
     pub fps: Option<u32>,
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct WebSessionLaunchHost {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    data_root: PathBuf,
+    worker_runtime: WebSessionWorkerRuntimeHost,
+    web_sessions: Arc<WebSessionManager>,
+}
+
+impl WebSessionLaunchHost {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        data_root: PathBuf,
+        worker_runtime: WebSessionWorkerRuntimeHost,
+        web_sessions: Arc<WebSessionManager>,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+            data_root,
+            worker_runtime,
+            web_sessions,
+        }
+    }
+
+    async fn effective_execution_settings(
+        &self,
+        workspace_id: ctx_core::ids::WorkspaceId,
+    ) -> anyhow::Result<ExecutionSettings> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        ctx_settings_service::effective_execution_settings(&self.global_store, &store).await
+    }
+
+    async fn store_for_workspace(
+        &self,
+        workspace_id: ctx_core::ids::WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    async fn store_for_worktree(&self, worktree_id: WorktreeId) -> anyhow::Result<Store> {
+        self.workspace_stores.store_for_worktree(worktree_id).await
+    }
+
+    async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
+        let workspace_id = self
+            .global_store
+            .get_workspace_id_for_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workspace missing for session {}", session_id.0))?;
+        self.store_for_workspace(workspace_id).await
+    }
+
+    async fn prepare_worker(
+        &self,
+    ) -> anyhow::Result<crate::daemon::web_sessions::PreparedWebSessionWorker> {
+        debug_assert_eq!(self.data_root.as_path(), self.worker_runtime.data_root());
+        prepare_web_session_worker(&self.worker_runtime).await
+    }
+
+    async fn create_web_session(
+        &self,
+        request: WebSessionCreateRequest,
+    ) -> Result<WebSessionInfo, WebSessionLaunchError> {
+        let handle = self
+            .web_sessions
+            .create(request)
+            .await
+            .map_err(|e| internal_error(format!("failed to create web session: {e}")))?;
+        Ok(handle.snapshot().await)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,39 +135,34 @@ impl WebSessionLaunchError {
     }
 }
 
-pub async fn create_web_session(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn create_web_session(
+    host: &WebSessionLaunchHost,
     request: WebSessionLaunchRequest,
 ) -> Result<WebSessionInfo, WebSessionLaunchError> {
     validate_web_session_url(&request.url).map_err(|e| bad_request(e.to_string()))?;
 
     let launch_context =
-        resolve_web_session_launch_context(state, request.session_id, request.worktree_id)
+        resolve_web_session_launch_context(host, request.session_id, request.worktree_id)
             .await
             .map_err(request_or_policy_error)?;
 
-    let worker = prepare_web_session_worker(state)
+    let worker = host
+        .prepare_worker()
         .await
         .map_err(|error| internal_error(format!("{error:#}")))?;
 
-    let handle = state
-        .transport
-        .web_sessions
-        .create(WebSessionCreateRequest {
-            url: request.url,
-            viewport: request.viewport,
-            fps: request.fps,
-            work_dir: launch_context.work_dir,
-            session_id: request.session_id.map(|id| id.0.to_string()),
-            worktree_id: request.worktree_id.map(|id| id.0.to_string()),
-            node_bin: worker.node_runtime.node_bin,
-            worker_path: worker.bundle.worker_path,
-            node_modules_path: worker.bundle.node_modules_path,
-        })
-        .await
-        .map_err(|e| internal_error(format!("failed to create web session: {e}")))?;
-
-    Ok(handle.snapshot().await)
+    host.create_web_session(WebSessionCreateRequest {
+        url: request.url,
+        viewport: request.viewport,
+        fps: request.fps,
+        work_dir: launch_context.work_dir,
+        session_id: request.session_id.map(|id| id.0.to_string()),
+        worktree_id: request.worktree_id.map(|id| id.0.to_string()),
+        node_bin: worker.node_runtime.node_bin,
+        worker_path: worker.bundle.worker_path,
+        node_modules_path: worker.bundle.node_modules_path,
+    })
+    .await
 }
 
 fn launch_error(

@@ -73,7 +73,10 @@ use super::{
         WorkspaceFileCompletionsCache, WorktreeFileCompletionsCache,
     },
     terminals::{CreateTerminalLaunchRequest, TerminalLaunchHost},
-    web_sessions::{WebSessionLaunchError, WebSessionLaunchRequest},
+    web_sessions::{
+        WebSessionLaunchError, WebSessionLaunchHost, WebSessionLaunchRequest,
+        WebSessionWorkerRuntimeHost,
+    },
     workspaces::{TaskWorktreeHost, TaskWorktreeHostParts},
 };
 
@@ -856,6 +859,24 @@ impl DaemonHandle {
         )
     }
 
+    fn web_session_worker_runtime_host(&self) -> WebSessionWorkerRuntimeHost {
+        WebSessionWorkerRuntimeHost::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    fn web_session_launch_host(&self) -> WebSessionLaunchHost {
+        WebSessionLaunchHost::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            self.state.core.data_root.clone(),
+            self.web_session_worker_runtime_host(),
+            Arc::clone(&self.state.transport.web_sessions),
+        )
+    }
+
     fn task_store_lookup(&self) -> TaskStoreLookup {
         TaskStoreLookup::new(
             self.state.global_store().clone(),
@@ -1252,18 +1273,9 @@ impl DaemonHandle {
     }
 
     pub fn web_session_route(&self) -> WebSessionRouteHandle {
-        let create_web_session = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |req: WebSessionLaunchRequest| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::web_sessions::create_web_session(&state, req).await
-                }) as CreateWebSessionFuture
-            }
-        });
         WebSessionRouteHandle::new(
             Arc::clone(&self.state.transport.web_sessions),
-            create_web_session,
+            self.web_session_launch_host(),
         )
     }
 
@@ -4939,25 +4951,45 @@ impl TerminalRouteHandle {
     }
 }
 
+#[cfg(test)]
 pub(in crate::daemon) type CreateWebSessionFuture =
     Pin<Box<dyn Future<Output = Result<WebSessionInfo, WebSessionLaunchError>> + Send + 'static>>;
+#[cfg(test)]
 pub(in crate::daemon) type CreateWebSessionEffect =
     Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
 
 #[derive(Clone)]
+enum WebSessionRouteLaunch {
+    Host(WebSessionLaunchHost),
+    #[cfg(test)]
+    Override(CreateWebSessionEffect),
+}
+
+#[derive(Clone)]
 pub struct WebSessionRouteHandle {
     web_sessions: Arc<WebSessionManager>,
-    create_web_session: CreateWebSessionEffect,
+    launch: WebSessionRouteLaunch,
 }
 
 impl WebSessionRouteHandle {
     pub(in crate::daemon) fn new(
         web_sessions: Arc<WebSessionManager>,
+        launch: WebSessionLaunchHost,
+    ) -> Self {
+        Self {
+            web_sessions,
+            launch: WebSessionRouteLaunch::Host(launch),
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn new_for_test(
+        web_sessions: Arc<WebSessionManager>,
         create_web_session: CreateWebSessionEffect,
     ) -> Self {
         Self {
             web_sessions,
-            create_web_session,
+            launch: WebSessionRouteLaunch::Override(create_web_session),
         }
     }
 
@@ -4973,7 +5005,13 @@ impl WebSessionRouteHandle {
         &self,
         req: WebSessionLaunchRequest,
     ) -> Result<WebSessionInfo, WebSessionLaunchError> {
-        (self.create_web_session)(req).await
+        match &self.launch {
+            WebSessionRouteLaunch::Host(host) => {
+                crate::daemon::web_sessions::create_web_session(host, req).await
+            }
+            #[cfg(test)]
+            WebSessionRouteLaunch::Override(create_web_session) => create_web_session(req).await,
+        }
     }
 }
 

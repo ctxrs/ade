@@ -120,7 +120,7 @@ mod tests {
             + Sync
             + 'static,
     ) -> WebSessionRouteHandle {
-        WebSessionRouteHandle::new(web_sessions, Arc::new(create_web_session))
+        WebSessionRouteHandle::new_for_test(web_sessions, Arc::new(create_web_session))
     }
 
     fn route_handle(web_sessions: Arc<WebSessionManager>) -> WebSessionRouteHandle {

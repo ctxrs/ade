@@ -1498,6 +1498,347 @@ test("appstate web-session route handle ratchet rejects broad route seams", () =
       "web-session route capability exposes generic full-state escape hatch",
     ),
   );
+  assert(
+    fieldViolations.includes(
+      "web-session route capability exposes unexpected production field",
+    ),
+  );
+});
+
+test("appstate web-session route handle ratchet rejects state-capturing launch assembly", () => {
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn web_session_route(&self) -> WebSessionRouteHandle {
+          let create_web_session = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |req: WebSessionLaunchRequest| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                crate::daemon::web_sessions::create_web_session(&state, req).await
+              }) as CreateWebSessionFuture
+            }
+          });
+          WebSessionRouteHandle::new(
+            Arc::clone(&self.state.transport.web_sessions),
+            create_web_session,
+          )
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("web-session route assembly captures full daemon state"),
+  );
+  assert(
+    violations.includes(
+      "web-session route assembly uses state-capturing launch closure",
+    ),
+  );
+});
+
+test("appstate web-session route handle ratchet allows typed launch host assembly", () => {
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        impl DaemonHandle {
+          pub fn web_session_route(&self) -> WebSessionRouteHandle {
+            WebSessionRouteHandle::new(
+              Arc::clone(&self.state.transport.web_sessions),
+              self.web_session_launch_host(),
+            )
+          }
+        }
+
+        #[cfg(test)]
+        pub(in crate::daemon) type CreateWebSessionFuture =
+          Pin<Box<dyn Future<Output = Result<WebSessionInfo, WebSessionLaunchError>> + Send + 'static>>;
+        #[cfg(test)]
+        pub(in crate::daemon) type CreateWebSessionEffect =
+          Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+
+        #[derive(Clone)]
+        enum WebSessionRouteLaunch {
+          Host(WebSessionLaunchHost),
+          #[cfg(test)]
+          Override(CreateWebSessionEffect),
+        }
+
+        pub struct WebSessionRouteHandle {
+          web_sessions: Arc<WebSessionManager>,
+          launch: WebSessionRouteLaunch,
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate web-session route handle ratchet rejects production callback storage", () => {
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub(in crate::daemon) type CreateWebSessionFuture =
+        Pin<Box<dyn Future<Output = Result<WebSessionInfo, WebSessionLaunchError>> + Send + 'static>>;
+      pub(in crate::daemon) type CreateWebSessionEffect =
+        Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+      type WebSessionLauncher =
+        Box<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+
+      pub struct WebSessionRouteHandle {
+        web_sessions: Arc<WebSessionManager>,
+        create_web_session: CreateWebSessionEffect,
+        create_web_session_alias: WebSessionLauncher,
+        create_web_session_direct:
+          Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>,
+        create_web_session_fn: fn(WebSessionLaunchRequest) -> CreateWebSessionFuture,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("web-session route production callback effect alias remains"),
+  );
+  assert(
+    violations.includes("web-session route capability stores production callback effect"),
+  );
+  assert(
+    violations.includes("web-session route capability stores production callback shape"),
+  );
+  assert(
+    violations.includes("web-session route production callback-shaped alias remains"),
+  );
+});
+
+test("appstate web-session route handle ratchet rejects production launch enum backdoors", () => {
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      type WebSessionLauncher =
+        Box<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+
+      enum WebSessionRouteLaunch {
+        Host(WebSessionLaunchHost),
+        Callback(Arc<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>),
+        AliasCallback(WebSessionLauncher),
+        Broad(FooDomainHandle),
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "web-session route launch enum stores production callback effect",
+    ),
+  );
+  assert(
+    violations.includes(
+      "web-session route launch enum stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    violations.includes("web-session route production callback-shaped alias remains"),
+  );
+  assert(
+    violations.includes(
+      "web-session route launch enum exposes unexpected production variant",
+    ),
+  );
+});
+
+test("appstate web-session route handle ratchet allows test-gated callback alias use", () => {
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        type WebSessionLauncher =
+          Box<dyn Fn(WebSessionLaunchRequest) -> CreateWebSessionFuture + Send + Sync>;
+
+        enum WebSessionRouteLaunch {
+          Host(WebSessionLaunchHost),
+          #[cfg(test)]
+          Override(WebSessionLauncher),
+        }
+
+        pub struct WebSessionRouteHandle {
+          web_sessions: Arc<WebSessionManager>,
+          launch: WebSessionRouteLaunch,
+          #[cfg(test)]
+          override_launch: WebSessionLauncher,
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate web-session launch ratchet rejects DaemonState and broad runtime seams", () => {
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch/context.rs",
+      contents: `
+        use crate::daemon::{DaemonState, ProviderWorkspaceLaunchRuntime};
+
+        async fn resolve(state: Arc<DaemonState>, runtime: ProviderWorkspaceLaunchRuntime) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "web-session launch production helper mentions DaemonState",
+      "web-session launch production helper mentions DaemonState",
+      "web-session launch production helper mentions broad daemon or route handle",
+      "web-session launch production helper mentions broad daemon or route handle",
+    ],
+  );
+
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+      contents: `
+        use crate::daemon::{DaemonState, ProviderWorkspaceLaunchRuntime};
+
+        async fn prepare(state: Arc<DaemonState>, runtime: ProviderWorkspaceLaunchRuntime) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "web-session worker prep mentions broad daemon state or provider workspace runtime",
+      "web-session worker prep mentions broad daemon state or provider workspace runtime",
+      "web-session worker prep mentions broad daemon state or provider workspace runtime",
+      "web-session worker prep mentions broad daemon state or provider workspace runtime",
+    ],
+  );
+});
+
+test("appstate web-session launch ratchet rejects broad host fields", () => {
+  const launchViolations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+    contents: `
+      pub(in crate::daemon) struct WebSessionLaunchHost {
+        state: Arc<DaemonState>,
+        route: WebSessionRouteHandle,
+        runtime: ProviderWorkspaceLaunchRuntime,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    launchViolations.includes(
+      "web-session launch production helper mentions DaemonState",
+    ),
+  );
+  assert(
+    launchViolations.includes(
+      "web-session launch host stores broad daemon or route handle",
+    ),
+  );
+  assert(
+    launchViolations.includes(
+      "web-session launch host exposes generic full-state escape hatch",
+    ),
+  );
+
+  const workerViolations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+    contents: `
+      pub(in crate::daemon) struct WebSessionWorkerRuntimeHost {
+        daemon_url: String,
+        auth_token: Option<String>,
+        harness: Arc<HarnessRuntimeManager>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    workerViolations.includes(
+      "web-session worker runtime host exposes generic full-state escape hatch",
+    ),
+  );
+});
+
+test("appstate web-session launch ratchet rejects host callback backdoors", () => {
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+    contents: `
+      type WebSessionCreateHook = Arc<dyn Fn(WebSessionLaunchRequest) -> WebSessionLaunchResult>;
+
+      pub(in crate::daemon) struct WebSessionLaunchHost {
+        callback: WebSessionCreateHook,
+        raw_create: fn(WebSessionLaunchRequest) -> WebSessionLaunchResult,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "web-session launch host stores production callback shape",
+    ),
+  );
+  assert(
+    violations.includes(
+      "web-session launch host stores production callback-shaped alias",
+    ),
+  );
+});
+
+test("appstate web-session launch ratchet rejects imported host callback aliases", () => {
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch/host.rs",
+    contents: `
+      use self::hooks::WebSessionCreateHook;
+
+      pub(in crate::daemon) struct WebSessionLaunchHost {
+        global_store: WebSessionCreateHook,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        data_root: PathBuf,
+        worker_runtime: WebSessionWorkerRuntimeHost,
+        web_sessions: Arc<WebSessionManager>,
+        callback: WebSessionCreateHook,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("web-session launch host exposes unexpected production field"),
+  );
+  assert(
+    violations.includes(
+      "web-session launch host field type differs from narrow contract",
+    ),
+  );
+});
+
+test("appstate web-session launch ratchet allows narrow host dependencies", () => {
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+      contents: `
+        pub(in crate::daemon) struct WebSessionLaunchHost {
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          data_root: PathBuf,
+          worker_runtime: WebSessionWorkerRuntimeHost,
+          web_sessions: Arc<WebSessionManager>,
+        }
+      `,
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    scanWebSessionRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+      contents: `
+        pub(in crate::daemon) struct WebSessionWorkerRuntimeHost {
+          data_root: PathBuf,
+          providers: Arc<ProviderRuntime>,
+          ops_events: OpsEvents,
+        }
+      `,
+    }),
+    [],
+  );
 });
 
 test("appstate provider account route ratchet rejects broad providers handle", () => {

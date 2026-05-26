@@ -6,6 +6,9 @@ use chrono::Utc;
 use ctx_core::models::{VcsKind, Worktree};
 use ctx_store::StoreManager;
 
+use crate::daemon::web_sessions::WebSessionWorkerRuntimeHost;
+use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
+
 pub(super) struct EnvVarGuard {
     key: &'static str,
     previous: Option<String>,
@@ -40,6 +43,24 @@ pub(super) async fn test_state(data_root: &Path) -> Arc<DaemonState> {
         "http://127.0.0.1:4399".to_string(),
         None,
     ))
+}
+
+pub(super) fn test_web_session_launch_host(state: &Arc<DaemonState>) -> WebSessionLaunchHost {
+    WebSessionLaunchHost::new(
+        state.global_store().clone(),
+        ProtectedWorkspaceStoreLookup::new(
+            state.core.stores.clone(),
+            Arc::clone(&state.sessions),
+            Arc::clone(&state.transport.merge_queue),
+        ),
+        state.core.data_root.clone(),
+        WebSessionWorkerRuntimeHost::new(
+            state.core.data_root.clone(),
+            Arc::clone(&state.providers),
+            state.telemetry.ops_events.clone(),
+        ),
+        Arc::clone(&state.transport.web_sessions),
+    )
 }
 
 pub(super) fn sample_worktree(

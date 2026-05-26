@@ -1,4 +1,6 @@
-use super::fixtures::{assert_launch_error, sample_worktree, test_state, EnvVarGuard};
+use super::fixtures::{
+    assert_launch_error, sample_worktree, test_state, test_web_session_launch_host, EnvVarGuard,
+};
 use super::*;
 use ctx_core::models::{ExecutionEnvironment, VcsKind};
 use ctx_settings_service::{CTX_HOST_EXECUTION_POLICY_ENV, EXECUTION_POLICY_TEST_ENV_LOCK};
@@ -9,9 +11,10 @@ async fn create_web_session_rejects_sandbox_only_before_host_runtime_setup() {
     let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "sandbox_only");
     let data_root = tempfile::tempdir().expect("tempdir");
     let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
 
     let err = create_web_session(
-        &state,
+        &host,
         WebSessionLaunchRequest {
             session_id: None,
             worktree_id: None,
@@ -37,6 +40,7 @@ async fn create_web_session_rejects_sandbox_session_before_host_runtime_setup() 
     let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
     let data_root = tempfile::tempdir().expect("tempdir");
     let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
     let workspace_root = data_root.path().join("workspace");
     let workspace = state
         .global_store()
@@ -84,7 +88,7 @@ async fn create_web_session_rejects_sandbox_session_before_host_runtime_setup() 
         .expect("index session");
 
     let err = create_web_session(
-        &state,
+        &host,
         WebSessionLaunchRequest {
             session_id: Some(session.id),
             worktree_id: None,
@@ -109,9 +113,10 @@ async fn create_web_session_rejects_unscoped_host_launches() {
     let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
     let data_root = tempfile::tempdir().expect("tempdir");
     let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
 
     let err = create_web_session(
-        &state,
+        &host,
         WebSessionLaunchRequest {
             session_id: None,
             worktree_id: None,
