@@ -1,8 +1,10 @@
 use super::fixtures::{
-    assert_launch_error, sample_worktree, test_state, test_web_session_launch_host, EnvVarGuard,
+    assert_launch_error, sample_worktree, sandbox_binding_for, test_state,
+    test_web_session_launch_host, EnvVarGuard,
 };
 use super::*;
 use ctx_core::models::{ExecutionEnvironment, VcsKind};
+use ctx_settings_model::{ExecutionMode, ExecutionSettings, Settings};
 use ctx_settings_service::{CTX_HOST_EXECUTION_POLICY_ENV, EXECUTION_POLICY_TEST_ENV_LOCK};
 
 #[tokio::test]
@@ -104,6 +106,130 @@ async fn create_web_session_rejects_sandbox_session_before_host_runtime_setup() 
         &err,
         WebSessionLaunchErrorKind::Forbidden,
         "disabled for sandbox sessions",
+    );
+}
+
+#[tokio::test]
+async fn create_web_session_rejects_sandbox_bound_worktree_before_host_runtime_setup() {
+    let _env_lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+    let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
+    let workspace_root = data_root.path().join("workspace");
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let worktree = store
+        .insert_worktree(sample_worktree(
+            workspace.id,
+            workspace_root.join("worktree"),
+        ))
+        .await
+        .expect("insert worktree");
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("index worktree");
+    store
+        .upsert_sandbox_binding(sandbox_binding_for(&worktree))
+        .await
+        .expect("seed sandbox binding");
+
+    let err = create_web_session(
+        &host,
+        WebSessionLaunchRequest {
+            session_id: None,
+            worktree_id: Some(worktree.id),
+            url: "https://example.com".to_string(),
+            viewport: None,
+            fps: None,
+        },
+    )
+    .await
+    .expect_err("sandbox-bound worktree should reject before worker prep");
+
+    assert_launch_error(
+        &err,
+        WebSessionLaunchErrorKind::Forbidden,
+        "disabled for sandbox worktrees",
+    );
+}
+
+#[tokio::test]
+async fn create_web_session_rejects_sandbox_workspace_mode_before_host_runtime_setup() {
+    let _env_lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+    let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    ctx_settings_service::save_settings(
+        state.global_store(),
+        &Settings {
+            execution: Some(ExecutionSettings {
+                mode: ExecutionMode::Sandbox,
+                ..ExecutionSettings::default()
+            }),
+            ..Settings::default()
+        },
+    )
+    .await
+    .expect("save sandbox execution setting");
+    let host = test_web_session_launch_host(&state);
+    let workspace_root = data_root.path().join("workspace");
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let worktree = store
+        .insert_worktree(sample_worktree(
+            workspace.id,
+            workspace_root.join("worktree"),
+        ))
+        .await
+        .expect("insert worktree");
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("index worktree");
+
+    let err = create_web_session(
+        &host,
+        WebSessionLaunchRequest {
+            session_id: None,
+            worktree_id: Some(worktree.id),
+            url: "https://example.com".to_string(),
+            viewport: None,
+            fps: None,
+        },
+    )
+    .await
+    .expect_err("sandbox workspace mode should reject before worker prep");
+
+    assert_launch_error(
+        &err,
+        WebSessionLaunchErrorKind::Forbidden,
+        "disabled for sandbox workspaces",
     );
 }
 

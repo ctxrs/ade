@@ -1,26 +1,24 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::{TerminalSession, Workspace};
+use ctx_core::models::{TerminalSession, Workspace, Worktree};
 use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use ctx_transport_runtime::terminal_launch::{container_terminal_env, TerminalLaunchError};
 use ctx_transport_runtime::terminals::{TerminalCreateRequest, TerminalManager};
 use ctx_workspace_runtime::HarnessRuntimeManager;
-use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
-use ctx_worktree_data_plane::{
-    apply_data_plane_to_execution_settings, workspace_data_plane, WorktreeDataPlaneHost,
-};
+use ctx_worktree_data_plane::{apply_data_plane_to_execution_settings, workspace_data_plane};
 
 use crate::daemon::ProtectedWorkspaceStoreLookup;
 
 mod container;
+mod data_plane;
 mod paths;
 mod worktree;
 
 use self::container::prepare_terminal_container_launch;
+use self::data_plane::resolve_terminal_worktree_data_plane;
 use self::paths::resolve_terminal_paths;
 #[cfg(test)]
 pub use self::worktree::infer_terminal_worktree;
@@ -102,27 +100,107 @@ impl TerminalLaunchHost {
             .map_err(|_| internal_error("failed to load execution settings"))
     }
 
-    async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
-        self.workspace_stores
-            .store_for_workspace(workspace_id)
+    async fn load_explicit_terminal_worktree(
+        &self,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    ) -> Result<Worktree, TerminalLaunchError> {
+        let store = self
+            .workspace_stores
+            .store_for_worktree(worktree_id)
             .await
+            .map_err(|_| not_found("worktree not found"))?;
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await
+            .map_err(|_| internal_error("failed to load worktree"))?
+            .ok_or_else(|| not_found("worktree not found"))?;
+        if worktree.workspace_id != workspace_id {
+            return Err(not_found("worktree not found"));
+        }
+        Ok(worktree)
     }
 
-    async fn store_for_worktree(&self, worktree_id: WorktreeId) -> anyhow::Result<Store> {
-        self.workspace_stores.store_for_worktree(worktree_id).await
-    }
-
-    async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
-        let workspace_id = self
+    async fn load_terminal_session_worktree(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> Result<Worktree, TerminalLaunchError> {
+        let session_workspace_id = self
             .global_store
             .get_workspace_id_for_session(session_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("workspace missing for session {}", session_id.0))?;
-        self.store_for_workspace(workspace_id).await
+            .await
+            .map_err(|_| not_found("session not found"))?
+            .ok_or_else(|| not_found("session not found"))?;
+        if session_workspace_id != workspace_id {
+            return Err(not_found("session not found"));
+        }
+        let store = self
+            .workspace_stores
+            .store_for_workspace(session_workspace_id)
+            .await
+            .map_err(|_| not_found("session not found"))?;
+        let session = store
+            .get_session(session_id)
+            .await
+            .map_err(|_| internal_error("failed to load session"))?
+            .ok_or_else(|| not_found("session not found"))?;
+        if session.workspace_id != workspace_id {
+            return Err(not_found("session not found"));
+        }
+        let worktree = store
+            .get_worktree(session.worktree_id)
+            .await
+            .map_err(|_| internal_error("failed to load worktree"))?
+            .ok_or_else(|| not_found("worktree not found"))?;
+        if worktree.workspace_id != workspace_id {
+            return Err(not_found("worktree not found"));
+        }
+        Ok(worktree)
     }
 
-    async fn store_for_task(&self, task_id: TaskId) -> anyhow::Result<Store> {
-        self.workspace_stores.store_for_task(task_id).await
+    async fn load_terminal_task_worktree(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> Result<Worktree, TerminalLaunchError> {
+        let store = self
+            .workspace_stores
+            .store_for_task(task_id)
+            .await
+            .map_err(|_| not_found("task not found"))?;
+        let task = store
+            .get_task(task_id)
+            .await
+            .map_err(|_| internal_error("failed to load task"))?
+            .ok_or_else(|| not_found("task not found"))?;
+        if task.workspace_id != workspace_id {
+            return Err(not_found("task not found"));
+        }
+        let primary_worktree_id = task
+            .primary_worktree_id
+            .ok_or_else(|| not_found("worktree not found"))?;
+        let worktree = store
+            .get_worktree(primary_worktree_id)
+            .await
+            .map_err(|_| internal_error("failed to load worktree"))?
+            .ok_or_else(|| not_found("worktree not found"))?;
+        if worktree.workspace_id != workspace_id {
+            return Err(not_found("worktree not found"));
+        }
+        Ok(worktree)
+    }
+
+    async fn default_terminal_worktree_candidate(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<Worktree>> {
+        let store = self
+            .workspace_stores
+            .store_for_workspace(workspace_id)
+            .await?;
+        let worktrees = store.list_worktrees(workspace_id).await?;
+        Ok(worktrees.into_iter().last())
     }
 
     async fn create_terminal(
@@ -135,20 +213,6 @@ impl TerminalLaunchHost {
             .await
             .map_err(|e| internal_error(format!("failed to create terminal: {e}")))?;
         Ok(session.snapshot())
-    }
-}
-
-#[async_trait]
-impl WorktreeDataPlaneHost for TerminalLaunchHost {
-    async fn get_workspace(
-        state: &Self,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<Option<Workspace>> {
-        state.global_store.get_workspace(workspace_id).await
-    }
-
-    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
-        state.store_for_workspace(workspace_id).await
     }
 }
 
@@ -170,7 +234,7 @@ pub(super) async fn create_workspace_terminal(
     .await?;
     let worktree_data_plane = if let Some(worktree) = worktree.as_ref() {
         Some(
-            resolve_worktree_data_plane(host, worktree)
+            resolve_terminal_worktree_data_plane(host, worktree)
                 .await
                 .map_err(|_| internal_error("failed to resolve worktree data plane"))?,
         )

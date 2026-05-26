@@ -252,6 +252,7 @@ const {
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
   scanWorkspaceRestConfigStoreIntentRatchet,
+  scanTerminalWebSessionLaunchStoreIntentRatchet,
   scanWorkspaceAttachmentsDaemonImplementationRatchet,
   scanWorkspaceAttachmentsHandleFieldRatchet,
   scanWorkspaceAttachmentsRouteExtractorRatchet,
@@ -7161,6 +7162,97 @@ test("appstate guard ignores workspace REST/config fixture store setup after cfg
   assert.deepEqual(
     scanWorkspaceRestConfigStoreIntentRatchet({
       filePath: "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+      contents,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects raw store access in terminal and web-session launch helpers", () => {
+  const strictViolations = scanTerminalWebSessionLaunchStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/worktree.rs",
+    contents: `
+      use ctx_store::Store;
+
+      async fn resolve(handle: TerminalLaunchHost, worktree_id: WorktreeId) {
+        let _typed: Option<ctx_store::Store> = None;
+        let _ = handle.global_store().get_workspace(workspace_id).await;
+        let _ = handle.global_store.get_workspace(workspace_id).await;
+        let _ = handle.store_for_worktree(worktree_id).await;
+        let _ = ctx_settings_service::effective_execution_settings_for_environment(
+          &store,
+        ).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    strictViolations.includes(
+      "terminal/web-session launch helper imports raw ctx_store Store",
+    ),
+  );
+  assert(
+    strictViolations.includes(
+      "terminal/web-session launch helper uses raw global store accessor",
+    ),
+  );
+  assert(
+    strictViolations.includes(
+      "terminal/web-session launch helper uses raw store lookup accessor",
+    ),
+  );
+  assert(
+    strictViolations.includes(
+      "terminal/web-session launch helper resolves execution settings directly",
+    ),
+  );
+
+  const hostViolations = scanTerminalWebSessionLaunchStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+    contents: `
+      impl WebSessionLaunchHost {
+        async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
+          self.workspace_stores.store_for_session(session_id).await
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(hostViolations, [
+    "terminal/web-session launch host exposes raw store accessor helper",
+  ]);
+
+  assert.deepEqual(
+    scanTerminalWebSessionLaunchStoreIntentRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/data_plane.rs",
+      contents: `
+        use ctx_store::Store;
+        async fn workspace_store(host: TerminalLaunchHost, workspace_id: WorkspaceId) {
+          let _ = host.workspace_stores.store_for_workspace(workspace_id).await;
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard ignores terminal and web-session launch test fixtures after cfg-test stripping", () => {
+  const contents = stripCfgTestItems(`
+    pub(super) async fn resolve_terminal_worktree(host: &TerminalLaunchHost) -> anyhow::Result<()> {
+      host.load_explicit_terminal_worktree(workspace_id, worktree_id).await?;
+      Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+      async fn fixture(host: TerminalLaunchHost, worktree_id: WorktreeId) {
+        let _ = host.store_for_worktree(worktree_id).await;
+      }
+    }
+  `);
+
+  assert.deepEqual(
+    scanTerminalWebSessionLaunchStoreIntentRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/worktree.rs",
       contents,
     }),
     [],

@@ -5,11 +5,13 @@ mod context;
 
 use context::resolve_web_session_launch_context;
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_settings_model::ExecutionSettings;
+use ctx_core::models::{ExecutionEnvironment, Worktree};
+use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use ctx_transport_runtime::web_sessions::{
-    validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionLaunchPolicyError,
-    WebSessionLaunchPolicyErrorKind, WebSessionManager, WebSessionViewport,
+    validate_web_session_host_worktree, validate_web_session_url, WebSessionCreateRequest,
+    WebSessionInfo, WebSessionLaunchPolicyError, WebSessionLaunchPolicyErrorKind,
+    WebSessionManager, WebSessionViewport,
 };
 
 use crate::daemon::web_sessions::{prepare_web_session_worker, WebSessionWorkerRuntimeHost};
@@ -53,30 +55,65 @@ impl WebSessionLaunchHost {
         &self,
         workspace_id: ctx_core::ids::WorkspaceId,
     ) -> anyhow::Result<ExecutionSettings> {
-        let store = self.store_for_workspace(workspace_id).await?;
+        let store = self
+            .workspace_stores
+            .store_for_workspace(workspace_id)
+            .await?;
         ctx_settings_service::effective_execution_settings(&self.global_store, &store).await
     }
 
-    async fn store_for_workspace(
+    async fn load_session_launch_target(
         &self,
-        workspace_id: ctx_core::ids::WorkspaceId,
-    ) -> anyhow::Result<Store> {
-        self.workspace_stores
-            .store_for_workspace(workspace_id)
-            .await
-    }
-
-    async fn store_for_worktree(&self, worktree_id: WorktreeId) -> anyhow::Result<Store> {
-        self.workspace_stores.store_for_worktree(worktree_id).await
-    }
-
-    async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
-        let workspace_id = self
+        session_id: SessionId,
+    ) -> anyhow::Result<(ExecutionEnvironment, Worktree)> {
+        let session_workspace_id = self
             .global_store
             .get_workspace_id_for_session(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace missing for session {}", session_id.0))?;
-        self.store_for_workspace(workspace_id).await
+        let store = self
+            .workspace_stores
+            .store_for_workspace(session_workspace_id)
+            .await?;
+        let session = store
+            .get_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
+        let worktree = store
+            .get_worktree(session.worktree_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
+        Ok((session.execution_environment, worktree))
+    }
+
+    async fn load_worktree_launch_target(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Worktree> {
+        let store = self
+            .workspace_stores
+            .store_for_worktree(worktree_id)
+            .await?;
+        store
+            .get_worktree(worktree_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree not found"))
+    }
+
+    async fn validate_worktree_host_launch(&self, worktree: &Worktree) -> anyhow::Result<()> {
+        let store = self
+            .workspace_stores
+            .store_for_workspace(worktree.workspace_id)
+            .await?;
+        let has_sandbox_binding = store.get_sandbox_binding(worktree.id).await?.is_some();
+        let effective = self
+            .effective_execution_settings(worktree.workspace_id)
+            .await?;
+        validate_web_session_host_worktree(
+            has_sandbox_binding,
+            matches!(effective.mode, ExecutionMode::Sandbox),
+        )?;
+        Ok(())
     }
 
     async fn prepare_worker(

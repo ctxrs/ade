@@ -2,12 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::{ExecutionEnvironment, Worktree};
-use ctx_settings_model::ExecutionMode;
+use ctx_core::models::ExecutionEnvironment;
 use ctx_settings_service::HostExecutionPolicy;
 use ctx_transport_runtime::web_sessions::{
-    validate_web_session_host_session, validate_web_session_host_worktree,
-    validate_web_session_launch_scope,
+    validate_web_session_host_session, validate_web_session_launch_scope,
 };
 
 use super::WebSessionLaunchHost;
@@ -30,58 +28,25 @@ pub(super) async fn resolve_web_session_launch_context(
 
     let mut session_worktree_id = None;
     if let Some(session_id) = session_id {
-        let store = host.store_for_session(session_id).await?;
-        let session = store
-            .get_session(session_id)
-            .await?
-            .context("session not found")?;
-        validate_web_session_host_session(session.execution_environment)?;
-        let worktree = store
-            .get_worktree(session.worktree_id)
-            .await?
-            .context("worktree not found")?;
-        validate_web_session_worktree(host, &store, &worktree).await?;
-        session_worktree_id = Some(session.worktree_id);
+        let (execution_environment, worktree) = host.load_session_launch_target(session_id).await?;
+        validate_web_session_host_session(execution_environment)?;
+        host.validate_worktree_host_launch(&worktree).await?;
+        session_worktree_id = Some(worktree.id);
     }
 
     if let Some(worktree_id) = worktree_id {
-        let store = host.store_for_worktree(worktree_id).await?;
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await?
-            .context("worktree not found")?;
-        validate_web_session_worktree(host, &store, &worktree).await?;
+        let worktree = host.load_worktree_launch_target(worktree_id).await?;
+        host.validate_worktree_host_launch(&worktree).await?;
         return Ok(WebSessionLaunchContext {
             work_dir: Some(PathBuf::from(worktree.root_path)),
         });
     }
 
     if let Some(worktree_id) = session_worktree_id {
-        let store = host.store_for_worktree(worktree_id).await?;
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await?
-            .context("worktree not found")?;
+        let worktree = host.load_worktree_launch_target(worktree_id).await?;
         return Ok(WebSessionLaunchContext {
             work_dir: Some(PathBuf::from(worktree.root_path)),
         });
     }
     Ok(WebSessionLaunchContext { work_dir: None })
-}
-
-async fn validate_web_session_worktree(
-    host: &WebSessionLaunchHost,
-    store: &ctx_store::Store,
-    worktree: &Worktree,
-) -> anyhow::Result<()> {
-    let has_sandbox_binding = store.get_sandbox_binding(worktree.id).await?.is_some();
-    let effective = host
-        .effective_execution_settings(worktree.workspace_id)
-        .await
-        .context("loading workspace execution settings for web session")?;
-    validate_web_session_host_worktree(
-        has_sandbox_binding,
-        matches!(effective.mode, ExecutionMode::Sandbox),
-    )?;
-    Ok(())
 }

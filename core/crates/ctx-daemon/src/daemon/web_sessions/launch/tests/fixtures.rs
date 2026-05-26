@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use ctx_core::models::{VcsKind, Worktree};
+use ctx_core::models::{
+    sandbox_instance_id_for_workspace, SandboxBinding, SandboxGuestIdentity, SandboxProfile,
+    SandboxSubstrate, VcsKind, Worktree,
+};
 use ctx_store::StoreManager;
 
 use crate::daemon::web_sessions::WebSessionWorkerRuntimeHost;
@@ -87,6 +90,23 @@ pub(super) fn sample_worktree(
         bootstrap_log_truncated: None,
         bootstrap_command: None,
         bootstrap_script_path: None,
+    }
+}
+
+pub(super) fn sandbox_binding_for(worktree: &Worktree) -> SandboxBinding {
+    SandboxBinding {
+        worktree_id: worktree.id,
+        workspace_id: worktree.workspace_id,
+        sandbox_instance_id: sandbox_instance_id_for_workspace(worktree.workspace_id),
+        substrate: SandboxSubstrate::NativeContainer,
+        guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
+        profile: SandboxProfile::Standard,
+        live_workspace_root: "/ctx/workspace".to_string(),
+        live_worktree_root: "/ctx/worktree".to_string(),
+        execution_settings_json: None,
+        container_name: Some("ctx-test".to_string()),
+        host_materialization_root: Some("/tmp/ctx-test".to_string()),
+        created_at: Utc::now(),
     }
 }
 

@@ -384,6 +384,19 @@ const workspaceRestConfigStoreIntentPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/workspace_file_completions_route.rs",
 ]);
 
+const terminalWebSessionLaunchStoreIntentStrictPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/terminals/launch/container.rs",
+  "core/crates/ctx-daemon/src/daemon/terminals/launch/container/runtime.rs",
+  "core/crates/ctx-daemon/src/daemon/terminals/launch/paths.rs",
+  "core/crates/ctx-daemon/src/daemon/terminals/launch/worktree.rs",
+  "core/crates/ctx-daemon/src/daemon/web_sessions/launch/context.rs",
+]);
+
+const terminalWebSessionLaunchStoreIntentHostPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/terminals/launch.rs",
+  "core/crates/ctx-daemon/src/daemon/web_sessions/launch.rs",
+]);
+
 const workspaceFileCompletionsRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
 ]);
@@ -14977,6 +14990,67 @@ function scanWorkspaceRestConfigStoreIntentRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanTerminalWebSessionLaunchStoreIntentRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (terminalWebSessionLaunchStoreIntentStrictPaths.has(filePath)) {
+    const checks = [
+      {
+        name: "terminal/web-session launch helper uses raw global store accessor",
+        regex: /\.(?:global_store\s*\(|global_store\b)/gu,
+      },
+      {
+        name: "terminal/web-session launch helper uses raw store lookup accessor",
+        regex:
+          /\.(?:existing_workspace_store|store_for_workspace|store_for_worktree|store_for_task|store_for_session)\s*\(/gu,
+      },
+      {
+        name: "terminal/web-session launch helper imports raw ctx_store Store",
+        regex:
+          /\buse\s+ctx_store::(?:\{[^}]*\bStore\b[^}]*\}|Store)\b|\bctx_store::Store\b/gu,
+      },
+      {
+        name: "terminal/web-session launch helper resolves execution settings directly",
+        regex: /\bctx_settings_service::effective_execution_settings\w*\s*\(/gu,
+      },
+    ];
+
+    for (const check of checks) {
+      check.regex.lastIndex = 0;
+      for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (terminalWebSessionLaunchStoreIntentHostPaths.has(filePath)) {
+    const storeAccessorDefinitionRegex =
+      /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+store_for_(?:workspace|worktree|task|session)\s*\(/gu;
+    for (
+      let match = storeAccessorDefinitionRegex.exec(contents);
+      match;
+      match = storeAccessorDefinitionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "terminal/web-session launch host exposes raw store accessor helper",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspaceDeletionRouteExtractorRatchet({
   filePath,
   contents,
@@ -16754,6 +16828,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanTerminalWebSessionLaunchStoreIntentRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceDeletionDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -17469,6 +17547,7 @@ module.exports = {
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
   scanWorkspaceRestConfigStoreIntentRatchet,
+  scanTerminalWebSessionLaunchStoreIntentRatchet,
   scanWorkspaceDeletionDaemonImplementationRatchet,
   scanWorkspaceDeletionHandleFieldRatchet,
   scanWorkspaceDeletionRouteExtractorRatchet,

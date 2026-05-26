@@ -1,12 +1,10 @@
 use super::super::context::resolve_web_session_launch_context;
-use super::fixtures::{sample_worktree, test_state, test_web_session_launch_host, EnvVarGuard};
-use crate::daemon::DaemonState;
-use chrono::Utc;
-use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::{
-    sandbox_instance_id_for_workspace, ExecutionEnvironment, SandboxBinding, SandboxGuestIdentity,
-    SandboxProfile, SandboxSubstrate, Session, VcsKind, Worktree,
+use super::fixtures::{
+    sample_worktree, sandbox_binding_for, test_state, test_web_session_launch_host, EnvVarGuard,
 };
+use crate::daemon::DaemonState;
+use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_core::models::{ExecutionEnvironment, Session, VcsKind, Worktree};
 use ctx_settings_model::{ExecutionMode, ExecutionSettings, Settings};
 use ctx_settings_service::{CTX_HOST_EXECUTION_POLICY_ENV, EXECUTION_POLICY_TEST_ENV_LOCK};
 use ctx_store::Store;
@@ -22,6 +20,15 @@ async fn seed_host_session_scope(
     state: &Arc<DaemonState>,
     data_root: &std::path::Path,
     label: &str,
+) -> SeededWebSessionScope {
+    seed_session_scope(state, data_root, label, ExecutionEnvironment::Host).await
+}
+
+async fn seed_session_scope(
+    state: &Arc<DaemonState>,
+    data_root: &std::path::Path,
+    label: &str,
+    execution_environment: ExecutionEnvironment,
 ) -> SeededWebSessionScope {
     let workspace_root = data_root.join(format!("workspace-{label}"));
     let workspace = state
@@ -58,7 +65,7 @@ async fn seed_host_session_scope(
             task.id,
             workspace.id,
             worktree.id,
-            ExecutionEnvironment::Host,
+            execution_environment,
             "codex".to_string(),
             "gpt-5.4".to_string(),
             "primary".to_string(),
@@ -77,23 +84,6 @@ async fn seed_host_session_scope(
         store,
         worktree,
         session,
-    }
-}
-
-fn sandbox_binding_for(worktree: &Worktree) -> SandboxBinding {
-    SandboxBinding {
-        worktree_id: worktree.id,
-        workspace_id: worktree.workspace_id,
-        sandbox_instance_id: sandbox_instance_id_for_workspace(worktree.workspace_id),
-        substrate: SandboxSubstrate::NativeContainer,
-        guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-        profile: SandboxProfile::Standard,
-        live_workspace_root: "/ctx/workspace".to_string(),
-        live_worktree_root: "/ctx/worktree".to_string(),
-        execution_settings_json: None,
-        container_name: Some("ctx-test".to_string()),
-        host_materialization_root: Some("/tmp/ctx-test".to_string()),
-        created_at: Utc::now(),
     }
 }
 
@@ -157,6 +147,62 @@ async fn launch_context_preserves_explicit_worktree_precedence_with_dual_scope()
         context.work_dir,
         Some(std::path::PathBuf::from(explicit_scope.worktree.root_path))
     );
+}
+
+#[tokio::test]
+async fn launch_context_rejects_sandbox_session_even_with_explicit_host_worktree() {
+    let _env_lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+    let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
+    let session_scope = seed_session_scope(
+        &state,
+        data_root.path(),
+        "sandbox-session",
+        ExecutionEnvironment::Sandbox,
+    )
+    .await;
+    let explicit_scope = seed_host_session_scope(&state, data_root.path(), "explicit-host").await;
+
+    let err = resolve_web_session_launch_context(
+        &host,
+        Some(session_scope.session.id),
+        Some(explicit_scope.worktree.id),
+    )
+    .await
+    .expect_err("sandbox session should reject before explicit host worktree launch");
+
+    assert!(format!("{err:#}").contains("disabled for sandbox sessions"));
+}
+
+#[tokio::test]
+async fn launch_context_rejects_sandbox_bound_session_worktree_even_with_explicit_host_worktree() {
+    let _env_lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+    let _policy = EnvVarGuard::set(CTX_HOST_EXECUTION_POLICY_ENV, "allow_host");
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    let host = test_web_session_launch_host(&state);
+    let session_scope =
+        seed_host_session_scope(&state, data_root.path(), "sandbox-bound-session").await;
+    let explicit_scope = seed_host_session_scope(&state, data_root.path(), "explicit-host").await;
+    session_scope
+        .store
+        .upsert_sandbox_binding(sandbox_binding_for(&session_scope.worktree))
+        .await
+        .expect("seed session worktree sandbox binding");
+
+    let err = resolve_web_session_launch_context(
+        &host,
+        Some(session_scope.session.id),
+        Some(explicit_scope.worktree.id),
+    )
+    .await
+    .expect_err(
+        "sandbox-bound session worktree should reject before explicit host worktree launch",
+    );
+
+    assert!(format!("{err:#}").contains("disabled for sandbox worktrees"));
 }
 
 #[tokio::test]
