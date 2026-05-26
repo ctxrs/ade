@@ -122,8 +122,10 @@ impl DaemonState {
     }
 
     pub async fn ensure_git_status_watcher(self: &Arc<Self>, worktree: Worktree) {
+        let execution = self.worktree_vcs_execution_host();
+        let runtime = self.worktree_vcs_runtime_host();
         self.workspaces
-            .ensure_git_status_watcher(self, worktree)
+            .ensure_git_status_watcher(runtime, execution, worktree)
             .await;
     }
 

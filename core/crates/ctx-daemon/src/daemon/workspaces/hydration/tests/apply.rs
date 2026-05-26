@@ -90,7 +90,7 @@ fn test_workspace_runtime() -> WorkspaceRuntime {
         worktree_vcs_runtime: Arc::new(AsyncMutex::new(HashMap::new())),
         worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime::with_concurrency(1),
         worktree_vcs_events: tokio::sync::broadcast::channel(1024).0,
-        git_status_watchers: AsyncMutex::new(HashSet::new()),
+        git_status_watchers: Arc::new(AsyncMutex::new(HashSet::new())),
         workspace_active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
         workspace_active_snapshot_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         workspace_active_heads_cache: Arc::new(AsyncMutex::new(HashMap::new())),

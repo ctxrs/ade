@@ -23,7 +23,7 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
             worktree_vcs_scheduler_concurrency_from_env(),
         ),
         worktree_vcs_events: broadcast::channel(1024).0,
-        git_status_watchers: Mutex::new(HashSet::new()),
+        git_status_watchers: Arc::new(Mutex::new(HashSet::new())),
         workspace_active_snapshot,
         workspace_active_snapshot_cache: Arc::new(Mutex::new(HashMap::new())),
         workspace_active_heads_cache: Arc::new(Mutex::new(HashMap::new())),

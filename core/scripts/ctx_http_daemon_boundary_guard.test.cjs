@@ -317,6 +317,8 @@ const {
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
+  scanWorktreeVcsAssemblyRatchet,
+  scanWorktreeVcsExplicitHostImplementationRatchet,
   scanWorkspaceVcsStreamDaemonImplementationRatchet,
   scanWorkspaceVcsStreamHandleFieldRatchet,
   scanWorkspaceVcsStreamRouteExtractorRatchet,
@@ -4483,6 +4485,160 @@ test("appstate guard rejects workspace stream hidden full-state assembly", () =>
   assert(violations.includes("workspace stream assembly uses state-capturing closure"));
   assert(violations.includes("workspace stream assembly uses broad workspace handle"));
   assert(violations.includes("workspace stream assembly uses old broad active loader"));
+});
+
+test("appstate guard rejects worktree VCS hidden full-state assembly", () => {
+  const violations = scanWorktreeVcsAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
+          let refresh = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |worktree| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                state.refresh_worktree_vcs_snapshot(worktree).await
+              })
+            }
+          });
+          WorkspacePrimaryBranchHandle::new(refresh)
+        }
+
+        fn session_vcs_effects(&self) -> Arc<SessionVcsEffects> {
+          let state = Arc::clone(&self.state);
+          let load = Arc::new(move |worktree| {
+            let state = Arc::clone(&state);
+            Box::pin(async move { state.get_worktree_vcs_snapshot(worktree.id).await })
+          });
+          SessionVcsEffects::new(load)
+        }
+
+        pub fn workspace_vcs_stream(&self) -> WorkspaceVcsStreamHandle {
+          let state = Arc::clone(&self.state);
+          let refresh = Arc::new(move |worktree| {
+            let state = Arc::clone(&state);
+            Box::pin(async move { state.ensure_git_status_watcher(worktree).await })
+          });
+          WorkspaceVcsStreamHandle::new(refresh)
+        }
+
+        pub(in crate::daemon) fn workspace_vcs_stream_with_refresh_effect(
+          &self,
+          refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
+        ) -> WorkspaceVcsStreamHandle {
+          let state = Arc::clone(&self.state);
+          let watch = Arc::new(move |worktree| {
+            let state = Arc::clone(&state);
+            Box::pin(async move { state.ensure_git_status_watcher(worktree).await })
+          });
+          WorkspaceVcsStreamHandle::new(watch, refresh_worktree_vcs)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("worktree VCS assembly captures full daemon state"));
+  assert(violations.includes("worktree VCS assembly uses state-capturing closure"));
+  assert.equal(
+    violations.filter(
+      (name) => name === "worktree VCS assembly captures full daemon state",
+    ).length,
+    4,
+  );
+});
+
+test("appstate guard accepts explicit worktree VCS assembly hosts", () => {
+  const violations = scanWorktreeVcsAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
+          let vcs_runtime = self.worktree_vcs_runtime_host();
+          let vcs_execution = self.worktree_vcs_execution_host();
+          let refresh = Arc::new(move |worktree| {
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
+            Box::pin(async move {
+              emit_worktree_vcs_snapshot_for_worktree(&vcs_runtime, &vcs_execution, &worktree, true).await
+            })
+          });
+          WorkspacePrimaryBranchHandle::new(refresh)
+        }
+
+        fn session_vcs_effects(&self) -> Arc<SessionVcsEffects> {
+          let vcs_runtime = self.worktree_vcs_runtime_host();
+          let vcs_execution = self.worktree_vcs_execution_host();
+          let load = Arc::new(move |worktree_id| {
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
+            Box::pin(async move { vcs_runtime.get_worktree_vcs_snapshot(&vcs_execution, worktree_id).await })
+          });
+          SessionVcsEffects::new(load)
+        }
+
+        pub fn workspace_vcs_stream(&self) -> WorkspaceVcsStreamHandle {
+          let vcs_runtime = self.worktree_vcs_runtime_host();
+          let vcs_execution = self.worktree_vcs_execution_host();
+          let refresh = Arc::new(move |worktree| {
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
+            Box::pin(async move {
+              vcs_runtime.ensure_git_status_watcher(vcs_execution, worktree).await
+            })
+          });
+          WorkspaceVcsStreamHandle::new(refresh)
+        }
+
+        pub(in crate::daemon) fn workspace_vcs_stream_with_refresh_effect(
+          &self,
+          refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
+        ) -> WorkspaceVcsStreamHandle {
+          let vcs_runtime = self.worktree_vcs_runtime_host();
+          let vcs_execution = self.worktree_vcs_execution_host();
+          let watch = Arc::new(move |worktree| {
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
+            Box::pin(async move {
+              vcs_runtime.ensure_git_status_watcher(vcs_execution, worktree).await
+            })
+          });
+          WorkspaceVcsStreamHandle::new(watch, refresh_worktree_vcs)
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("appstate guard rejects broad daemon state in migrated worktree VCS helpers", () => {
+  const violations = scanWorktreeVcsExplicitHostImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/git_status/source.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::state::DaemonState;
+      pub struct HttpWorktreeVcsSource {
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "worktree VCS explicit host implementation uses broad daemon state",
+    "worktree VCS explicit host implementation uses broad daemon state",
+  ]);
+  assert.deepEqual(
+    scanWorktreeVcsExplicitHostImplementationRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/git_status/source.rs",
+      contents: `
+        pub(in crate::daemon) struct HttpWorktreeVcsSource<'a> {
+          execution: &'a WorktreeVcsExecutionHost,
+        }
+      `,
+    }),
+    [],
+  );
 });
 
 test("appstate guard rejects resource utilization route extraction outside resource route", () => {

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -9,12 +8,11 @@ use ctx_worktree_vcs_service::{
     resolve_worktree_vcs_metadata_roots, WorktreeVcsGitCommand, WORKTREE_VCS_WATCH_DEBOUNCE_MS,
 };
 
-use crate::daemon::DaemonState;
 use ctx_settings_model::ExecutionMode;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use super::sandbox::container_git_stdout;
-use super::vcs_driver_for_worktree;
+use super::{vcs_driver_for_worktree, WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 mod debounce;
 mod poller;
@@ -23,24 +21,30 @@ use debounce::build_git_status_watcher;
 use poller::run_git_status_poller;
 
 pub(super) async fn run_git_status_watcher(
-    state: Arc<DaemonState>,
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
     worktree: Worktree,
 ) -> Result<()> {
-    let data_plane = resolve_worktree_data_plane(state.as_ref(), &worktree).await?;
+    let data_plane = resolve_worktree_data_plane(&execution, &worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         // Disk-isolated worktrees live inside the harness container; host filesystem watchers
         // cannot observe changes. Polling keeps VCS snapshots up to date.
-        let _ = container_git_stdout(&state, &worktree, WorktreeVcsGitCommand::IsInsideWorkTree)
-            .await?;
-        return run_git_status_poller(state, worktree).await;
+        let _ = container_git_stdout(
+            &execution,
+            &worktree,
+            WorktreeVcsGitCommand::IsInsideWorkTree,
+        )
+        .await?;
+        return run_git_status_poller(runtime, execution, worktree).await;
     }
     let vcs = vcs_driver_for_worktree(&worktree);
     vcs.assert_repo(root).await?;
     let metadata_roots = resolve_worktree_vcs_metadata_roots(&worktree, root).await?;
 
     let mut watcher = build_git_status_watcher(
-        state.clone(),
+        runtime.clone(),
+        execution.clone(),
         worktree.clone(),
         root.to_path_buf(),
         metadata_roots.clone(),
@@ -54,7 +58,7 @@ pub(super) async fn run_git_status_watcher(
             worktree_id = %worktree.id.0,
             "git status watcher unavailable; falling back to polling: {err:#}"
         );
-        return run_git_status_poller(state, worktree).await;
+        return run_git_status_poller(runtime, execution, worktree).await;
     }
     for metadata_root in metadata_roots
         .iter()
@@ -66,7 +70,7 @@ pub(super) async fn run_git_status_watcher(
                 metadata_root = %metadata_root.display(),
                 "vcs metadata watcher unavailable; falling back to polling: {err:#}"
             );
-            return run_git_status_poller(state, worktree).await;
+            return run_git_status_poller(runtime, execution, worktree).await;
         }
     }
     std::future::pending::<Result<()>>().await

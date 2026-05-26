@@ -59,7 +59,7 @@ pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_runtime: Arc<Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>>,
     pub(crate) worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime,
     pub(crate) worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
-    pub(crate) git_status_watchers: Mutex<HashSet<WorktreeId>>,
+    pub(crate) git_status_watchers: Arc<Mutex<HashSet<WorktreeId>>>,
     pub(crate) workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
     pub(crate) workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
     pub(crate) workspace_active_heads_cache: WorkspaceActiveHeadsCache,

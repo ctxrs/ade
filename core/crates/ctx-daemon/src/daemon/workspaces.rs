@@ -30,7 +30,9 @@ pub use active_snapshot_state::load_workspace_active_snapshot_state;
 pub use cache_stats::WorkspaceCacheDebugStats;
 pub use deletion::WorkspaceDeleteError;
 pub(in crate::daemon) use deletion::{WorkspaceDeletionRuntime, WorkspaceDeletionRuntimeDeps};
-pub use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
+pub(in crate::daemon) use diff_exec::{
+    diff_worktree_for_session, diff_worktree_summary_for_session,
+};
 pub use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
     ResolvedExistingWorktreeExecution,

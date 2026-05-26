@@ -42,8 +42,9 @@ pub struct WorktreeVcsSchedulerJob {
     pub refresh_touched_files: bool,
 }
 
+#[derive(Clone)]
 pub struct WorktreeVcsSchedulerRuntime {
-    pub started: AtomicBool,
+    pub started: Arc<AtomicBool>,
     pub notify: Arc<Notify>,
     pub permits: Arc<Semaphore>,
 }
@@ -51,7 +52,7 @@ pub struct WorktreeVcsSchedulerRuntime {
 impl WorktreeVcsSchedulerRuntime {
     pub fn with_concurrency(concurrency: usize) -> Self {
         Self {
-            started: AtomicBool::new(false),
+            started: Arc::new(AtomicBool::new(false)),
             notify: Arc::new(Notify::new()),
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
         }

@@ -3515,12 +3515,9 @@ impl TestDaemon {
         worktree: &Worktree,
         include_commit_info: bool,
     ) -> anyhow::Result<()> {
-        daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
-            &self.state,
-            worktree,
-            include_commit_info,
-        )
-        .await
+        self.state
+            .emit_worktree_vcs_snapshot_for_worktree(worktree, include_commit_info)
+            .await
     }
 
     pub async fn request_worktree_vcs_refresh_for_test(
@@ -3529,13 +3526,9 @@ impl TestDaemon {
         summary: bool,
         touched_files: bool,
     ) -> anyhow::Result<()> {
-        daemon::git_status::request_worktree_vcs_refresh(
-            &self.state,
-            worktree,
-            summary,
-            touched_files,
-        )
-        .await
+        self.state
+            .request_worktree_vcs_refresh_for_worktree(worktree, summary, touched_files)
+            .await
     }
 
     pub async fn mark_worktree_vcs_filesystem_dirty_for_test(
@@ -3543,16 +3536,16 @@ impl TestDaemon {
         worktree: &Worktree,
         candidate_path: impl Into<String>,
     ) -> anyhow::Result<()> {
-        daemon::git_status::mark_worktree_vcs_dirty(
-            &self.state,
-            worktree,
-            ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
-                worktree_fs: true,
-                vcs_meta: false,
-            },
-            vec![candidate_path.into()],
-        )
-        .await
+        self.state
+            .mark_worktree_vcs_dirty_for_worktree(
+                worktree,
+                ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
+                    worktree_fs: true,
+                    vcs_meta: false,
+                },
+                vec![candidate_path.into()],
+            )
+            .await
     }
 
     pub async fn mark_worktree_vcs_metadata_dirty_for_test(
@@ -3560,27 +3553,31 @@ impl TestDaemon {
         worktree: &Worktree,
         candidate_path: impl Into<String>,
     ) -> anyhow::Result<()> {
-        daemon::git_status::mark_worktree_vcs_dirty(
-            &self.state,
-            worktree,
-            ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
-                worktree_fs: false,
-                vcs_meta: true,
-            },
-            vec![candidate_path.into()],
-        )
-        .await
+        self.state
+            .mark_worktree_vcs_dirty_for_worktree(
+                worktree,
+                ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
+                    worktree_fs: false,
+                    vcs_meta: true,
+                },
+                vec![candidate_path.into()],
+            )
+            .await
     }
 
     pub async fn refresh_worktree_vcs_summary_for_test(
         &self,
         worktree: Worktree,
     ) -> anyhow::Result<()> {
-        daemon::git_status::refresh_worktree_vcs_summary(Arc::clone(&self.state), worktree).await
+        self.state
+            .refresh_worktree_vcs_summary_for_worktree(worktree)
+            .await
     }
 
     pub async fn run_git_status_watcher_for_test(&self, worktree: Worktree) -> anyhow::Result<()> {
-        daemon::git_status::run_git_status_watcher(Arc::clone(&self.state), worktree).await
+        self.state
+            .run_git_status_watcher_for_worktree(worktree)
+            .await
     }
 
     pub async fn load_worktree_for_test(

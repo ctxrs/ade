@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use ctx_core::models::{
     Worktree, WorktreeVcsComputeState, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot,
@@ -9,14 +7,13 @@ use ctx_worktree_vcs_service::{
     build_worktree_vcs_snapshot_from_source, WorktreeDiffBaseResolution,
 };
 
-use crate::daemon::DaemonState;
-
 use super::projection::publish_worktree_vcs_snapshot;
 use super::source::HttpWorktreeVcsSource;
+use super::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn build_worktree_vcs_snapshot_from_parts(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     git_status: WorktreeVcsGitStatusSummary,
     touched_files: WorktreeVcsTouchedFiles,
@@ -27,7 +24,7 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
     available: bool,
     unavailable_reason: Option<ctx_core::models::DiffUnavailableReason>,
 ) -> Result<WorktreeVcsSnapshot> {
-    let source = HttpWorktreeVcsSource::new(state, worktree);
+    let source = HttpWorktreeVcsSource::new(execution, worktree);
     build_worktree_vcs_snapshot_from_source(
         &source,
         worktree,
@@ -44,13 +41,15 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
 }
 
 pub(super) async fn publish_no_repo_snapshot(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     resolution: WorktreeDiffBaseResolution,
     force_emit: bool,
 ) -> Result<()> {
     publish_unavailable_snapshot(
-        state,
+        runtime,
+        execution,
         worktree,
         resolution,
         force_emit,
@@ -60,14 +59,15 @@ pub(super) async fn publish_no_repo_snapshot(
 }
 
 pub(super) async fn publish_unavailable_snapshot(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     resolution: WorktreeDiffBaseResolution,
     force_emit: bool,
     reason: ctx_core::models::DiffUnavailableReason,
 ) -> Result<()> {
     let snapshot = build_worktree_vcs_snapshot_from_parts(
-        state,
+        execution,
         worktree,
         WorktreeVcsGitStatusSummary::default(),
         WorktreeVcsTouchedFiles::default(),
@@ -79,6 +79,6 @@ pub(super) async fn publish_unavailable_snapshot(
         Some(reason),
     )
     .await?;
-    publish_worktree_vcs_snapshot(state, worktree, snapshot, force_emit, None).await;
+    publish_worktree_vcs_snapshot(runtime, execution, worktree, snapshot, force_emit, None).await;
     Ok(())
 }

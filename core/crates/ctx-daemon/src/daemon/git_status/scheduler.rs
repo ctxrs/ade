@@ -1,20 +1,19 @@
-use std::sync::Arc;
-
-use crate::daemon::DaemonState;
-
 use super::projection::refresh_worktree_vcs_projection;
+use super::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 async fn run_worktree_vcs_job(
-    state: Arc<DaemonState>,
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
     worktree_id: ctx_core::ids::WorktreeId,
     refresh_summary: bool,
     refresh_touched_files: bool,
 ) {
-    let result = match state.store_for_worktree(worktree_id).await {
+    let result = match execution.store_for_worktree(worktree_id).await {
         Ok(store) => match store.get_worktree(worktree_id).await {
             Ok(Some(worktree)) => {
                 refresh_worktree_vcs_projection(
-                    &state,
+                    &runtime,
+                    &execution,
                     &worktree,
                     refresh_summary,
                     refresh_touched_files,
@@ -35,16 +34,16 @@ async fn run_worktree_vcs_job(
         );
     }
 
-    let should_notify = state.finish_worktree_vcs_job(worktree_id).await;
+    let should_notify = runtime.finish_worktree_vcs_job(worktree_id).await;
     if should_notify {
-        state.notify_worktree_vcs_scheduler();
+        runtime.notify_worktree_vcs_scheduler();
     }
 }
 
 async fn next_worktree_vcs_job(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
 ) -> Option<(ctx_core::ids::WorktreeId, bool, bool)> {
-    state.claim_next_worktree_vcs_job().await.map(|job| {
+    runtime.claim_next_worktree_vcs_job().await.map(|job| {
         (
             job.worktree_id,
             job.refresh_summary,
@@ -53,36 +52,48 @@ async fn next_worktree_vcs_job(
     })
 }
 
-async fn run_worktree_vcs_scheduler(state: Arc<DaemonState>) {
+async fn run_worktree_vcs_scheduler(
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
+) {
     loop {
-        state.wait_worktree_vcs_scheduler_notification().await;
+        runtime.wait_worktree_vcs_scheduler_notification().await;
         loop {
-            let permit = match state.try_acquire_worktree_vcs_scheduler_permit() {
+            let permit = match runtime.try_acquire_worktree_vcs_scheduler_permit() {
                 Some(permit) => permit,
                 None => break,
             };
             let Some((worktree_id, refresh_summary, refresh_touched_files)) =
-                next_worktree_vcs_job(&state).await
+                next_worktree_vcs_job(&runtime).await
             else {
                 drop(permit);
                 break;
             };
-            let state = state.clone();
+            let runtime = runtime.clone();
+            let execution = execution.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                run_worktree_vcs_job(state, worktree_id, refresh_summary, refresh_touched_files)
-                    .await;
+                run_worktree_vcs_job(
+                    runtime,
+                    execution,
+                    worktree_id,
+                    refresh_summary,
+                    refresh_touched_files,
+                )
+                .await;
             });
         }
     }
 }
 
-pub(super) async fn ensure_worktree_vcs_scheduler_started(state: &Arc<DaemonState>) {
-    if !state.mark_worktree_vcs_scheduler_started() {
+pub(super) async fn ensure_worktree_vcs_scheduler_started(
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
+) {
+    if !runtime.mark_worktree_vcs_scheduler_started() {
         return;
     }
-    let state = state.clone();
     tokio::spawn(async move {
-        run_worktree_vcs_scheduler(state).await;
+        run_worktree_vcs_scheduler(runtime, execution).await;
     });
 }

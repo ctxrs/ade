@@ -10,9 +10,7 @@ use ctx_worktree_vcs_service::{
 };
 use notify::{Event, RecommendedWatcher};
 
-use crate::daemon::DaemonState;
-
-use super::super::mark_worktree_vcs_dirty;
+use super::super::{mark_worktree_vcs_dirty, WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 fn lock_watch_pending<'a>(
     pending: &'a Arc<StdMutex<WorktreeVcsWatchDebounceState>>,
@@ -29,7 +27,8 @@ fn lock_watch_pending<'a>(
 }
 
 async fn dispatch_invalidation(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     pending: WorktreeVcsInvalidation,
 ) {
@@ -37,13 +36,16 @@ async fn dispatch_invalidation(
         return;
     }
     let (dirty_bits, candidate_paths) = pending.into_parts();
-    if let Err(err) = mark_worktree_vcs_dirty(state, worktree, dirty_bits, candidate_paths).await {
+    if let Err(err) =
+        mark_worktree_vcs_dirty(runtime, execution, worktree, dirty_bits, candidate_paths).await
+    {
         tracing::warn!(worktree_id = %worktree.id.0, "git status invalidation failed: {err:#}");
     }
 }
 
 pub(super) fn build_git_status_watcher(
-    state: Arc<DaemonState>,
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
     worktree: Worktree,
     worktree_root: PathBuf,
     metadata_roots: Vec<PathBuf>,
@@ -70,7 +72,8 @@ pub(super) fn build_git_status_watcher(
                 };
                 if should_spawn {
                     let pending = pending.clone();
-                    let state = state.clone();
+                    let runtime = runtime.clone();
+                    let execution = execution.clone();
                     let worktree = worktree.clone();
                     let handle = handle.clone();
                     handle.spawn(async move {
@@ -80,7 +83,7 @@ pub(super) fn build_git_status_watcher(
                                 let mut guard = lock_watch_pending(&pending);
                                 guard.take_invalidation()
                             };
-                            dispatch_invalidation(&state, &worktree, next).await;
+                            dispatch_invalidation(&runtime, &execution, &worktree, next).await;
                             let mut guard = lock_watch_pending(&pending);
                             if guard.finish_dispatch_cycle() {
                                 continue;

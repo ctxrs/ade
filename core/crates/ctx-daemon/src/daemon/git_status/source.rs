@@ -1,21 +1,25 @@
-use std::sync::Arc;
-
 use ctx_core::models::Worktree;
 
-use crate::daemon::DaemonState;
+use super::WorktreeVcsExecutionHost;
 
 mod commit_lookup;
 mod diff_base;
 mod diff_path;
 mod status;
 
-pub struct HttpWorktreeVcsSource<'a> {
-    state: &'a Arc<DaemonState>,
+pub(in crate::daemon) struct HttpWorktreeVcsSource<'a> {
+    execution: &'a WorktreeVcsExecutionHost,
     worktree: &'a Worktree,
 }
 
 impl<'a> HttpWorktreeVcsSource<'a> {
-    pub fn new(state: &'a Arc<DaemonState>, worktree: &'a Worktree) -> Self {
-        Self { state, worktree }
+    pub(in crate::daemon) fn new(
+        execution: &'a WorktreeVcsExecutionHost,
+        worktree: &'a Worktree,
+    ) -> Self {
+        Self {
+            execution,
+            worktree,
+        }
     }
 }

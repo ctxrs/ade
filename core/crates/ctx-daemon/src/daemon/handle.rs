@@ -64,6 +64,7 @@ use crate::daemon::sessions::{
 
 use super::{
     blobs::BlobHandle,
+    git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost},
     route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
     scheduler::SessionSchedulerWorkerHost,
     session_control_effects::{SessionControlHandle, SessionControlHandleParts},
@@ -230,6 +231,20 @@ impl DaemonHandle {
         ))
     }
 
+    fn worktree_vcs_execution_host(&self) -> WorktreeVcsExecutionHost {
+        WorktreeVcsExecutionHost::new(
+            self.state.core.data_root.clone(),
+            self.state.core.daemon_url.clone(),
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            Arc::clone(&self.state.execution.harness),
+        )
+    }
+
+    fn worktree_vcs_runtime_host(&self) -> WorktreeVcsRuntimeHost {
+        WorktreeVcsRuntimeHost::from_workspace_runtime(&self.state.workspaces)
+    }
+
     pub fn workspace_attachments(&self) -> WorkspaceAttachmentsHandle {
         let workspace_stores = self.protected_workspace_store_lookup();
         WorkspaceAttachmentsHandle::new(
@@ -240,13 +255,20 @@ impl DaemonHandle {
     }
 
     pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
+        let vcs_runtime = self.worktree_vcs_runtime_host();
+        let vcs_execution = self.worktree_vcs_execution_host();
         let refresh_vcs_snapshot = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree| {
-                let state = Arc::clone(&state);
+                let vcs_runtime = vcs_runtime.clone();
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
                     crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
-                        &state, &worktree, true,
+                        &vcs_runtime,
+                        &vcs_execution,
+                        &worktree,
+                        true,
                     )
                     .await
                 }) as WorkspacePrimaryBranchRefreshFuture
@@ -683,22 +705,25 @@ impl DaemonHandle {
     }
 
     fn session_vcs_effects(&self) -> Arc<SessionVcsEffects> {
+        let vcs_runtime = self.worktree_vcs_runtime_host();
+        let vcs_execution = self.worktree_vcs_execution_host();
         let worktree_has_vcs_repo = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    crate::daemon::git_status::worktree_has_vcs_repo(&state, &worktree).await
+                    crate::daemon::git_status::worktree_has_vcs_repo(&vcs_execution, &worktree)
+                        .await
                 }) as SessionVcsFuture<_>
             }
         });
         let load_git_status_snapshot = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, include_untracked_files: bool, include_entries: bool| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
                     crate::daemon::git_status::load_git_status_snapshot(
-                        &state,
+                        &vcs_execution,
                         &worktree,
                         include_untracked_files,
                         include_entries,
@@ -708,23 +733,25 @@ impl DaemonHandle {
             }
         });
         let resolve_worktree_commit = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, revision: String| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    let source =
-                        crate::daemon::git_status::HttpWorktreeVcsSource::new(&state, &worktree);
+                    let source = crate::daemon::git_status::HttpWorktreeVcsSource::new(
+                        &vcs_execution,
+                        &worktree,
+                    );
                     source.resolve_commit(&revision).await
                 }) as SessionVcsFuture<_>
             }
         });
         let diff_worktree_for_session = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, base_commit_sha: String| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
                     crate::daemon::workspaces::diff_worktree_for_session(
-                        &state,
+                        &vcs_execution,
                         &worktree,
                         &base_commit_sha,
                     )
@@ -733,12 +760,12 @@ impl DaemonHandle {
             }
         });
         let diff_worktree_summary_for_session = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, base_commit_sha: String| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
                     crate::daemon::workspaces::diff_worktree_summary_for_session(
-                        &state,
+                        &vcs_execution,
                         &worktree,
                         &base_commit_sha,
                     )
@@ -747,12 +774,14 @@ impl DaemonHandle {
             }
         });
         let resolve_worktree_diff_base = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, query: SessionVcsDiffBaseQuery| {
-                let state = Arc::clone(&state);
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    let source =
-                        crate::daemon::git_status::HttpWorktreeVcsSource::new(&state, &worktree);
+                    let source = crate::daemon::git_status::HttpWorktreeVcsSource::new(
+                        &vcs_execution,
+                        &worktree,
+                    );
                     ctx_worktree_vcs_service::resolve_worktree_diff_base_from_source(
                         &source,
                         &worktree,
@@ -777,21 +806,35 @@ impl DaemonHandle {
                 }) as SessionVcsFuture<_>
             });
         let cached_worktree_vcs_snapshot = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
             move |worktree_id: WorktreeId| {
-                let state = Arc::clone(&state);
-                Box::pin(async move { state.get_worktree_vcs_snapshot(worktree_id).await })
-                    as SessionVcsFuture<_>
+                let vcs_runtime = vcs_runtime.clone();
+                let vcs_execution = vcs_execution.clone();
+                Box::pin(async move {
+                    vcs_runtime
+                        .get_worktree_vcs_snapshot(&vcs_execution, worktree_id)
+                        .await
+                }) as SessionVcsFuture<_>
             }
         });
         let emit_compat_payload_reject_counter = Arc::new({
-            let state = Arc::clone(&self.state);
+            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
             move |surface: &'static str, issue: &'static str| {
-                let state = Arc::clone(&state);
+                let perf_telemetry = perf_telemetry.clone();
                 Box::pin(async move {
-                    state
-                        .emit_compat_payload_reject_counter(surface, issue, None)
-                        .await;
+                    let mut labels = HashMap::new();
+                    labels.insert("source".to_string(), "daemon".to_string());
+                    labels.insert("surface".to_string(), surface.to_string());
+                    labels.insert("issue".to_string(), issue.to_string());
+                    let metric = PerfMetric {
+                        name: "compat.payload_reject_count".to_string(),
+                        kind: PerfMetricKind::Counter,
+                        unit: "count".to_string(),
+                        value: 1.0,
+                        labels,
+                    };
+                    perf_telemetry.record_metric(metric, None, None, None).await;
                 }) as SessionVcsFuture<_>
             }
         });
@@ -1150,23 +1193,34 @@ impl DaemonHandle {
     }
 
     pub fn workspace_vcs_stream(&self) -> WorkspaceVcsStreamHandle {
+        let vcs_runtime = self.worktree_vcs_runtime_host();
+        let vcs_execution = self.worktree_vcs_execution_host();
         let ensure_worktree_vcs_watcher = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree| {
-                let state = Arc::clone(&state);
+                let vcs_runtime = vcs_runtime.clone();
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    state.ensure_git_status_watcher(worktree).await;
+                    vcs_runtime
+                        .ensure_git_status_watcher(vcs_execution, worktree)
+                        .await;
                 }) as WorkspaceVcsStreamWatcherFuture
             }
         });
         let refresh_worktree_vcs = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree, summary: bool, touched_files: bool| {
-                let state = Arc::clone(&state);
+                let vcs_runtime = vcs_runtime.clone();
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    state.ensure_git_status_watcher(worktree.clone()).await;
+                    vcs_runtime
+                        .ensure_git_status_watcher(vcs_execution.clone(), worktree.clone())
+                        .await;
                     crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
-                        &state,
+                        &vcs_runtime,
+                        &vcs_execution,
                         &worktree,
                         summary,
                         touched_files,
@@ -1192,12 +1246,18 @@ impl DaemonHandle {
         &self,
         refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
     ) -> WorkspaceVcsStreamHandle {
+        let vcs_runtime = self.worktree_vcs_runtime_host();
+        let vcs_execution = self.worktree_vcs_execution_host();
         let ensure_worktree_vcs_watcher = Arc::new({
-            let state = Arc::clone(&self.state);
+            let vcs_runtime = vcs_runtime.clone();
+            let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree| {
-                let state = Arc::clone(&state);
+                let vcs_runtime = vcs_runtime.clone();
+                let vcs_execution = vcs_execution.clone();
                 Box::pin(async move {
-                    state.ensure_git_status_watcher(worktree).await;
+                    vcs_runtime
+                        .ensure_git_status_watcher(vcs_execution, worktree)
+                        .await;
                 }) as WorkspaceVcsStreamWatcherFuture
             }
         });

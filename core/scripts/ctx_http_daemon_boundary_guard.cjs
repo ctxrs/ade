@@ -1056,6 +1056,13 @@ const workspaceVcsStreamRouteExtractorAllowedPaths = new Set([
 
 const workspaceVcsStreamDaemonImplementationPath =
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs";
+const worktreeVcsExplicitHostImplementationRoots = [
+  "core/crates/ctx-daemon/src/daemon/git_status.rs",
+  "core/crates/ctx-daemon/src/daemon/git_status/",
+  "core/crates/ctx-daemon/src/daemon/workspaces/diff_exec.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/diff_exec/",
+  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/git_watchers.rs",
+];
 
 const terminalStreamRuntimeApiRoots = [
   "core/crates/ctx-http/src/api/ws/terminal.rs",
@@ -10123,6 +10130,91 @@ function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorktreeVcsAssemblyRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const guardedFunctions = [
+    "workspace_primary_branch",
+    "session_vcs_effects",
+    "workspace_vcs_stream",
+    "workspace_vcs_stream_with_refresh_effect",
+  ];
+  const checks = [
+    {
+      name: "worktree VCS assembly captures full daemon state",
+      regex:
+        /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)|\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "worktree VCS assembly uses state-capturing closure",
+      regex:
+        /\blet\s+state\s*=\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)[\s\S]*?\bmove\s*\|/gu,
+    },
+  ];
+
+  for (const fnName of guardedFunctions) {
+    const block = rustFunctionBlockForName({ contents, fnName });
+    if (!block) {
+      violations.push({
+        filePath,
+        line: 1,
+        name: "worktree VCS assembly block missing",
+        text: fnName,
+      });
+      continue;
+    }
+    for (const check of checks) {
+      check.regex.lastIndex = 0;
+      for (
+        let match = check.regex.exec(block.text);
+        match;
+        match = check.regex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+function scanWorktreeVcsExplicitHostImplementationRatchet({ filePath, contents }) {
+  if (!pathMatchesAnyRoot(filePath, worktreeVcsExplicitHostImplementationRoots)) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadStateRegex =
+    /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bArc\s*::\s*clone\s*\(\s*&\s*(?:self\s*\.\s*)?state\s*\)/gu;
+  for (
+    let match = broadStateRegex.exec(contents);
+    match;
+    match = broadStateRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "worktree VCS explicit host implementation uses broad daemon state",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+
+  return violations;
+}
+
 function isWorkspaceVcsHttpModulePath(filePath) {
   return workspaceVcsHttpModuleRoots.some((root) =>
     root.endsWith("/") ? filePath.startsWith(root) : filePath === root
@@ -15997,6 +16089,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorktreeVcsAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceActiveHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -16224,6 +16320,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         workspaceVcsStreamCapability: hasWorkspaceVcsStreamCapability,
+      }),
+      ...scanWorktreeVcsExplicitHostImplementationRatchet({
+        filePath: relativePath,
+        contents,
       }),
       ...scanWorkspaceVcsStreamHandleFieldRatchet({
         filePath: relativePath,
@@ -17054,6 +17154,8 @@ module.exports = {
   scanWorkspaceStreamActiveDaemonImplementationRatchet,
   scanWorkspaceStreamHandleFieldRatchet,
   scanWorkspaceStreamRouteExtractorRatchet,
+  scanWorktreeVcsAssemblyRatchet,
+  scanWorktreeVcsExplicitHostImplementationRatchet,
   scanWorkspaceVcsStreamDaemonImplementationRatchet,
   scanWorkspaceVcsStreamHandleFieldRatchet,
   scanWorkspaceVcsStreamRouteExtractorRatchet,

@@ -13,7 +13,7 @@ use super::HttpWorktreeVcsSource;
 #[async_trait::async_trait]
 impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
     async fn load_primary_branch(&self) -> Result<Option<String>> {
-        let store = self.state.store_for_worktree(self.worktree.id).await?;
+        let store = self.execution.store_for_worktree(self.worktree.id).await?;
         workspace_config::load_primary_branch(&store).await
     }
 
@@ -25,10 +25,10 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
         if references.is_empty() {
             return Ok(Vec::new());
         }
-        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.execution, self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-            let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
+            let executor = HttpSandboxWorktreeVcsExecutor::new(self.execution, self.worktree);
             return SandboxWorktreeVcsSource::new(&executor)
                 .rev_parse_refs(references)
                 .await;
@@ -40,10 +40,10 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
     }
 
     async fn merge_base(&self, target_branch: &str) -> Result<String> {
-        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.execution, self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-            let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
+            let executor = HttpSandboxWorktreeVcsExecutor::new(self.execution, self.worktree);
             return SandboxWorktreeVcsSource::new(&executor)
                 .merge_base(target_branch)
                 .await;

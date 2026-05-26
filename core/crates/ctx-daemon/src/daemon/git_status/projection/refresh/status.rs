@@ -1,14 +1,11 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsGitStatusSummary};
 use ctx_worktree_vcs_service::{
     build_git_status_entries, build_git_status_summary, is_no_vcs_repo_error, GitStatusSnapshot,
 };
 
-use crate::daemon::DaemonState;
-
 use super::super::loading::load_git_status_snapshot;
+use crate::daemon::git_status::WorktreeVcsExecutionHost;
 
 pub(super) enum StatusProjectionOutcome {
     Ready(Box<StatusProjection>),
@@ -21,12 +18,12 @@ pub(super) struct StatusProjection {
 }
 
 pub(super) async fn load_status_projection(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     include_status_inventory: bool,
 ) -> Result<StatusProjectionOutcome> {
     let git_snapshot = match load_git_status_snapshot(
-        state,
+        execution,
         worktree,
         include_status_inventory,
         include_status_inventory,

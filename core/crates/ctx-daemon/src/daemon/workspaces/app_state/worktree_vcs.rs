@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use ctx_core::ids::WorktreeId;
+#[cfg(any(test, feature = "test-support"))]
+use ctx_core::models::Worktree;
 use ctx_core::models::{
     WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsSnapshot, WorktreeVcsTouchedFiles,
     WorktreeVcsTouchedFilesState,
@@ -10,8 +12,30 @@ use ctx_worktree_vcs_service::{GitStatusSnapshot, WorktreeVcsDirtyBits, Worktree
 use tokio::sync::{broadcast, OwnedSemaphorePermit};
 
 use crate::daemon::state::DaemonState;
+use crate::daemon::{
+    ProtectedWorkspaceStoreLookup, WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost,
+};
 
 impl DaemonState {
+    pub(in crate::daemon) fn worktree_vcs_execution_host(&self) -> WorktreeVcsExecutionHost {
+        let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+            self.core.stores.clone(),
+            Arc::clone(&self.sessions),
+            Arc::clone(&self.transport.merge_queue),
+        );
+        WorktreeVcsExecutionHost::new(
+            self.core.data_root.clone(),
+            self.core.daemon_url.clone(),
+            self.global_store().clone(),
+            workspace_stores,
+            Arc::clone(&self.execution.harness),
+        )
+    }
+
+    pub(in crate::daemon) fn worktree_vcs_runtime_host(&self) -> WorktreeVcsRuntimeHost {
+        WorktreeVcsRuntimeHost::from_workspace_runtime(&self.workspaces)
+    }
+
     pub fn worktree_vcs_enabled(&self) -> bool {
         self.workspaces.worktree_vcs_enabled
     }
@@ -171,5 +195,80 @@ impl DaemonState {
 
     pub fn mark_worktree_vcs_scheduler_started(&self) -> bool {
         self.workspaces.mark_worktree_vcs_scheduler_started()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn emit_worktree_vcs_snapshot_for_worktree(
+        &self,
+        worktree: &Worktree,
+        force_emit: bool,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+            &self.worktree_vcs_runtime_host(),
+            &self.worktree_vcs_execution_host(),
+            worktree,
+            force_emit,
+        )
+        .await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn request_worktree_vcs_refresh_for_worktree(
+        &self,
+        worktree: &Worktree,
+        summary: bool,
+        touched_files: bool,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::request_worktree_vcs_refresh(
+            &self.worktree_vcs_runtime_host(),
+            &self.worktree_vcs_execution_host(),
+            worktree,
+            summary,
+            touched_files,
+        )
+        .await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn mark_worktree_vcs_dirty_for_worktree(
+        &self,
+        worktree: &Worktree,
+        dirty_bits: WorktreeVcsDirtyBits,
+        candidate_paths: Vec<String>,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::mark_worktree_vcs_dirty(
+            &self.worktree_vcs_runtime_host(),
+            &self.worktree_vcs_execution_host(),
+            worktree,
+            dirty_bits,
+            candidate_paths,
+        )
+        .await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn refresh_worktree_vcs_summary_for_worktree(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::refresh_worktree_vcs_summary(
+            self.worktree_vcs_runtime_host(),
+            self.worktree_vcs_execution_host(),
+            worktree,
+        )
+        .await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn run_git_status_watcher_for_worktree(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::run_git_status_watcher(
+            self.worktree_vcs_runtime_host(),
+            self.worktree_vcs_execution_host(),
+            worktree,
+        )
+        .await
     }
 }

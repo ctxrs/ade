@@ -1,16 +1,14 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use ctx_core::models::Worktree;
 use ctx_worktree_vcs_service::{WorktreeVcsDirtyBits, WORKTREE_VCS_POLL_INTERVAL_MS};
 
-use crate::daemon::DaemonState;
-
-use super::super::mark_worktree_vcs_dirty;
+use super::super::{mark_worktree_vcs_dirty, WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 pub(super) async fn run_git_status_poller(
-    state: Arc<DaemonState>,
+    runtime: WorktreeVcsRuntimeHost,
+    execution: WorktreeVcsExecutionHost,
     worktree: Worktree,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(Duration::from_millis(WORKTREE_VCS_POLL_INTERVAL_MS));
@@ -18,7 +16,8 @@ pub(super) async fn run_git_status_poller(
     loop {
         interval.tick().await;
         if let Err(err) = mark_worktree_vcs_dirty(
-            &state,
+            &runtime,
+            &execution,
             &worktree,
             WorktreeVcsDirtyBits {
                 worktree_fs: true,

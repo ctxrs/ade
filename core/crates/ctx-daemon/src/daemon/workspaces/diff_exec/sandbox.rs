@@ -1,50 +1,49 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use ctx_core::models::Worktree;
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_sandbox_container_runtime::command_output_with_timeout;
-use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 use ctx_worktree_vcs_service::{
     load_worktree_vcs_session_diff_from_sandbox,
     load_worktree_vcs_session_diff_summary_from_sandbox, WorktreeVcsDiffSummaryCounts,
     WorktreeVcsSessionDiffCommand, WorktreeVcsSessionDiffSandboxExecutor,
 };
 
-use crate::daemon::DaemonState;
-use target::{ensure_container_for_worktree, SandboxExecTarget};
-
-#[path = "sandbox/target.rs"]
-mod target;
+use crate::daemon::git_status::{WorktreeVcsExecutionHost, WorktreeVcsSandboxTarget};
 
 struct HttpSandboxSessionDiffExecutor<'a> {
-    state: &'a Arc<DaemonState>,
+    execution: &'a WorktreeVcsExecutionHost,
     worktree: &'a Worktree,
 }
 
 #[async_trait::async_trait]
 impl WorktreeVcsSessionDiffSandboxExecutor for HttpSandboxSessionDiffExecutor<'_> {
     async fn stdout(&self, command: WorktreeVcsSessionDiffCommand) -> anyhow::Result<Vec<u8>> {
-        container_exec_stdout(self.state, self.worktree, command.program(), command.args()).await
+        container_exec_stdout(
+            self.execution,
+            self.worktree,
+            command.program(),
+            command.args(),
+        )
+        .await
     }
 }
 
 async fn container_exec_stdout(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     program: &str,
     args: &[String],
 ) -> anyhow::Result<Vec<u8>> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
-    let target = ensure_container_for_worktree(state, worktree).await?;
-    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
-    let out = match target {
-        SandboxExecTarget::NativeContainer { container_name } => {
-            let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    let context = execution.sandbox_context(worktree).await?;
+    let out = match context.target {
+        WorktreeVcsSandboxTarget::NativeContainer { container_name } => {
+            let mut cmd = sandbox_container_command(execution.data_root())?;
             cmd.arg("exec")
                 .arg("--workdir")
-                .arg(&data_plane.live_worktree_root)
+                .arg(&context.live_worktree_root)
                 .arg(&container_name)
                 .arg(program)
                 .args(args);
@@ -52,19 +51,21 @@ async fn container_exec_stdout(
                 .await
                 .context("sandbox exec command timed out")?
         }
-        SandboxExecTarget::SharedVmContainer => ctx_avf_linux_runtime::run_guest_exec_capture(
-            &state.core.data_root,
-            worktree.workspace_id,
-            worktree.id,
-            &data_plane.live_worktree_root,
-            program,
-            args,
-            &std::collections::HashMap::new(),
-            None,
-            false,
-        )
-        .await
-        .context("shared VM container exec command failed")?,
+        WorktreeVcsSandboxTarget::SharedVmContainer => {
+            ctx_avf_linux_runtime::run_guest_exec_capture(
+                execution.data_root(),
+                worktree.workspace_id,
+                worktree.id,
+                &context.live_worktree_root,
+                program,
+                args,
+                &std::collections::HashMap::new(),
+                None,
+                false,
+            )
+            .await
+            .context("shared VM container exec command failed")?
+        }
     };
     if out.status.success() {
         Ok(out.stdout)
@@ -84,19 +85,25 @@ async fn container_exec_stdout(
 }
 
 pub(super) async fn container_diff_worktree(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
-    let executor = HttpSandboxSessionDiffExecutor { state, worktree };
+    let executor = HttpSandboxSessionDiffExecutor {
+        execution,
+        worktree,
+    };
     load_worktree_vcs_session_diff_from_sandbox(&executor, base_commit_sha).await
 }
 
 pub(super) async fn container_diff_worktree_summary(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {
-    let executor = HttpSandboxSessionDiffExecutor { state, worktree };
+    let executor = HttpSandboxSessionDiffExecutor {
+        execution,
+        worktree,
+    };
     load_worktree_vcs_session_diff_summary_from_sandbox(&executor, base_commit_sha).await
 }

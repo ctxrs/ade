@@ -1,18 +1,17 @@
-use std::sync::Arc;
 use std::time::Instant;
 
 use ctx_core::models::{Worktree, WorktreeVcsSnapshot};
 use ctx_worktree_vcs_service::snapshot_for_durable_cache;
 
-use crate::daemon::DaemonState;
+use super::super::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 
 async fn persist_worktree_vcs_snapshot(
-    state: &Arc<DaemonState>,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     snapshot: &WorktreeVcsSnapshot,
 ) {
     let durable = snapshot_for_durable_cache(snapshot);
-    let Ok(store) = state.store_for_worktree(worktree.id).await else {
+    let Ok(store) = execution.store_for_worktree(worktree.id).await else {
         return;
     };
     if let Err(err) = store
@@ -27,34 +26,35 @@ async fn persist_worktree_vcs_snapshot(
 }
 
 pub(in crate::daemon::git_status) async fn publish_worktree_vcs_snapshot(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
+    execution: &WorktreeVcsExecutionHost,
     worktree: &Worktree,
     snapshot: WorktreeVcsSnapshot,
     force_emit: bool,
     summary_at: Option<Instant>,
 ) -> Option<WorktreeVcsSnapshot> {
-    let published = state
+    let published = runtime
         .upsert_worktree_vcs_snapshot(snapshot, force_emit, summary_at)
         .await?;
-    persist_worktree_vcs_snapshot(state, worktree, &published).await;
-    if state.is_worktree_vcs_active(worktree.id).await {
-        state.publish_worktree_vcs_event(published.clone());
+    persist_worktree_vcs_snapshot(execution, worktree, &published).await;
+    if runtime.is_worktree_vcs_active(worktree.id).await {
+        runtime.publish_worktree_vcs_event(published.clone());
     }
     Some(published)
 }
 
 pub(in crate::daemon::git_status) async fn publish_transient_worktree_vcs_snapshot(
-    state: &Arc<DaemonState>,
+    runtime: &WorktreeVcsRuntimeHost,
     worktree: &Worktree,
     snapshot: WorktreeVcsSnapshot,
 ) {
-    let Some(snapshot) = state
+    let Some(snapshot) = runtime
         .upsert_worktree_vcs_snapshot(snapshot, false, None)
         .await
     else {
         return;
     };
-    if state.is_worktree_vcs_active(worktree.id).await {
-        state.publish_worktree_vcs_event(snapshot);
+    if runtime.is_worktree_vcs_active(worktree.id).await {
+        runtime.publish_worktree_vcs_event(snapshot);
     }
 }
