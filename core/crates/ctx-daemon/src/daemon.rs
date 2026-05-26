@@ -99,7 +99,8 @@ pub use handle::{
     WorkspaceVcsStreamHandle, WorkspaceWorktreeHandle,
 };
 pub use health::HealthSnapshotError;
-pub use lifecycle::spawn_deferred_daemon_shutdown;
+pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
+pub(in crate::daemon) use lifecycle::{DaemonShutdownHost, DaemonShutdownHostParts};
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;
 pub use mcp_auth::issue_provider_session_mcp_token;

@@ -82,6 +82,7 @@ use super::{
         TaskWorktreeHost, TaskWorktreeHostParts, WorkspaceActiveCacheRuntime,
         WorkspaceActiveHydrationRuntime, WorkspaceDeletionRuntimeDeps,
     },
+    DaemonShutdownHost, DaemonShutdownHostParts,
 };
 
 #[derive(Clone)]
@@ -1412,19 +1413,18 @@ impl DaemonHandle {
     }
 
     pub fn daemon_shutdown(&self) -> DaemonShutdownHandle {
-        let request_shutdown = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |reason: String| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::maintenance::request_daemon_shutdown(state, reason).await
-                }) as DaemonShutdownFuture
-            }
+        let shutdown_host = DaemonShutdownHost::new(DaemonShutdownHostParts {
+            global_store: self.state.global_store().clone(),
+            stores: self.state.core.stores.clone(),
+            session_stores: self.session_store_lookup(),
+            session_lifecycle: Arc::clone(&self.state.sessions),
+            session_publication: self.session_publication_effects(),
+            provider_lifecycle: Arc::clone(&self.state.providers),
+            update_drain: Arc::clone(&self.state.core.update_drain),
+            substrate_lifecycle: Arc::clone(&self.state.execution.harness),
+            shutdown_signal: self.state.core.shutdown_tx.clone(),
         });
-        DaemonShutdownHandle::new(
-            self.state.core.local_shutdown_token.clone(),
-            request_shutdown,
-        )
+        DaemonShutdownHandle::new(self.state.core.local_shutdown_token.clone(), shutdown_host)
     }
 }
 
@@ -5151,33 +5151,20 @@ impl UpdateDrainHandle {
     }
 }
 
-type DaemonShutdownFuture = Pin<
-    Box<
-        dyn Future<
-                Output = Result<
-                    crate::daemon::DaemonTurnActivitySummary,
-                    crate::daemon::maintenance::DaemonShutdownError,
-                >,
-            > + Send
-            + 'static,
-    >,
->;
-type DaemonShutdownEffect = Arc<dyn Fn(String) -> DaemonShutdownFuture + Send + Sync>;
-
 #[derive(Clone)]
 pub struct DaemonShutdownHandle {
     local_shutdown_token: Option<String>,
-    request_shutdown: DaemonShutdownEffect,
+    shutdown_host: DaemonShutdownHost,
 }
 
 impl DaemonShutdownHandle {
     pub(in crate::daemon) fn new(
         local_shutdown_token: Option<String>,
-        request_shutdown: DaemonShutdownEffect,
+        shutdown_host: DaemonShutdownHost,
     ) -> Self {
         Self {
             local_shutdown_token,
-            request_shutdown,
+            shutdown_host,
         }
     }
 
@@ -5198,7 +5185,7 @@ impl DaemonShutdownHandle {
         crate::daemon::DaemonTurnActivitySummary,
         crate::daemon::maintenance::DaemonShutdownError,
     > {
-        (self.request_shutdown)(reason).await
+        crate::daemon::maintenance::request_daemon_shutdown(&self.shutdown_host, reason).await
     }
 }
 

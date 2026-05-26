@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Error;
-use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::route_contract::{
@@ -16,11 +15,10 @@ use ctx_workspace_runtime::HarnessRuntimeManager;
 use crate::daemon::activity::{
     daemon_sandbox_work_activity_summary_parts, daemon_turn_activity_summary_parts,
 };
-use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::{
-    daemon_turn_activity_summary, reconcile_running_turns_with_reason,
     spawn_deferred_daemon_shutdown, DaemonSandboxWorkActivitySummary, DaemonShutdownHandle,
-    DaemonState, DaemonTurnActivitySummary, LinuxSandboxRuntimeHandle, UpdateDrainHandle,
+    DaemonShutdownHost, DaemonState, DaemonTurnActivitySummary, LinuxSandboxRuntimeHandle,
+    UpdateDrainHandle,
 };
 
 pub struct MaintenanceDrainPermit {
@@ -202,29 +200,19 @@ pub(in crate::daemon) async fn acquire_linux_sandbox_prepare_drain_parts(
     Ok(permit)
 }
 
-pub async fn request_daemon_shutdown(
-    state: Arc<DaemonState>,
+pub(in crate::daemon) async fn request_daemon_shutdown(
+    host: &DaemonShutdownHost,
     reason: String,
 ) -> Result<DaemonTurnActivitySummary, DaemonShutdownError> {
-    let acquired_drain = state
-        .core
-        .update_drain
-        .acquire(&reason, "daemon_shutdown")
-        .await
-        .is_some();
+    let acquired_drain = host.acquire_shutdown_drain(&reason).await;
 
-    for session_id in state.running_session_ids().await {
-        if let Some(tx) = state.session_scheduler_sender(session_id).await {
-            let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
-            let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;
-        }
-    }
+    host.interrupt_running_sessions().await;
 
     for _ in 0..10 {
-        let activity = match daemon_turn_activity_summary(&state).await {
+        let activity = match host.turn_activity_summary().await {
             Ok(activity) => activity,
             Err(error) => {
-                release_shutdown_drain_on_error(&state, acquired_drain).await;
+                release_shutdown_drain_on_error(host, acquired_drain).await;
                 return Err(DaemonShutdownError::ActivityUnavailable(error));
             }
         };
@@ -234,21 +222,19 @@ pub async fn request_daemon_shutdown(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    if let Err(error) = reconcile_running_turns_with_reason(&state, &reason).await {
-        if acquired_drain {
-            let _ = state.core.update_drain.release().await;
-        }
+    if let Err(error) = host.reconcile_running_turns_with_reason(&reason).await {
+        host.release_shutdown_drain_if_owned(acquired_drain).await;
         return Err(DaemonShutdownError::Reconcile(error));
     }
-    let activity = match daemon_turn_activity_summary(&state).await {
+    let activity = match host.turn_activity_summary().await {
         Ok(activity) => activity,
         Err(error) => {
-            release_shutdown_drain_on_error(&state, acquired_drain).await;
+            release_shutdown_drain_on_error(host, acquired_drain).await;
             return Err(DaemonShutdownError::ActivityUnavailable(error));
         }
     };
 
-    spawn_deferred_daemon_shutdown(state, reason, Duration::from_millis(100));
+    spawn_deferred_daemon_shutdown(host.clone(), reason, Duration::from_millis(100));
     Ok(activity)
 }
 
@@ -260,10 +246,8 @@ fn turn_activity_blocks_update_drain(activity: &DaemonTurnActivitySummary) -> bo
     activity.queued_turn_count > 0 || activity.running_turn_count > 0
 }
 
-async fn release_shutdown_drain_on_error(state: &DaemonState, acquired_drain: bool) {
-    if acquired_drain {
-        let _ = state.core.update_drain.release().await;
-    }
+async fn release_shutdown_drain_on_error(host: &DaemonShutdownHost, acquired_drain: bool) {
+    host.release_shutdown_drain_if_owned(acquired_drain).await;
 }
 
 impl UpdateDrainHandle {

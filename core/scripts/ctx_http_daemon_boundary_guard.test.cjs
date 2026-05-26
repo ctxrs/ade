@@ -1050,8 +1050,17 @@ test("appstate daemon shutdown handle ratchet rejects broad fields and wrong rou
   const fieldViolations = scanDaemonShutdownHandleRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
     contents: `
+      type DaemonShutdownEffect = Arc<dyn Fn(String) -> DaemonShutdownFuture + Send + Sync>;
+
+      impl DaemonHandle {
+        pub fn daemon_shutdown(&self) -> DaemonShutdownHandle {
+          let state = Arc::clone(&self.state);
+        }
+      }
+
       pub struct DaemonShutdownHandle {
         state: Arc<DaemonState>,
+        request_shutdown: Arc<dyn Fn(String) -> DaemonShutdownFuture + Send + Sync>,
         execution: ExecutionHandle,
       }
     `,
@@ -1066,6 +1075,48 @@ test("appstate daemon shutdown handle ratchet rejects broad fields and wrong rou
     fieldViolations.includes(
       "daemon shutdown capability exposes generic full-state escape hatch",
     ),
+  );
+  assert(
+    fieldViolations.includes(
+      "daemon shutdown capability uses callback effect seam",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "daemon shutdown capability stores callback effect seam",
+    ),
+  );
+  assert(
+    fieldViolations.includes("daemon shutdown assembly clones full daemon state"),
+  );
+
+  const hostViolations = scanDaemonShutdownHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown_host.rs",
+    contents: `
+      pub(in crate::daemon) struct DaemonShutdownHost {
+        state: Arc<DaemonState>,
+        handle: DaemonHandle,
+        request_shutdown: Arc<dyn Fn(String) -> DaemonShutdownFuture + Send + Sync>,
+      }
+
+      pub(in crate::daemon) struct DaemonShutdownHostParts {
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    hostViolations.includes(
+      "daemon shutdown host stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    hostViolations.includes(
+      "daemon shutdown host exposes generic full-state escape hatch",
+    ),
+  );
+  assert(
+    hostViolations.includes("daemon shutdown host stores callback effect seam"),
   );
 });
 

@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use ctx_core::ids::{RunId, TurnId};
-use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus, VcsKind};
-use ctx_store::StoreManager;
+use ctx_core::models::{ExecutionEnvironment, Session, SessionTurn, SessionTurnStatus, VcsKind};
+use ctx_store::{Store, StoreManager};
 use ctx_update_service::route_contract::MaintenanceRouteErrorKind;
+
+use crate::daemon::scheduler::SchedulerCommand;
 
 async fn test_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     test_state_with_shutdown_token(None).await
@@ -36,6 +38,34 @@ async fn insert_turn_with_status(
     root: &std::path::Path,
     status: SessionTurnStatus,
 ) {
+    let (store, session) = insert_session(state, root).await;
+    let now = Utc::now();
+    store
+        .insert_session_turn(SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: session.id,
+            run_id: Some(RunId::new()),
+            user_message_id: None,
+            status,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            failure: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        })
+        .await
+        .expect("insert turn");
+}
+
+async fn insert_session(state: &Arc<DaemonState>, root: &std::path::Path) -> (Store, Session) {
     let workspace = state
         .global_store()
         .create_workspace(
@@ -86,30 +116,7 @@ async fn insert_turn_with_status(
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
         .expect("index session");
-    let now = Utc::now();
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
-            session_id: session.id,
-            run_id: Some(RunId::new()),
-            user_message_id: None,
-            status,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .expect("insert turn");
+    (store, session)
 }
 
 #[tokio::test]
@@ -235,6 +242,57 @@ async fn shutdown_route_rejects_missing_or_invalid_local_token() {
         assert_eq!(error.kind(), MaintenanceRouteErrorKind::Forbidden);
         assert_eq!(error.message(), "local desktop shutdown token required");
     }
+}
+
+#[tokio::test]
+async fn shutdown_route_interrupts_running_scheduler_sessions() {
+    let (data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
+    let session = insert_session(&state, data_dir.path()).await.1;
+    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state));
+    let (seen_tx, mut seen_rx) = tokio::sync::mpsc::channel(1);
+    handle
+        .session_message_command()
+        .ensure_scheduler_for_test(session.clone(), move |_session, mut rx| async move {
+            let interrupted = matches!(rx.recv().await, Some(SchedulerCommand::Interrupt(_)));
+            let _ = seen_tx.send(interrupted).await;
+        })
+        .await;
+    state.set_running(session.id, true).await;
+
+    let result = handle
+        .daemon_shutdown()
+        .request_daemon_shutdown_for_route(
+            ShutdownDaemonRouteRequest::new(true, Some("unit_test_shutdown".to_string()))
+                .with_supplied_shutdown_token(Some("secret".to_string())),
+        )
+        .await
+        .expect("shutdown should be accepted");
+
+    assert!(result.accepted);
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), seen_rx.recv())
+            .await
+            .expect("scheduler should receive shutdown interrupt"),
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn shutdown_route_tolerates_running_sessions_without_scheduler_sender() {
+    let (data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
+    let session = insert_session(&state, data_dir.path()).await.1;
+    state.set_running(session.id, true).await;
+    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).daemon_shutdown();
+
+    let result = handle
+        .request_daemon_shutdown_for_route(
+            ShutdownDaemonRouteRequest::new(true, Some("unit_test_shutdown".to_string()))
+                .with_supplied_shutdown_token(Some("secret".to_string())),
+        )
+        .await
+        .expect("shutdown should not require every running session to have a scheduler sender");
+
+    assert!(result.accepted);
 }
 
 #[tokio::test]

@@ -7649,10 +7649,48 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
   }
 
   if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const staleEffectRegex = /\bDaemonShutdownEffect\b/gu;
+    for (
+      let match = staleEffectRegex.exec(contents);
+      match;
+      match = staleEffectRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "daemon shutdown capability uses callback effect seam",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+
+    const assemblyBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "daemon_shutdown",
+    });
+    if (assemblyBlock) {
+      const fullStateCloneRegex = /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)/gu;
+      for (
+        let match = fullStateCloneRegex.exec(assemblyBlock.text);
+        match;
+        match = fullStateCloneRegex.exec(assemblyBlock.text)
+      ) {
+        const offset = assemblyBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown assembly clones full daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
     const block = rustStructBlockForType({ contents, typeName: "DaemonShutdownHandle" });
     if (block) {
       const broadFieldRegex =
         /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const callbackEffectFieldRegex = /\bArc\s*<\s*dyn\s+Fn\b/gu;
       const genericEscapeFieldRegex =
         /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
 
@@ -7672,6 +7710,21 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
       }
 
       for (
+        let match = callbackEffectFieldRegex.exec(block.text);
+        match;
+        match = callbackEffectFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown capability stores callback effect seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
         let match = genericEscapeFieldRegex.exec(block.text);
         match;
         match = genericEscapeFieldRegex.exec(block.text)
@@ -7682,6 +7735,65 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
           filePath,
           line,
           name: "daemon shutdown capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown_host.rs") {
+    for (const typeName of ["DaemonShutdownHost", "DaemonShutdownHostParts"]) {
+      const hostBlock = rustStructBlockForType({ contents, typeName });
+      if (!hostBlock) {
+        continue;
+      }
+      const broadHostTypeRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle|UpdateDrainHandle|LinuxSandboxRuntimeHandle|DaemonShutdownHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const callbackEffectFieldRegex = /\b(?:Arc|Box)\s*<\s*dyn\s+Fn\b/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|handle)\s*:/gmu;
+
+      for (
+        let match = broadHostTypeRegex.exec(hostBlock.text);
+        match;
+        match = broadHostTypeRegex.exec(hostBlock.text)
+      ) {
+        const offset = hostBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown host stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackEffectFieldRegex.exec(hostBlock.text);
+        match;
+        match = callbackEffectFieldRegex.exec(hostBlock.text)
+      ) {
+        const offset = hostBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown host stores callback effect seam",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(hostBlock.text);
+        match;
+        match = genericEscapeFieldRegex.exec(hostBlock.text)
+      ) {
+        const offset = hostBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "daemon shutdown host exposes generic full-state escape hatch",
           text: lines[line - 1]?.trim() ?? match[0],
         });
       }
