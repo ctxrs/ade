@@ -18,8 +18,8 @@ use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::broadcast;
 
 use super::{
-    handle::ProviderWorkspaceLaunchRuntime, ProviderAdminHandle, ProviderBootstrapHandle,
-    ProviderInstallHandle, ProviderStatusHandle, ProviderUsageHandle,
+    ProviderAdminHandle, ProviderBootstrapHandle, ProviderInstallHandle, ProviderStatusHandle,
+    ProviderUsageHandle, ProviderWorkspaceLaunchRuntime,
 };
 use crate::daemon::web_sessions::WebSessionWorkerRuntimeHost;
 

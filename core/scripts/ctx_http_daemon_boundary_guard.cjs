@@ -40,6 +40,16 @@ const daemonWorkspaceStreamRouteHandlesPath = path.join(
   "daemon",
   "workspace_stream_route_handles.rs",
 );
+const daemonLaunchRouteHandlesRelativePath =
+  "core/crates/ctx-daemon/src/daemon/launch_route_handles.rs";
+const daemonLaunchRouteHandlesPath = path.join(
+  coreRoot,
+  "crates",
+  "ctx-daemon",
+  "src",
+  "daemon",
+  "launch_route_handles.rs",
+);
 const daemonRouteHandlesScanRoots = [
   "core/crates/ctx-http/src/",
   "core/crates/ctx-http/tests/",
@@ -635,6 +645,10 @@ const workspaceStreamRouteHandleFieldRatchetPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs",
 ]);
+const launchRouteHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  daemonLaunchRouteHandlesRelativePath,
+]);
 
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
@@ -849,6 +863,7 @@ const providerWorkspaceLaunchDaemonFacadePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/providers/options/provider_options/load.rs",
   "core/crates/ctx-daemon/src/daemon/providers/auth_check.rs",
   "core/crates/ctx-daemon/src/daemon/providers/auth_check/workspace.rs",
+  daemonLaunchRouteHandlesRelativePath,
 ]);
 
 const providerInstallHandleApiPaths = new Set([
@@ -7865,7 +7880,7 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
     }
   }
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (launchRouteHandleDefinitionPaths.has(filePath)) {
     const staleEffectRegex = /\bDaemonShutdownEffect\b/gu;
     for (
       let match = staleEffectRegex.exec(contents);
@@ -8096,7 +8111,7 @@ function scanTerminalRouteHandleRatchet({ filePath, contents }) {
     }
   }
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (launchRouteHandleDefinitionPaths.has(filePath)) {
     const terminalRouteBlock = rustFunctionBlockForName({
       contents,
       fnName: "terminal_route",
@@ -8517,7 +8532,7 @@ function scanWebSessionRouteHandleRatchet({ filePath, contents }) {
     }
   }
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (launchRouteHandleDefinitionPaths.has(filePath)) {
     const webSessionRouteBlock = rustFunctionBlockForName({
       contents,
       fnName: "web_session_route",

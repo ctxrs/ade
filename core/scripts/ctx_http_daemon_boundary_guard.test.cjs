@@ -1425,6 +1425,50 @@ test("appstate terminal route handle ratchet allows typed terminal launch host a
   );
 });
 
+test("appstate terminal route handle ratchet scans moved launch route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/launch_route_handles.rs";
+  const violations = scanTerminalRouteHandleRatchet({
+    filePath,
+    contents: `
+      enum TerminalRouteLaunch {
+        Host(TerminalLaunchHost),
+        Broad(DaemonHandle),
+      }
+
+      pub struct TerminalRouteHandle {
+        terminals: Arc<TerminalManager>,
+        daemon: Arc<DaemonState>,
+        launch: TerminalRouteLaunch,
+      }
+    `,
+  });
+
+  const names = violations.map((violation) => violation.name);
+  const texts = violations.map((violation) => violation.text);
+
+  assert(
+    names.includes("terminal route capability stores broad handle or daemon state"),
+  );
+  assert(
+    names.includes("terminal route capability exposes generic full-state escape hatch"),
+  );
+  assert(
+    names.includes("terminal route capability exposes unexpected production field"),
+  );
+  assert(
+    names.includes(
+      "terminal route launch enum stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    names.includes(
+      "terminal route launch enum exposes unexpected production variant",
+    ),
+  );
+  assert(texts.includes("daemon: Arc<DaemonState>,"));
+  assert(texts.includes("Broad(DaemonHandle),"));
+});
+
 test("appstate terminal route handle ratchet rejects production callback storage", () => {
   const violations = scanTerminalRouteHandleRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
@@ -1772,6 +1816,54 @@ test("appstate web-session route handle ratchet allows typed launch host assembl
     }),
     [],
   );
+});
+
+test("appstate web-session route handle ratchet scans moved launch route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/launch_route_handles.rs";
+  const violations = scanWebSessionRouteHandleRatchet({
+    filePath,
+    contents: `
+      enum WebSessionRouteLaunch {
+        Host(WebSessionLaunchHost),
+        Broad(DaemonHandle),
+      }
+
+      pub struct WebSessionRouteHandle {
+        web_sessions: Arc<WebSessionManager>,
+        daemon: Arc<DaemonState>,
+        launch: WebSessionRouteLaunch,
+      }
+    `,
+  });
+
+  const names = violations.map((violation) => violation.name);
+  const texts = violations.map((violation) => violation.text);
+
+  assert(
+    names.includes("web-session route capability stores broad handle or daemon state"),
+  );
+  assert(
+    names.includes(
+      "web-session route capability exposes generic full-state escape hatch",
+    ),
+  );
+  assert(
+    names.includes(
+      "web-session route capability exposes unexpected production field",
+    ),
+  );
+  assert(
+    names.includes(
+      "web-session route launch enum stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    names.includes(
+      "web-session route launch enum exposes unexpected production variant",
+    ),
+  );
+  assert(texts.includes("daemon: Arc<DaemonState>,"));
+  assert(texts.includes("Broad(DaemonHandle),"));
 });
 
 test("appstate web-session route handle ratchet rejects production callback storage", () => {
@@ -2348,6 +2440,33 @@ test("appstate provider workspace launch daemon facade ratchet rejects full-stat
       "provider workspace launch daemon facade accepts daemon state",
     ],
   );
+});
+
+test("appstate provider workspace launch daemon facade ratchet scans moved launch runtime definition", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/launch_route_handles.rs";
+  const violations = scanProviderWorkspaceLaunchDaemonFacadeRatchet({
+    filePath,
+    contents: `
+      pub struct ProviderWorkspaceLaunchRuntime {
+        providers: ProvidersHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  });
+
+  const names = violations.map((violation) => violation.name);
+  const texts = violations.map((violation) => violation.text);
+
+  assert(
+    names.includes(
+      "provider workspace launch daemon facade implemented on broad providers handle",
+    ),
+  );
+  assert(
+    names.includes("provider workspace launch daemon facade accepts daemon state"),
+  );
+  assert(texts.includes("providers: ProvidersHandle,"));
+  assert(texts.includes("state: Arc<DaemonState>,"));
 });
 
 test("appstate provider install route ratchet rejects broad providers handle", () => {

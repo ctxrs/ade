@@ -11,7 +11,7 @@ use ctx_provider_runtime::ProviderRuntime;
 use ctx_store::Store;
 use tokio::sync::broadcast;
 
-use super::{handle::ProviderWorkspaceLaunchRuntime, state::ProtectedWorkspaceStoreLookup};
+use super::{state::ProtectedWorkspaceStoreLookup, ProviderWorkspaceLaunchRuntime};
 
 #[derive(Clone)]
 pub struct ProviderAccountsHandle {

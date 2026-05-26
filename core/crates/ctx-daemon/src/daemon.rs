@@ -19,6 +19,7 @@ pub mod execution_setup;
 pub mod git_status;
 mod handle;
 pub mod health;
+mod launch_route_handles;
 mod lifecycle;
 mod listener;
 pub mod logs;
@@ -83,14 +84,16 @@ pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 pub(crate) use handle::route_handles_from_state;
-pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
-    DaemonHandle, DaemonShutdownHandle, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle,
-    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ResourceUtilizationHandle,
-    RunArchiveHandle, SettingsHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
-    WebSessionRouteHandle,
+    DaemonHandle, DaemonShutdownHandle, MergeQueueApiHandle, MobileRuntimeHandle,
+    MobileSecureProxyHandle, ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle,
+    UpdateActivityHandle, UpdateDrainHandle,
 };
 pub use health::HealthSnapshotError;
+pub(in crate::daemon) use launch_route_handles::ProviderWorkspaceLaunchRuntime;
+pub use launch_route_handles::{
+    ExecutionLaunchHandle, LinuxSandboxRuntimeHandle, TerminalRouteHandle, WebSessionRouteHandle,
+};
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
 pub(in crate::daemon) use lifecycle::{DaemonShutdownHost, DaemonShutdownHostParts};
 #[cfg(test)]

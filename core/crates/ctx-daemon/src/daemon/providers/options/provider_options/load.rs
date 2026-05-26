@@ -1,7 +1,7 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 
-use crate::daemon::handle::ProviderWorkspaceLaunchRuntime;
+use crate::daemon::ProviderWorkspaceLaunchRuntime;
 
 use super::ProviderOptionsResponseError;
 

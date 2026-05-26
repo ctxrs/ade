@@ -9,7 +9,7 @@ use ctx_provider_runtime::{
     ProviderAuthCheckRouteResponse, VerifyProviderForWorkspaceRouteRequest,
 };
 
-use crate::daemon::{handle::ProviderWorkspaceLaunchRuntime, ProviderWorkspaceAuthHandle};
+use crate::daemon::{ProviderWorkspaceAuthHandle, ProviderWorkspaceLaunchRuntime};
 
 mod workspace;
 

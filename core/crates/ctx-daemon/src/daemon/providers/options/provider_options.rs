@@ -8,7 +8,7 @@ use ctx_provider_runtime::{ProviderOptionsRouteError, ProviderOptionsRouteReques
 use serde_json::Value;
 
 use crate::daemon::providers::ProviderLaunchConfigError;
-use crate::daemon::{handle::ProviderWorkspaceLaunchRuntime, ProviderOptionsHandle};
+use crate::daemon::{ProviderOptionsHandle, ProviderWorkspaceLaunchRuntime};
 
 mod load;
 

@@ -11,8 +11,8 @@ use ctx_observability::telemetry::Telemetry;
 use ctx_store::Store;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 
-use super::handle::ProviderWorkspaceLaunchRuntime;
 use super::state::{ProtectedWorkspaceStoreLookup, WorkspaceFileCompletionsCache};
+use super::ProviderWorkspaceLaunchRuntime;
 
 #[derive(Clone)]
 pub struct WorkspaceOrgPolicyHandle {

@@ -125,7 +125,9 @@ mod tests {
 
     fn route_handle_with_create_effect(
         terminals: Arc<TerminalManager>,
-        create_terminal: impl Fn(CreateTerminalLaunchRequest) -> crate::daemon::handle::CreateTerminalFuture
+        create_terminal: impl Fn(
+                CreateTerminalLaunchRequest,
+            ) -> crate::daemon::launch_route_handles::CreateTerminalFuture
             + Send
             + Sync
             + 'static,
@@ -139,7 +141,7 @@ mod tests {
                 Err(TerminalLaunchError::internal(
                     "test route handle should not launch terminals",
                 ))
-            }) as crate::daemon::handle::CreateTerminalFuture
+            }) as crate::daemon::launch_route_handles::CreateTerminalFuture
         })
     }
 
@@ -191,7 +193,7 @@ mod tests {
                     Err(TerminalLaunchError::internal(
                         "invalid route params should reject before launch",
                     ))
-                }) as crate::daemon::handle::CreateTerminalFuture
+                }) as crate::daemon::launch_route_handles::CreateTerminalFuture
             }
         });
 
@@ -222,7 +224,7 @@ mod tests {
         let handle =
             route_handle_with_create_effect(Arc::new(TerminalManager::default()), |_req| {
                 Box::pin(async { Err(TerminalLaunchError::not_found("workspace missing")) })
-                    as crate::daemon::handle::CreateTerminalFuture
+                    as crate::daemon::launch_route_handles::CreateTerminalFuture
             });
 
         let result = handle

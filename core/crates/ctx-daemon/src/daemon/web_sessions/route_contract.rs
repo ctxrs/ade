@@ -115,7 +115,9 @@ mod tests {
 
     fn route_handle_with_create_effect(
         web_sessions: Arc<WebSessionManager>,
-        create_web_session: impl Fn(WebSessionLaunchRequest) -> crate::daemon::handle::CreateWebSessionFuture
+        create_web_session: impl Fn(
+                WebSessionLaunchRequest,
+            ) -> crate::daemon::launch_route_handles::CreateWebSessionFuture
             + Send
             + Sync
             + 'static,
@@ -129,7 +131,7 @@ mod tests {
                 Err(WebSessionLaunchError::internal(
                     "test route handle should not launch web sessions",
                 ))
-            }) as crate::daemon::handle::CreateWebSessionFuture
+            }) as crate::daemon::launch_route_handles::CreateWebSessionFuture
         })
     }
 
@@ -176,7 +178,7 @@ mod tests {
                     Err(WebSessionLaunchError::internal(
                         "invalid request should reject before launch",
                     ))
-                }) as crate::daemon::handle::CreateWebSessionFuture
+                }) as crate::daemon::launch_route_handles::CreateWebSessionFuture
             }
         });
 
@@ -203,7 +205,7 @@ mod tests {
     async fn create_web_session_launch_errors_map_to_route_errors() {
         let handle = route_handle_with_create_effect(Arc::new(WebSessionManager::new()), |_req| {
             Box::pin(async { Err(WebSessionLaunchError::forbidden("sandbox-only session")) })
-                as crate::daemon::handle::CreateWebSessionFuture
+                as crate::daemon::launch_route_handles::CreateWebSessionFuture
         });
 
         let result = handle
@@ -228,7 +230,7 @@ mod tests {
     async fn create_web_session_uses_injected_launch_effect() {
         let handle = route_handle_with_create_effect(Arc::new(WebSessionManager::new()), |_req| {
             Box::pin(async { Ok(fake_web_session_info("web-session-1")) })
-                as crate::daemon::handle::CreateWebSessionFuture
+                as crate::daemon::launch_route_handles::CreateWebSessionFuture
         });
 
         let created = handle
