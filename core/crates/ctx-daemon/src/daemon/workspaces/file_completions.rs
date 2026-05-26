@@ -17,9 +17,7 @@ use ctx_worktree_vcs_service::{
 };
 
 use crate::daemon::state::WorkspaceFileCompletionsCache;
-use crate::daemon::{
-    DaemonState, SessionFileCompletionsHandle, SessionStoreAccessError, TimedEntry,
-};
+use crate::daemon::{SessionFileCompletionsHandle, SessionStoreAccessError, TimedEntry};
 
 mod container;
 
@@ -142,23 +140,6 @@ async fn complete_files_for_session_with_runtime(
 
     let files = cached_worktree_files(handle, &worktree, execution_environment).await?;
     Ok(rank_files(files.as_ref(), query, limit))
-}
-
-pub async fn complete_files_for_workspace(
-    state: &Arc<DaemonState>,
-    workspace_id: WorkspaceId,
-    query: Option<String>,
-    limit: Option<u32>,
-) -> Result<Vec<String>, FileCompletionsError> {
-    complete_files_for_workspace_with_runtime(
-        state.global_store(),
-        &state.workspaces.workspace_file_completions_cache,
-        &state.telemetry.perf_telemetry,
-        workspace_id,
-        query,
-        limit,
-    )
-    .await
 }
 
 pub(in crate::daemon::workspaces) async fn complete_files_for_workspace_with_runtime(

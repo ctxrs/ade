@@ -421,12 +421,30 @@ const workspaceAttachmentsRouteExtractorAllowedPaths = new Set([
 ]);
 
 const workspaceAttachmentsDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/attachments.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/attachments/hosts.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/attachments/materialization.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/attachments/mounts.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/attachments/runtime.rs",
 ]);
+
+const workspaceCompositionStateCutPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/deletion.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/attachments.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/file_completions.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/task_worktree_host.rs",
+]);
+
+const workspaceCompositionDeletedFilePaths = [
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_provision.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_bootstrap.rs",
+];
+
+const workspaceCompositionDeletedDirectoryRoots = [
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_bootstrap/",
+];
 
 const workspacePrimaryBranchRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
@@ -6148,6 +6166,36 @@ function pathMatchesRoot(filePath, root) {
 
 function pathMatchesAnyRoot(filePath, roots) {
   return roots.some((root) => pathMatchesRoot(filePath, root));
+}
+
+function workspaceCompositionDeletedRelativePaths() {
+  const deleted = [];
+  for (const relativePath of workspaceCompositionDeletedFilePaths) {
+    if (fs.existsSync(path.join(repoRoot, relativePath))) {
+      deleted.push(relativePath);
+    }
+  }
+  for (const relativeRoot of workspaceCompositionDeletedDirectoryRoots) {
+    const absoluteRoot = path.join(repoRoot, relativeRoot);
+    if (!fs.existsSync(absoluteRoot)) {
+      continue;
+    }
+    for (const rustFile of listRustFiles(absoluteRoot)) {
+      deleted.push(repoRelative(rustFile));
+    }
+  }
+  return deleted;
+}
+
+function scanWorkspaceCompositionDeletedPathRatchet({
+  existingRelativePaths = workspaceCompositionDeletedRelativePaths(),
+} = {}) {
+  return existingRelativePaths.map((filePath) => ({
+    filePath,
+    line: 1,
+    name: "workspace composition deleted raw-state helper path exists",
+    text: "legacy worktree bootstrap/provision raw-state helpers must stay deleted",
+  }));
 }
 
 function apiPatternsForPath(relativePath) {
@@ -14992,6 +15040,61 @@ function scanWorkspaceAttachmentsHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceCompositionStateCutRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (workspaceCompositionStateCutPaths.has(filePath)) {
+    const checks = [
+      {
+        name: "workspace composition file depends on broad daemon state",
+        regex:
+          /\b(?:DaemonState|DaemonHandle|WorkspacesHandle|SessionsHandle|ProvidersHandle|TasksHandle)\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>/gu,
+      },
+      {
+        name: "workspace composition file uses raw state field fanout",
+        regex: /\b(?:self\s*\.\s*)?state\s*\.\s*(?:core|sessions|workspaces|providers|telemetry|transport|execution|global_store|store_for_(?:workspace|worktree|task|session))\b/gu,
+      },
+      {
+        name: "workspace composition file reintroduces raw-state runtime helper",
+        regex:
+          /\bruntime_from_state\b|\bWorktreeBootstrapHost\s+for\s+DaemonState\b|\bspawn_worktree_bootstrap\s*\(\s*(?:state\s*:\s*)?(?:Arc\s*<\s*)?DaemonState\b/gu,
+      },
+    ];
+    for (const check of checks) {
+      for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/workspaces.rs") {
+    const staleExportRegex =
+      /\bmod\s+worktree_(?:bootstrap|provision)\s*;|\bpub\s+use\s+(?:worktree_bootstrap|worktree_provision)::|\bcomplete_files_for_workspace\b|\bensure_worktree_attachment_mounts_if_materialized\b|\bruntime_from_state\b/gu;
+    for (
+      let match = staleExportRegex.exec(contents);
+      match;
+      match = staleExportRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace composition exports deleted raw-state workspace helper",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspacePrimaryBranchRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -15448,6 +15551,7 @@ function scanRepo() {
       text: "ctx-http/src/daemon must stay physically extracted into ctx-daemon",
     });
   }
+  violations.push(...scanWorkspaceCompositionDeletedPathRatchet());
 
   const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
   const hasWorkspaceVcsStreamRouteExtractor = workspaceVcsStreamRouteExtractorPresent();
@@ -15875,6 +15979,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         workspaceDeletionCapability: hasWorkspaceDeletionCapability,
+      }),
+      ...scanWorkspaceCompositionStateCutRatchet({
+        filePath: relativePath,
+        contents,
       }),
       ...scanWorkspaceMergeQueueConfigHandleFieldRatchet({
         filePath: relativePath,
@@ -16711,6 +16819,8 @@ module.exports = {
   mergeQueueSubmitApiPatternsForPath,
   mergeQueueApiCapabilityPresent,
   workspaceDeletionCapabilityPresent,
+  scanWorkspaceCompositionDeletedPathRatchet,
+  scanWorkspaceCompositionStateCutRatchet,
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,

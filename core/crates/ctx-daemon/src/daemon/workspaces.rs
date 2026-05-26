@@ -24,25 +24,18 @@ pub mod stream;
 mod task_worktree_host;
 pub mod vcs_hooks;
 mod workspace_file_completions_route;
-mod worktree_bootstrap;
 mod worktree_cleanup;
-mod worktree_provision;
 
 pub use active_snapshot_state::load_workspace_active_snapshot_state;
-pub use attachments::ensure_worktree_attachment_mounts_if_materialized;
 pub use cache_stats::WorkspaceCacheDebugStats;
 pub use deletion::WorkspaceDeleteError;
-pub(in crate::daemon) use deletion::{
-    runtime_from_state as deletion_runtime_from_state, WorkspaceDeletionRuntime,
-};
+pub(in crate::daemon) use deletion::{WorkspaceDeletionRuntime, WorkspaceDeletionRuntimeDeps};
 pub use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
 pub use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
     ResolvedExistingWorktreeExecution,
 };
-pub use file_completions::{
-    complete_files_for_workspace, FileCompletionsError, FileCompletionsErrorKind,
-};
+pub use file_completions::{FileCompletionsError, FileCompletionsErrorKind};
 pub use harness_container::{
     ensure_workspace_harness_container, stop_workspace_harness_container,
     workspace_harness_container_status, WorkspaceHarnessContainerError,
@@ -59,9 +52,7 @@ pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub(in crate::daemon) use task_worktree_host::{TaskWorktreeHost, TaskWorktreeHostParts};
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
-pub use worktree_bootstrap::spawn_worktree_bootstrap;
 pub use worktree_cleanup::{
     cleanup_task_worktrees, cleanup_task_worktrees_with_host, managed_worktree_root,
     managed_worktree_root_for_data_root, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
 };
-pub use worktree_provision::{persist_provisioned_worktree, provision_worktree_for_execution};

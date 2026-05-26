@@ -77,7 +77,7 @@ use super::{
         WebSessionLaunchError, WebSessionLaunchHost, WebSessionLaunchRequest,
         WebSessionWorkerRuntimeHost,
     },
-    workspaces::{TaskWorktreeHost, TaskWorktreeHostParts},
+    workspaces::{TaskWorktreeHost, TaskWorktreeHostParts, WorkspaceDeletionRuntimeDeps},
 };
 
 #[derive(Clone)]
@@ -168,8 +168,29 @@ impl DaemonHandle {
     }
 
     pub fn workspace_deletion(&self) -> WorkspaceDeletionHandle {
-        WorkspaceDeletionHandle::new(crate::daemon::workspaces::deletion_runtime_from_state(
-            &self.state,
+        WorkspaceDeletionHandle::new(Arc::new(
+            crate::daemon::workspaces::WorkspaceDeletionRuntime::new(
+                WorkspaceDeletionRuntimeDeps {
+                    data_root: self.state.core.data_root.clone(),
+                    daemon_url: self.state.core.daemon_url.clone(),
+                    stores: self.state.core.stores.clone(),
+                    global_store: self.state.global_store().clone(),
+                    sessions: Arc::clone(&self.state.sessions),
+                    active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+                    workspace_active_snapshot_cache: Arc::clone(
+                        &self.state.workspaces.workspace_active_snapshot_cache,
+                    ),
+                    workspace_active_heads_cache: Arc::clone(
+                        &self.state.workspaces.workspace_active_heads_cache,
+                    ),
+                    workspace_file_completions_cache: Arc::clone(
+                        &self.state.workspaces.workspace_file_completions_cache,
+                    ),
+                    harness: Arc::clone(&self.state.execution.harness),
+                    providers: Arc::clone(&self.state.providers),
+                    merge_queue: Arc::clone(&self.state.transport.merge_queue),
+                },
+            ),
         ))
     }
 
@@ -205,10 +226,11 @@ impl DaemonHandle {
     }
 
     pub fn workspace_attachments(&self) -> WorkspaceAttachmentsHandle {
+        let workspace_stores = self.protected_workspace_store_lookup();
         WorkspaceAttachmentsHandle::new(
             self.state.global_store().clone(),
-            self.protected_workspace_store_lookup(),
-            crate::daemon::workspaces::attachments::runtime_from_state(&self.state),
+            workspace_stores,
+            self.workspace_attachments_runtime(),
         )
     }
 
@@ -788,16 +810,7 @@ impl DaemonHandle {
 
     fn task_worktree_host(&self) -> Arc<TaskWorktreeHost> {
         let workspace_stores = self.protected_workspace_store_lookup();
-        let attachments = Arc::new(
-            crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime::new(
-                self.state.core.data_root.clone(),
-                self.state.core.daemon_url.clone(),
-                self.state.global_store().clone(),
-                workspace_stores.clone(),
-                Arc::clone(&self.state.execution.harness),
-                Arc::clone(&self.state.workspaces.attachment_materialization),
-            ),
-        );
+        let attachments = self.workspace_attachments_runtime();
         let vcs_hooks = Arc::new(
             crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost::new(
                 self.state.core.data_root.clone(),
@@ -818,6 +831,21 @@ impl DaemonHandle {
             attachments,
             vcs_hooks,
         }))
+    }
+
+    pub(crate) fn workspace_attachments_runtime(
+        &self,
+    ) -> Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime> {
+        Arc::new(
+            crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime::new(
+                self.state.core.data_root.clone(),
+                self.state.core.daemon_url.clone(),
+                self.state.global_store().clone(),
+                self.protected_workspace_store_lookup(),
+                Arc::clone(&self.state.execution.harness),
+                Arc::clone(&self.state.workspaces.attachment_materialization),
+            ),
+        )
     }
 
     fn task_lifecycle_effects(&self) -> Arc<TaskLifecycleEffects> {

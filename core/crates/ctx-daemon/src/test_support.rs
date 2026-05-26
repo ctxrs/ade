@@ -3701,7 +3701,7 @@ impl TestDaemon {
         worktree: &Worktree,
         configs: impl IntoIterator<Item = ctx_workspace_attachments::AttachmentConfig>,
     ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
-        let attachment_runtime = daemon::workspaces::attachments::runtime_from_state(&self.state);
+        let attachment_runtime = self.handle().workspace_attachments_runtime();
         for config in configs {
             attachment_runtime
                 .upsert_workspace_attachment(workspace.id, config)
@@ -3724,12 +3724,9 @@ impl TestDaemon {
             .await?;
         }
 
-        daemon::workspaces::ensure_worktree_attachment_mounts_if_materialized(
-            &self.state,
-            workspace,
-            worktree,
-        )
-        .await
+        attachment_runtime
+            .ensure_worktree_attachment_mounts_if_materialized(workspace, worktree)
+            .await
     }
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {

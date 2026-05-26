@@ -303,14 +303,14 @@ impl TaskWorktreeHost {
 #[async_trait]
 impl WorktreeDataPlaneHost for TaskWorktreeHost {
     async fn get_workspace(
-        state: &Self,
+        host: &Self,
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<Option<Workspace>> {
-        state.global_store.get_workspace(workspace_id).await
+        host.global_store.get_workspace(workspace_id).await
     }
 
-    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
-        state.workspace_store(workspace_id).await
+    async fn workspace_store(host: &Self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
+        host.workspace_store(workspace_id).await
     }
 }
 

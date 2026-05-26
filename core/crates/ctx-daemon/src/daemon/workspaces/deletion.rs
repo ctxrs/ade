@@ -14,7 +14,7 @@ use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 
 use crate::daemon::state::{
-    DaemonState, ProtectedWorkspaceStoreLookup, SessionRuntime, WorkspaceActiveHeadsCache,
+    ProtectedWorkspaceStoreLookup, SessionRuntime, WorkspaceActiveHeadsCache,
     WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache,
 };
 
@@ -43,23 +43,23 @@ pub(in crate::daemon) struct WorkspaceDeletionRuntime {
     fail_after_begin_for_test: Arc<AtomicBool>,
 }
 
-struct WorkspaceDeletionRuntimeDeps {
-    data_root: PathBuf,
-    daemon_url: String,
-    stores: StoreManager,
-    global_store: Store,
-    sessions: Arc<SessionRuntime>,
-    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
-    workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
-    workspace_active_heads_cache: WorkspaceActiveHeadsCache,
-    workspace_file_completions_cache: WorkspaceFileCompletionsCache,
-    harness: Arc<HarnessRuntimeManager>,
-    providers: Arc<ProviderRuntime>,
-    merge_queue: Arc<MergeQueueRuntime>,
+pub(in crate::daemon) struct WorkspaceDeletionRuntimeDeps {
+    pub(in crate::daemon) data_root: PathBuf,
+    pub(in crate::daemon) daemon_url: String,
+    pub(in crate::daemon) stores: StoreManager,
+    pub(in crate::daemon) global_store: Store,
+    pub(in crate::daemon) sessions: Arc<SessionRuntime>,
+    pub(in crate::daemon) active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    pub(in crate::daemon) workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    pub(in crate::daemon) workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+    pub(in crate::daemon) workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    pub(in crate::daemon) harness: Arc<HarnessRuntimeManager>,
+    pub(in crate::daemon) providers: Arc<ProviderRuntime>,
+    pub(in crate::daemon) merge_queue: Arc<MergeQueueRuntime>,
 }
 
 impl WorkspaceDeletionRuntime {
-    fn new(deps: WorkspaceDeletionRuntimeDeps) -> Self {
+    pub(in crate::daemon) fn new(deps: WorkspaceDeletionRuntimeDeps) -> Self {
         let WorkspaceDeletionRuntimeDeps {
             data_root,
             daemon_url,
@@ -270,31 +270,4 @@ impl SessionLifecycleHost for WorkspaceDeletionSessionLifecycleHost {
             self.active_snapshot.remove_session(session_id).await;
         }
     }
-}
-
-pub(in crate::daemon) fn runtime_from_state(
-    state: &Arc<DaemonState>,
-) -> Arc<WorkspaceDeletionRuntime> {
-    Arc::new(WorkspaceDeletionRuntime::new(
-        WorkspaceDeletionRuntimeDeps {
-            data_root: state.core.data_root.clone(),
-            daemon_url: state.core.daemon_url.clone(),
-            stores: state.core.stores.clone(),
-            global_store: state.global_store().clone(),
-            sessions: Arc::clone(&state.sessions),
-            active_snapshot: Arc::clone(&state.workspaces.workspace_active_snapshot),
-            workspace_active_snapshot_cache: Arc::clone(
-                &state.workspaces.workspace_active_snapshot_cache,
-            ),
-            workspace_active_heads_cache: Arc::clone(
-                &state.workspaces.workspace_active_heads_cache,
-            ),
-            workspace_file_completions_cache: Arc::clone(
-                &state.workspaces.workspace_file_completions_cache,
-            ),
-            harness: Arc::clone(&state.execution.harness),
-            providers: Arc::clone(&state.providers),
-            merge_queue: Arc::clone(&state.transport.merge_queue),
-        },
-    ))
 }

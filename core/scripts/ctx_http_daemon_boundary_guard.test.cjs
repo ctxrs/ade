@@ -253,6 +253,8 @@ const {
   scanWorkspaceAttachmentsDaemonImplementationRatchet,
   scanWorkspaceAttachmentsHandleFieldRatchet,
   scanWorkspaceAttachmentsRouteExtractorRatchet,
+  scanWorkspaceCompositionDeletedPathRatchet,
+  scanWorkspaceCompositionStateCutRatchet,
   scanWorkspaceMergeQueueConfigDaemonImplementationRatchet,
   scanWorkspaceMergeQueueConfigHandleFieldRatchet,
   scanWorkspaceMergeQueueConfigRouteExtractorRatchet,
@@ -6284,6 +6286,89 @@ test("appstate guard rejects workspace attachments broad handle and runtime fiel
   ];
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace composition raw-state helper seams", () => {
+  const stateViolations = [
+    ...scanWorkspaceCompositionStateCutRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/deletion.rs",
+      contents: `
+        use crate::daemon::DaemonState;
+        pub fn runtime_from_state(state: &Arc<DaemonState>) {
+          let _ = state.core.data_root.clone();
+        }
+      `,
+    }),
+    ...scanWorkspaceCompositionStateCutRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/task_worktree_host.rs",
+      contents: `
+        pub(in crate::daemon) struct TaskWorktreeHost {
+          daemon: DaemonHandle,
+          state: Arc<DaemonState>,
+        }
+      `,
+    }),
+    ...scanWorkspaceCompositionStateCutRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+      contents: `
+        use crate::daemon::DaemonState;
+        pub fn sneaky_helper(state: &Arc<DaemonState>) {
+          let _ = state.core.data_root.clone();
+        }
+      `,
+    }),
+    ...scanWorkspaceCompositionStateCutRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+      contents: `
+        mod worktree_bootstrap;
+        mod worktree_provision;
+        pub use worktree_bootstrap::spawn_worktree_bootstrap;
+        pub use worktree_provision::provision_worktree_for_execution;
+        pub use file_completions::complete_files_for_workspace;
+        pub use attachments::ensure_worktree_attachment_mounts_if_materialized;
+      `,
+    }),
+  ].map((violation) => violation.name);
+
+  assert(
+    stateViolations.includes("workspace composition file depends on broad daemon state"),
+  );
+  assert(
+    stateViolations.includes("workspace composition file uses raw state field fanout"),
+  );
+  assert(
+    stateViolations.includes("workspace composition file reintroduces raw-state runtime helper"),
+  );
+  assert(
+    stateViolations.includes("workspace composition exports deleted raw-state workspace helper"),
+  );
+
+  const narrowViolations = scanWorkspaceCompositionStateCutRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/task_worktree_host.rs",
+    contents: `
+      pub(in crate::daemon) struct TaskWorktreeHost {
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        attachments: Arc<WorkspaceAttachmentsRuntime>,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects deleted workspace composition helper paths", () => {
+  const violations = scanWorkspaceCompositionDeletedPathRatchet({
+    existingRelativePaths: [
+      "core/crates/ctx-daemon/src/daemon/workspaces/worktree_provision.rs",
+      "core/crates/ctx-daemon/src/daemon/workspaces/worktree_bootstrap/command.rs",
+    ],
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace composition deleted raw-state helper path exists",
+    "workspace composition deleted raw-state helper path exists",
+  ]);
 });
 
 test("appstate guard rejects workspace primary branch extraction outside allowed route", () => {
