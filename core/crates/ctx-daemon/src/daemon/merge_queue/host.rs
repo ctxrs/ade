@@ -9,8 +9,8 @@ use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_store::Store;
 use ctx_store::StoreManager;
 
-use crate::daemon::handle::{MergeQueueNoticePublicationEffect, MergeQueueNoticeSessionEvent};
 use crate::daemon::{
+    merge_queue_route_handles::{MergeQueueNoticePublicationEffect, MergeQueueNoticeSessionEvent},
     DaemonState, ProtectedWorkspaceStoreLookup, ScopedMcpSessionAccessError, SessionStoreLookup,
     WorkspaceStoreAccessError,
 };

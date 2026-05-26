@@ -79,6 +79,10 @@ const RATCHETED_FILE_LIMITS = [
     limit: 120,
   },
   {
+    path: "core/crates/ctx-daemon/src/daemon/merge_queue_route_handles.rs",
+    limit: 150,
+  },
+  {
     path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
     limit: 570,
   },

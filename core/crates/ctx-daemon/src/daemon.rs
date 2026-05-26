@@ -30,6 +30,7 @@ mod managed_installs_host;
 mod mcp_auth;
 mod memleak_debug;
 pub mod merge_queue;
+mod merge_queue_route_handles;
 pub mod mobile_access;
 mod mobile_route_handles;
 mod mobile_startup;
@@ -86,9 +87,7 @@ pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 pub(crate) use handle::route_handles_from_state;
-pub use handle::{
-    DaemonHandle, MergeQueueApiHandle, ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle,
-};
+pub use handle::{DaemonHandle, ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle};
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use launch_route_handles::ProviderWorkspaceLaunchRuntime;
 pub use launch_route_handles::{
@@ -107,6 +106,7 @@ pub use mcp_auth::{
     require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
     ScopedMcpSessionAccessError,
 };
+pub use merge_queue_route_handles::MergeQueueApiHandle;
 pub use mobile_route_handles::{MobileRuntimeHandle, MobileSecureProxyHandle};
 pub use provider_route_handles::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,

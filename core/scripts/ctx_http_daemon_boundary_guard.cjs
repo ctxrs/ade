@@ -40,6 +40,8 @@ const daemonWorkspaceStreamRouteHandlesPath = path.join(
   "daemon",
   "workspace_stream_route_handles.rs",
 );
+const daemonMergeQueueRouteHandlesRelativePath =
+  "core/crates/ctx-daemon/src/daemon/merge_queue_route_handles.rs";
 const daemonLaunchRouteHandlesRelativePath =
   "core/crates/ctx-daemon/src/daemon/launch_route_handles.rs";
 const daemonLaunchRouteHandlesPath = path.join(
@@ -644,6 +646,10 @@ const sessionRouteHandleFieldRatchetPaths = new Set([
 const workspaceStreamRouteHandleFieldRatchetPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs",
+]);
+const mergeQueueApiHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  daemonMergeQueueRouteHandlesRelativePath,
 ]);
 const maintenanceRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/maintenance_route_handles.rs",
@@ -10561,11 +10567,22 @@ function workspaceVcsStreamCapabilityPresent() {
   return false;
 }
 
-function mergeQueueApiCapabilityPresent() {
-  if (!fs.existsSync(daemonHandlePath)) {
-    return false;
+function mergeQueueApiCapabilityPresent({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  for (const relativePath of mergeQueueApiHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents && /\bMergeQueueApiHandle\b/u.test(contents)) {
+      return true;
+    }
   }
-  return /\bMergeQueueApiHandle\b/u.test(fs.readFileSync(daemonHandlePath, "utf8"));
+  return false;
 }
 
 function workspaceDeletionCapabilityPresent({

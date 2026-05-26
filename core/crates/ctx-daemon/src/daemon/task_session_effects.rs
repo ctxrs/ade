@@ -14,7 +14,7 @@ use ctx_session_runtime::runtime::{
 use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-use super::handle::MergeQueueNoticeSessionEvent;
+use super::merge_queue_route_handles::MergeQueueNoticeSessionEvent;
 use super::session_route_handles::{SessionArtifactEffects, SessionArtifactsFuture};
 use super::task_route_handles::{
     TaskAdmissionFuture, TaskAdmissionSessionEffects, TaskLifecycleEffects, TaskLifecycleFuture,

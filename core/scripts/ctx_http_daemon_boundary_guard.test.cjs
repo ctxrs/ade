@@ -157,6 +157,7 @@ const {
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
   mergeQueueEntryApiPatternsForPath,
+  mergeQueueApiCapabilityPresent,
   mergeQueueSubmitApiPatternsForPath,
   workspaceDeletionCapabilityPresent,
   terminalRestRouteApiPatternsForPath,
@@ -5558,6 +5559,23 @@ test("appstate guard detects workspace deletion capability in moved workspace ro
           return null;
         }
         return "pub struct WorkspaceDeletionHandle {}";
+      },
+    }),
+    true,
+  );
+});
+
+test("appstate guard detects merge queue API capability in moved route handle file", () => {
+  assert.equal(
+    mergeQueueApiCapabilityPresent({
+      readFileForRelativePath(relativePath) {
+        if (
+          relativePath !==
+          "core/crates/ctx-daemon/src/daemon/merge_queue_route_handles.rs"
+        ) {
+          return null;
+        }
+        return "pub struct MergeQueueApiHandle {}";
       },
     }),
     true,
