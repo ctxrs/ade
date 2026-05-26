@@ -197,6 +197,7 @@ const {
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
+  scanMobileRouteHandleDefinitionFiles,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
   scanTransportHandleRouteExtractorRatchet,
@@ -1308,6 +1309,107 @@ test("appstate daemon shutdown handle ratchet scans moved maintenance route hand
         filePath,
         "daemon shutdown capability exposes generic full-state escape hatch",
         "daemon: DaemonHandle,",
+      ],
+    ],
+  );
+});
+
+test("appstate mobile route handle ratchet scans moved mobile route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/mobile_route_handles.rs";
+  const violations = scanMobileRouteHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (relativePath !== filePath) {
+        return null;
+      }
+      return `
+        pub struct MobileRuntimeHandle {
+          store: Store,
+          mobile_tunnel: MobileTunnelManager,
+          daemon_url: String,
+          auth_token: Option<String>,
+        }
+
+        pub struct MobileSecureProxyHandle {
+          store: Store,
+          health: HealthHandle,
+          telemetry: Telemetry,
+          state: Arc<DaemonState>,
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name, violation.text]),
+    [
+      [
+        filePath,
+        "mobile runtime capability declares unexpected field",
+        "auth_token: Option<String>,",
+      ],
+      [
+        filePath,
+        "mobile runtime capability is missing required field",
+        "auth_token_configured: bool",
+      ],
+      [
+        filePath,
+        "mobile runtime capability stores raw auth token",
+        "auth_token: Option<String>,",
+      ],
+      [
+        filePath,
+        "mobile secure proxy capability declares unexpected field",
+        "state: Arc<DaemonState>,",
+      ],
+      [
+        filePath,
+        "mobile secure proxy capability stores broad handle or daemon state",
+        "state: Arc<DaemonState>,",
+      ],
+      [
+        filePath,
+        "mobile secure proxy capability exposes generic full-state escape hatch",
+        "state: Arc<DaemonState>,",
+      ],
+    ],
+  );
+});
+
+test("appstate mobile route handle ratchet requires expected mobile fields", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/mobile_route_handles.rs";
+  const violations = scanMobileRouteHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (relativePath !== filePath) {
+        return null;
+      }
+      return `
+        pub struct MobileRuntimeHandle {
+          store: Store,
+          mobile_tunnel: MobileTunnelManager,
+          daemon_url: String,
+        }
+
+        pub struct MobileSecureProxyHandle {
+          store: Store,
+          health: HealthHandle,
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name, violation.text]),
+    [
+      [
+        filePath,
+        "mobile runtime capability is missing required field",
+        "auth_token_configured: bool",
+      ],
+      [
+        filePath,
+        "mobile secure proxy capability is missing required field",
+        "telemetry: Telemetry",
       ],
     ],
   );

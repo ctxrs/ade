@@ -648,6 +648,9 @@ const workspaceStreamRouteHandleFieldRatchetPaths = new Set([
 const maintenanceRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/maintenance_route_handles.rs",
 ]);
+const mobileRouteHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/mobile_route_handles.rs",
+]);
 const launchRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   daemonLaunchRouteHandlesRelativePath,
@@ -13963,6 +13966,127 @@ function scanMaintenanceRouteHandleDefinitionFiles({
   return violations;
 }
 
+function scanMobileRouteHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  const allowedFieldsByType = new Map([
+    [
+      "MobileRuntimeHandle",
+      new Map([
+        ["store", "Store"],
+        ["mobile_tunnel", "MobileTunnelManager"],
+        ["daemon_url", "String"],
+        ["auth_token_configured", "bool"],
+      ]),
+    ],
+    [
+      "MobileSecureProxyHandle",
+      new Map([
+        ["store", "Store"],
+        ["health", "HealthHandle"],
+        ["telemetry", "Telemetry"],
+      ]),
+    ],
+  ]);
+  const normalizeRustType = (value) => value.replace(/\s+/gu, "");
+  const broadFieldRegex =
+    /\b(?:DaemonState|DaemonHandle|CoreHandle|AuthHandle|TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|ProvidersHandle|TransportHandle|ExecutionHandle|ResourceUtilizationHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const rawAuthTokenRegex = /\bauth_token\s*:\s*(?:Option\s*<\s*)?String\b/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  for (const relativePath of mobileRouteHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    const lines = contents.split(/\r?\n/u);
+    for (const [typeName, allowedFields] of allowedFieldsByType) {
+      const handleStruct = rustStructBlockForType({
+        contents,
+        typeName,
+      });
+      if (!handleStruct) {
+        continue;
+      }
+      const capabilityName = typeName
+        .replace(/Handle$/u, "")
+        .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+        .toLowerCase();
+      const seenFields = new Set();
+
+      for (const field of rustStructFieldsForBlock(handleStruct.text)) {
+        seenFields.add(field.name);
+        const expectedType = allowedFields.get(field.name);
+        if (expectedType && normalizeRustType(field.type) === normalizeRustType(expectedType)) {
+          continue;
+        }
+        const offset = handleStruct.index + field.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath: relativePath,
+          line,
+          name: `${capabilityName} capability declares unexpected field`,
+          text: lines[line - 1]?.trim() ?? field.text,
+        });
+      }
+
+      for (const [fieldName, fieldType] of allowedFields) {
+        if (seenFields.has(fieldName)) {
+          continue;
+        }
+        const line = contents.slice(0, handleStruct.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath: relativePath,
+          line,
+          name: `${capabilityName} capability is missing required field`,
+          text: `${fieldName}: ${fieldType}`,
+        });
+      }
+
+      for (const check of [
+        {
+          regex: broadFieldRegex,
+          name: `${capabilityName} capability stores broad handle or daemon state`,
+        },
+        {
+          regex: rawAuthTokenRegex,
+          name: `${capabilityName} capability stores raw auth token`,
+        },
+        {
+          regex: genericEscapeFieldRegex,
+          name: `${capabilityName} capability exposes generic full-state escape hatch`,
+        },
+      ]) {
+        check.regex.lastIndex = 0;
+        for (
+          let match = check.regex.exec(handleStruct.text);
+          match;
+          match = check.regex.exec(handleStruct.text)
+        ) {
+          const offset = handleStruct.index + match.index;
+          const line = contents.slice(0, offset).split(/\r?\n/u).length;
+          violations.push({
+            filePath: relativePath,
+            line,
+            name: check.name,
+            text: lines[line - 1]?.trim() ?? match[0],
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
 function scanWorkspaceRouteHandleDefinitionFiles({
   readFileForRelativePath = (relativePath) => {
     const filePath = path.join(repoRoot, relativePath);
@@ -17173,6 +17297,7 @@ function scanRepo() {
     );
   }
   violations.push(...scanMaintenanceRouteHandleDefinitionFiles());
+  violations.push(...scanMobileRouteHandleDefinitionFiles());
   violations.push(...scanRepoOnboardingHandleDefinitionFiles());
   violations.push(
     ...scanWorkspaceRouteHandleDefinitionFiles({
@@ -18071,6 +18196,7 @@ module.exports = {
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
+  scanMobileRouteHandleDefinitionFiles,
   scanExecutionHandleRouteExtractorRatchet,
   scanTerminalRouteHandleRatchet,
   scanTransportHandleRouteExtractorRatchet,
