@@ -37,6 +37,7 @@ mod provider_child_reclassifier;
 pub mod provider_guard;
 mod provider_launch_host;
 pub mod provider_restart;
+mod provider_route_handles;
 mod provider_runtime;
 pub mod providers;
 pub mod repo_onboarding;
@@ -82,17 +83,14 @@ pub(crate) use handle::route_handles_from_state;
 pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
     DaemonHandle, DaemonShutdownHandle, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle,
-    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ProviderAccountsHandle,
-    ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
-    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
-    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
-    ResourceUtilizationHandle, RunArchiveHandle, SessionArtifactsHandle,
-    SessionFileCompletionsHandle, SessionMessageCommandHandle, SessionReadModelsHandle,
-    SessionSubagentMcpReadHandle, SessionSubagentReadHandle, SessionTitleModelModeHandle,
-    SessionVcsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
-    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
-    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle,
-    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
+    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ResourceUtilizationHandle,
+    RunArchiveHandle, SessionArtifactsHandle, SessionFileCompletionsHandle,
+    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpReadHandle,
+    SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle,
+    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
+    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TerminalRouteHandle,
+    UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle, WorkspaceActiveHandle,
+    WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
@@ -104,6 +102,11 @@ pub use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
     require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
     ScopedMcpSessionAccessError,
+};
+pub use provider_route_handles::{
+    ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
+    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
 };
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;

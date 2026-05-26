@@ -214,6 +214,7 @@ const {
   scanProviderLoginHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
+  scanProviderRouteHandleDefinitionFiles,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
   scanMergeQueueApiDaemonImplementationRatchet,
@@ -5142,6 +5143,83 @@ test("appstate guard scans moved workspace route handle definitions in live path
       [
         "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
         "workspace deletion capability exposes generic full-state escape hatch",
+      ],
+    ],
+  );
+});
+
+test("appstate guard scans moved provider route handle definitions in live path", () => {
+  const violations = scanProviderRouteHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (
+        relativePath !==
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs"
+      ) {
+        return null;
+      }
+      return `
+        pub struct ProviderStatusHandle {
+          // A misleading } in a comment must not terminate the scanned struct.
+          #[doc = "A misleading } in an attribute string must not terminate the scanned struct."]
+          #[cfg_attr(any(), doc = br#"A misleading } in a raw byte string must not terminate the scanned struct."#)]
+          #[doc = '}']
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          daemon: DaemonHandle,
+          metadata: HashMap<
+            String,
+            String,
+          >, // unexpected generic field
+        }
+
+        pub struct ProviderInstallHandle {
+          state: Arc<DaemonState>, // unexpected field with trailing comment
+        }
+
+        pub struct ProviderUsageHandle {
+          metadata: HashMap<String, String>
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name]),
+    [
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider status capability declares unexpected field",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider status capability declares unexpected field",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider status capability declares unexpected field",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider status capability stores broad handle, store, or daemon state",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider status capability exposes generic full-state escape hatch",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider install capability declares unexpected field",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider install capability stores broad handle, store, or daemon state",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider install capability exposes generic full-state escape hatch",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+        "provider usage capability declares unexpected field",
       ],
     ],
   );

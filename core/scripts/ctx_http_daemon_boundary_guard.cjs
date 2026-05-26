@@ -10641,6 +10641,135 @@ function rustImplBlocksForType({ contents, typeName }) {
   return blocks;
 }
 
+function rustMatchingBraceIndex(contents, openBrace) {
+  let depth = 0;
+  let inLineComment = false;
+  let blockCommentDepth = 0;
+  let inString = false;
+  let inChar = false;
+  let escapedStringChar = false;
+  let escapedChar = false;
+  let rawStringTerminator = null;
+
+  for (let index = openBrace; index < contents.length; index += 1) {
+    const char = contents[index];
+    const next = contents[index + 1];
+
+    if (inLineComment) {
+      if (char === "\n" || char === "\r") {
+        inLineComment = false;
+      }
+      continue;
+    }
+    if (blockCommentDepth > 0) {
+      if (char === "/" && next === "*") {
+        blockCommentDepth += 1;
+        index += 1;
+        continue;
+      }
+      if (char === "*" && next === "/") {
+        blockCommentDepth -= 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (rawStringTerminator !== null) {
+      if (contents.startsWith(rawStringTerminator, index)) {
+        index += rawStringTerminator.length - 1;
+        rawStringTerminator = null;
+      }
+      continue;
+    }
+    if (inString) {
+      if (escapedStringChar) {
+        escapedStringChar = false;
+        continue;
+      }
+      if (char === "\\") {
+        escapedStringChar = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (inChar) {
+      if (escapedChar) {
+        escapedChar = false;
+        continue;
+      }
+      if (char === "\\") {
+        escapedChar = true;
+        continue;
+      }
+      if (char === "'") {
+        inChar = false;
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      blockCommentDepth = 1;
+      index += 1;
+      continue;
+    }
+    if (char === "b" && next === "r") {
+      let hashIndex = index + 2;
+      while (contents[hashIndex] === "#") {
+        hashIndex += 1;
+      }
+      if (contents[hashIndex] === '"') {
+        rawStringTerminator = `"${"#".repeat(hashIndex - index - 2)}`;
+        index = hashIndex;
+        continue;
+      }
+    }
+    if (char === "b" && next === '"') {
+      inString = true;
+      escapedStringChar = false;
+      index += 1;
+      continue;
+    }
+    if (char === "r") {
+      let hashIndex = index + 1;
+      while (contents[hashIndex] === "#") {
+        hashIndex += 1;
+      }
+      if (contents[hashIndex] === '"') {
+        rawStringTerminator = `"${"#".repeat(hashIndex - index - 1)}`;
+        index = hashIndex;
+        continue;
+      }
+    }
+    if (char === '"') {
+      inString = true;
+      escapedStringChar = false;
+      continue;
+    }
+    if (char === "'" && !/[A-Za-z_]/u.test(next ?? "")) {
+      inChar = true;
+      escapedChar = false;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
+}
+
 function rustTraitImplBlocksForType({ contents, traitName, typeName }) {
   const blocks = [];
   const regex = new RegExp(
@@ -10652,21 +10781,12 @@ function rustTraitImplBlocksForType({ contents, traitName, typeName }) {
     if (openBrace < 0) {
       continue;
     }
-    let depth = 0;
-    for (let index = openBrace; index < contents.length; index += 1) {
-      const char = contents[index];
-      if (char === "{") {
-        depth += 1;
-      } else if (char === "}") {
-        depth -= 1;
-      }
-      if (depth === 0) {
-        blocks.push({
-          index: match.index,
-          text: contents.slice(match.index, index + 1),
-        });
-        break;
-      }
+    const closeBrace = rustMatchingBraceIndex(contents, openBrace);
+    if (closeBrace >= 0) {
+      blocks.push({
+        index: match.index,
+        text: contents.slice(match.index, closeBrace + 1),
+      });
     }
   }
   return blocks;
@@ -10685,22 +10805,128 @@ function rustStructBlockForType({ contents, typeName }) {
   if (openBrace < 0) {
     return null;
   }
-  let depth = 0;
-  for (let index = openBrace; index < contents.length; index += 1) {
-    const char = contents[index];
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-    }
-    if (depth === 0) {
-      return {
-        index: match.index,
-        text: contents.slice(match.index, index + 1),
-      };
-    }
+  const closeBrace = rustMatchingBraceIndex(contents, openBrace);
+  if (closeBrace >= 0) {
+    return {
+      index: match.index,
+      text: contents.slice(match.index, closeBrace + 1),
+    };
   }
   return null;
+}
+
+function rustStructFieldsForBlock(blockText) {
+  const openBrace = blockText.indexOf("{");
+  const closeBrace = blockText.lastIndexOf("}");
+  if (openBrace < 0 || closeBrace <= openBrace) {
+    return [];
+  }
+
+  const fields = [];
+  let segmentStart = openBrace + 1;
+  let angleDepth = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  const pushField = (endIndex) => {
+    const text = blockText.slice(segmentStart, endIndex);
+    const withoutComments = text
+      .replace(/\/\/[^\n\r]*/gu, "")
+      .replace(/\/\*[\s\S]*?\*\//gu, "");
+    const field = /^\s*(?:#\[[\s\S]*?\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]+?)\s*$/u.exec(
+      withoutComments,
+    );
+    if (!field) {
+      return;
+    }
+    const name = field[1];
+    const nameMatch = new RegExp(`\\b${name}\\s*:`, "u").exec(text);
+    fields.push({
+      index: segmentStart + (nameMatch?.index ?? 0),
+      name,
+      text: text.trim(),
+      type: field[2],
+    });
+  };
+
+  for (let index = openBrace + 1; index < closeBrace; index += 1) {
+    const char = blockText[index];
+    const next = blockText[index + 1];
+
+    if (inLineComment) {
+      if (char === "\n" || char === "\r") {
+        inLineComment = false;
+      }
+      continue;
+    }
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === "<") {
+      angleDepth += 1;
+      continue;
+    }
+    if (char === ">" && angleDepth > 0) {
+      angleDepth -= 1;
+      continue;
+    }
+    if (char === "(") {
+      parenDepth += 1;
+      continue;
+    }
+    if (char === ")" && parenDepth > 0) {
+      parenDepth -= 1;
+      continue;
+    }
+    if (char === "[") {
+      bracketDepth += 1;
+      continue;
+    }
+    if (char === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+      continue;
+    }
+    if (char === "{") {
+      braceDepth += 1;
+      continue;
+    }
+    if (char === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+      continue;
+    }
+    if (
+      char === "," &&
+      angleDepth === 0 &&
+      parenDepth === 0 &&
+      bracketDepth === 0 &&
+      braceDepth === 0
+    ) {
+      pushField(index);
+      segmentStart = index + 1;
+    }
+  }
+
+  pushField(closeBrace);
+
+  return fields;
 }
 
 function rustEnumBlockForType({ contents, typeName }) {
@@ -10716,20 +10942,12 @@ function rustEnumBlockForType({ contents, typeName }) {
   if (openBrace < 0) {
     return null;
   }
-  let depth = 0;
-  for (let index = openBrace; index < contents.length; index += 1) {
-    const char = contents[index];
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-    }
-    if (depth === 0) {
-      return {
-        index: match.index,
-        text: contents.slice(match.index, index + 1),
-      };
-    }
+  const closeBrace = rustMatchingBraceIndex(contents, openBrace);
+  if (closeBrace >= 0) {
+    return {
+      index: match.index,
+      text: contents.slice(match.index, closeBrace + 1),
+    };
   }
   return null;
 }
@@ -13589,8 +13807,17 @@ const workspaceRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspace_route_handles.rs",
 ]);
 
+const providerRouteHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_route_handles.rs",
+]);
+
 function isWorkspaceRouteHandleDefinitionPath(filePath) {
   return workspaceRouteHandleDefinitionPaths.has(filePath);
+}
+
+function isProviderRouteHandleDefinitionPath(filePath) {
+  return providerRouteHandleDefinitionPaths.has(filePath);
 }
 
 function scanRepoOnboardingHandleFieldRatchet({ filePath, contents }) {
@@ -13716,6 +13943,166 @@ function scanWorkspaceRouteHandleDefinitionFiles({
     }
   }
 
+  return violations;
+}
+
+function scanProviderRouteHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  const allowedProviderHandleFields = new Map([
+    [
+      "ProviderAccountsHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["daemon_url", "String"],
+        ["providers", "Arc<ProviderRuntime>"],
+      ]),
+    ],
+    [
+      "ProviderBootstrapHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["workspace_stores", "ProtectedWorkspaceStoreLookup"],
+        ["providers", "Arc<ProviderRuntime>"],
+        ["ops_events", "OpsEvents"],
+      ]),
+    ],
+    [
+      "ProviderOptionsHandle",
+      new Map([["launch", "Arc<ProviderWorkspaceLaunchRuntime>"]]),
+    ],
+    [
+      "ProviderWorkspaceAuthHandle",
+      new Map([["launch", "Arc<ProviderWorkspaceLaunchRuntime>"]]),
+    ],
+    [
+      "ProviderStatusHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+        ["ops_events", "OpsEvents"],
+      ]),
+    ],
+    [
+      "ProviderAdminHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+        ["ops_events", "OpsEvents"],
+      ]),
+    ],
+    [
+      "ProviderInstallHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+        ["ops_events", "OpsEvents"],
+      ]),
+    ],
+    [
+      "ProviderAuthImportHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+      ]),
+    ],
+    [
+      "ProviderUsageHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+        ["shutdown_tx", "broadcast::Sender<()>"],
+      ]),
+    ],
+    [
+      "ProviderHarnessConfigHandle",
+      new Map([
+        ["data_root", "PathBuf"],
+        ["providers", "Arc<ProviderRuntime>"],
+      ]),
+    ],
+  ]);
+  const normalizeRustType = (value) => value.replace(/\s+/gu, "");
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|TransportHandle|ExecutionHandle|DaemonHandle|DaemonState|StoreManager|Store)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+  for (const relativePath of providerRouteHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    const lines = contents.split(/\r?\n/u);
+    for (const [typeName, allowedFields] of allowedProviderHandleFields) {
+      const handleStruct = rustStructBlockForType({
+        contents,
+        typeName,
+      });
+      if (!handleStruct) {
+        continue;
+      }
+      const capabilityName = typeName
+        .replace(/Handle$/u, "")
+        .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+        .toLowerCase();
+
+      for (const field of rustStructFieldsForBlock(handleStruct.text)) {
+        const fieldName = field.name;
+        const fieldType = normalizeRustType(field.type);
+        const expectedType = allowedFields.get(fieldName);
+        if (expectedType && fieldType === normalizeRustType(expectedType)) {
+          continue;
+        }
+        const offset = handleStruct.index + field.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath: relativePath,
+          line,
+          name: `${capabilityName} capability declares unexpected field`,
+          text: lines[line - 1]?.trim() ?? field.text,
+        });
+      }
+
+      broadFieldRegex.lastIndex = 0;
+      for (
+        let broad = broadFieldRegex.exec(handleStruct.text);
+        broad;
+        broad = broadFieldRegex.exec(handleStruct.text)
+      ) {
+        const offset = handleStruct.index + broad.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath: relativePath,
+          line,
+          name: `${capabilityName} capability stores broad handle, store, or daemon state`,
+          text: lines[line - 1]?.trim() ?? broad[0],
+        });
+      }
+
+      genericEscapeFieldRegex.lastIndex = 0;
+      for (
+        let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+        escape;
+        escape = genericEscapeFieldRegex.exec(handleStruct.text)
+      ) {
+        const offset = handleStruct.index + escape.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath: relativePath,
+          line,
+          name: `${capabilityName} capability exposes generic full-state escape hatch`,
+          text: lines[line - 1]?.trim() ?? escape[0],
+        });
+      }
+    }
+  }
   return violations;
 }
 
@@ -16658,6 +17045,7 @@ function scanRepo() {
       workspaceDeletionCapability: hasWorkspaceDeletionCapability,
     }),
   );
+  violations.push(...scanProviderRouteHandleDefinitionFiles());
 
   const daemonFiles = [];
   if (fs.existsSync(daemonRootPath)) {
@@ -17492,6 +17880,7 @@ module.exports = {
   globalIdRoutingStorePatternsForPath,
   harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,
+  isProviderRouteHandleDefinitionPath,
   isWorkspaceRouteHandleDefinitionPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
@@ -17565,6 +17954,7 @@ module.exports = {
   scanProviderLoginHandleRatchet,
   scanProviderRuntimeSurfaceDaemonFacadeRatchet,
   scanProviderRuntimeSurfaceHandleRatchet,
+  scanProviderRouteHandleDefinitionFiles,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
   scanMergeQueueApiDaemonImplementationRatchet,
