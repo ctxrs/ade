@@ -8,7 +8,7 @@ use ctx_session_service::session_creation::should_preflight_default_session;
 use ctx_store::Store;
 use ctx_task_service::creation::TaskRecordCreateError;
 
-use crate::daemon::handle::{TaskCreationHandle, TaskSessionAdmissionHandle};
+use crate::daemon::task_route_handles::{TaskCreationHandle, TaskSessionAdmissionHandle};
 use crate::daemon::workspaces::execution_environment_from_settings;
 
 #[path = "create_task/default_session_flow.rs"]

@@ -135,6 +135,20 @@ test("ratcheted line caps apply only to decomposed parent files", () => {
   assert.equal(violations[0].lineCount, capped.limit + 1);
 });
 
+test("task route handle split module has a line-cap ratchet", () => {
+  const rootDir = makeRoot();
+  const capped = RATCHETED_FILE_LIMITS.find((entry) =>
+    entry.path === "core/crates/ctx-daemon/src/daemon/task_route_handles.rs"
+  );
+  assert.ok(capped, "expected task_route_handles.rs to have a line cap");
+  writeFile(rootDir, capped.path, lines(capped.limit + 1));
+
+  const violations = checkRatchetedFileCaps(rootDir);
+
+  assert.deepEqual(violations.map((entry) => entry.path), [capped.path]);
+  assert.equal(violations[0].lineCount, capped.limit + 1);
+});
+
 test("cargo dependency parser finds simple dependencies, package aliases, and dependency tables", () => {
   const dependencies = parseCargoDependencies(`
     [package]

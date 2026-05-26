@@ -2,7 +2,7 @@ use anyhow::Result;
 use ctx_core::ids::TaskId;
 use ctx_core::models::Task;
 
-use crate::daemon::handle::{TaskReadStateHandle, TaskTitleHandle};
+use crate::daemon::task_route_handles::{TaskReadStateHandle, TaskTitleHandle};
 
 impl TaskReadStateHandle {
     pub async fn mark_task_read(&self, task_id: TaskId) -> Result<Option<Task>> {
@@ -71,7 +71,7 @@ mod tests {
     use ctx_core::ids::{SessionId, TaskId, WorktreeId};
     use ctx_core::models::{ExecutionEnvironment, Task, TaskDeltaKind, VcsKind};
 
-    use crate::daemon::handle::{
+    use crate::daemon::task_route_handles::{
         TaskCloseWebSessionsForTask, TaskMetadataEffects, TaskMetadataFuture,
     };
     use crate::test_support::{TaskLifecycleSessionSeed, TaskLifecycleWorktreeSeed, TestDaemon};

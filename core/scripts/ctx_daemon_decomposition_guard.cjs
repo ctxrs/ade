@@ -55,6 +55,10 @@ const RATCHETED_FILE_LIMITS = [
     limit: 320,
   },
   {
+    path: "core/crates/ctx-daemon/src/daemon/task_route_handles.rs",
+    limit: 1920,
+  },
+  {
     path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
     limit: 570,
   },

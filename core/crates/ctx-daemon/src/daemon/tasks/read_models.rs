@@ -2,7 +2,7 @@ use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{Session, Task, WorkspaceArchivedPage, WorkspaceIndexCursor};
 
-use crate::daemon::handle::{TaskListingHandle, TaskSessionListingHandle};
+use crate::daemon::task_route_handles::{TaskListingHandle, TaskSessionListingHandle};
 use crate::daemon::WorkspaceStoreAccessError;
 
 impl TaskListingHandle {

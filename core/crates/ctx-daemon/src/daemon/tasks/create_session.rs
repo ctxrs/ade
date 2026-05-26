@@ -15,8 +15,8 @@ use ctx_store::Store;
 use std::collections::HashMap;
 use std::path::Path as StdPath;
 
-use crate::daemon::handle::TaskSessionAdmissionHandle;
 use crate::daemon::scheduler::SchedulerCommand;
+use crate::daemon::task_route_handles::TaskSessionAdmissionHandle;
 use crate::daemon::workspaces::{
     execution_environment_from_settings, retry_global_index_write, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,

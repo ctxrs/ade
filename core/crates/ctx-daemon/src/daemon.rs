@@ -55,6 +55,7 @@ pub mod sessions;
 pub mod settings;
 mod state;
 pub mod storage_guard;
+mod task_route_handles;
 mod task_session_effects;
 pub mod tasks;
 pub mod terminals;
@@ -87,10 +88,8 @@ pub use handle::{
     RunArchiveHandle, SessionArtifactsHandle, SessionFileCompletionsHandle,
     SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpReadHandle,
     SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle,
-    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
-    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TerminalRouteHandle,
-    UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle, WorkspaceActiveHandle,
-    WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
+    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle,
+    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
@@ -128,6 +127,10 @@ pub(in crate::daemon) use state::{
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     CacheSweepConfig, SessionStoreAccessError, StoreLookup, TimedEntry, WorkspaceStoreAccessError,
+};
+pub use task_route_handles::{
+    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
+    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
 };
 pub use workspace_route_handles::{
     WorkspaceAttachmentsHandle, WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle,

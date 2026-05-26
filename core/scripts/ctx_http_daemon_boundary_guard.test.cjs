@@ -2812,6 +2812,60 @@ test("appstate guard rejects task read metadata broad daemon seams", () => {
   ]);
 });
 
+test("appstate guard scans moved task route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/task_route_handles.rs";
+  const contents = `
+    pub struct TaskCreationHandle {
+      creation_tasks: TasksHandle,
+    }
+
+    pub struct TaskSessionAdmissionHandle {
+      admission_state: Arc<DaemonState>,
+    }
+
+    pub struct TaskLifecycleHandle {
+      lifecycle_daemon: DaemonHandle,
+    }
+
+    pub struct TaskListingHandle {
+      listing_sessions: SessionsHandle,
+    }
+
+    pub struct TaskReadStateHandle {
+      read_state_workspaces: WorkspacesHandle,
+    }
+  `;
+
+  const admissionViolations = scanTaskAdmissionHandleFieldRatchet({
+    filePath,
+    contents,
+  }).map((violation) => violation.text);
+
+  assert.deepEqual(admissionViolations, [
+    "creation_tasks: TasksHandle,",
+    "admission_state: Arc<DaemonState>,",
+  ]);
+
+  const lifecycleViolations = scanTaskLifecycleHandleFieldRatchet({
+    filePath,
+    contents,
+  }).map((violation) => violation.text);
+
+  assert.deepEqual(lifecycleViolations, [
+    "lifecycle_daemon: DaemonHandle,",
+  ]);
+
+  const readMetadataViolations = scanTaskReadMetadataHandleFieldRatchet({
+    filePath,
+    contents,
+  }).map((violation) => violation.text);
+
+  assert.deepEqual(readMetadataViolations, [
+    "listing_sessions: SessionsHandle,",
+    "read_state_workspaces: WorkspacesHandle,",
+  ]);
+});
+
 test("appstate guard rejects session artifacts broad route handles", () => {
   const handlerViolations = scanSessionArtifactsHandleRatchet({
     filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",

@@ -4,7 +4,7 @@ use ctx_store::Store;
 use ctx_task_service::lifecycle::{self, LifecycleCleanupTarget};
 use ctx_worktree_vcs_service::ensure_worktree_attached;
 
-use crate::daemon::handle::TaskLifecycleHandle;
+use crate::daemon::task_route_handles::TaskLifecycleHandle;
 use crate::daemon::workspaces::{
     BranchCleanupErrorMode, TaskWorktreeCleanupTarget, TaskWorktreeHost,
 };

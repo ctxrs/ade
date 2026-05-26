@@ -16,6 +16,14 @@ const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src"
 const daemonRoot = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon");
 const daemonRootPath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon.rs");
 const daemonHandlePath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon", "handle.rs");
+const daemonTaskRouteHandlesPath = path.join(
+  coreRoot,
+  "crates",
+  "ctx-daemon",
+  "src",
+  "daemon",
+  "task_route_handles.rs",
+);
 const daemonRouteHandlesScanRoots = [
   "core/crates/ctx-http/src/",
   "core/crates/ctx-http/tests/",
@@ -598,6 +606,10 @@ const taskReadMetadataDaemonImplementationRoots = [
   "core/crates/ctx-daemon/src/daemon/tasks/read_models.rs",
   "core/crates/ctx-daemon/src/daemon/tasks/metadata.rs",
 ];
+const taskRouteHandleFieldRatchetPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/task_route_handles.rs",
+]);
 
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
@@ -9506,39 +9518,49 @@ function scanTaskAdmissionDaemonImplementationRatchet({ filePath, contents }) {
   return violations;
 }
 
-function scanTaskAdmissionHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
-    return [];
-  }
+function scanTaskRouteHandleBroadStructFields({
+  filePath,
+  contents,
+  handleNames,
+  violationName,
+}) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
-  for (const handleName of ["TaskCreationHandle", "TaskSessionAdmissionHandle"]) {
-    const structRegex = new RegExp(
-      `pub\\s+struct\\s+${handleName}\\s*\\{[\\s\\S]*?\\n\\s*\\}`,
-      "u",
-    );
-    const match = structRegex.exec(contents);
-    if (!match) {
+  for (const handleName of handleNames) {
+    const block = rustStructBlockForType({ contents, typeName: handleName });
+    if (!block) {
       continue;
     }
     const broadFieldRegex =
       /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
     for (
-      let broad = broadFieldRegex.exec(match[0]);
+      let broad = broadFieldRegex.exec(block.text);
       broad;
-      broad = broadFieldRegex.exec(match[0])
+      broad = broadFieldRegex.exec(block.text)
     ) {
-      const offset = match.index + broad.index;
+      const offset = block.index + broad.index;
       const line = contents.slice(0, offset).split(/\r?\n/u).length;
       violations.push({
         filePath,
         line,
-        name: "task admission capability stores broad handle or daemon state",
+        name: violationName,
         text: lines[line - 1]?.trim() ?? broad[0],
       });
     }
   }
   return violations;
+}
+
+function scanTaskAdmissionHandleFieldRatchet({ filePath, contents }) {
+  if (!taskRouteHandleFieldRatchetPaths.has(filePath)) {
+    return [];
+  }
+  return scanTaskRouteHandleBroadStructFields({
+    filePath,
+    contents,
+    handleNames: ["TaskCreationHandle", "TaskSessionAdmissionHandle"],
+    violationName: "task admission capability stores broad handle or daemon state",
+  });
 }
 
 function scanTaskLifecycleHandleRatchet({ filePath, contents }) {
@@ -9614,31 +9636,16 @@ function scanTaskLifecycleDaemonImplementationRatchet({ filePath, contents }) {
 }
 
 function scanTaskLifecycleHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!taskRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
-  const violations = [];
+  const violations = scanTaskRouteHandleBroadStructFields({
+    filePath,
+    contents,
+    handleNames: ["TaskLifecycleHandle"],
+    violationName: "task lifecycle capability stores broad handle or daemon state",
+  });
   const lines = contents.split(/\r?\n/u);
-  const structRegex = /pub\s+struct\s+TaskLifecycleHandle\s*\{[\s\S]*?\n\s*\}/u;
-  const match = structRegex.exec(contents);
-  if (match) {
-    const broadFieldRegex =
-      /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
-    for (
-      let broad = broadFieldRegex.exec(match[0]);
-      broad;
-      broad = broadFieldRegex.exec(match[0])
-    ) {
-      const offset = match.index + broad.index;
-      const line = contents.slice(0, offset).split(/\r?\n/u).length;
-      violations.push({
-        filePath,
-        line,
-        name: "task lifecycle capability stores broad handle or daemon state",
-        text: lines[line - 1]?.trim() ?? broad[0],
-      });
-    }
-  }
 
   const cleanupBackdoorRegex = /\bTasksHandle::new\s*\(/gu;
   for (
@@ -9734,43 +9741,22 @@ function scanTaskReadMetadataDaemonImplementationRatchet({ filePath, contents })
 }
 
 function scanTaskReadMetadataHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!taskRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
-  const violations = [];
-  const lines = contents.split(/\r?\n/u);
   const handleNames = [
     "TaskListingHandle",
     "TaskSessionListingHandle",
     "TaskReadStateHandle",
     "TaskTitleHandle",
   ];
-  for (const handleName of handleNames) {
-    const structRegex = new RegExp(
-      `pub\\s+struct\\s+${handleName}\\s*\\{[\\s\\S]*?\\n\\s*\\}`,
-      "u",
-    );
-    const match = structRegex.exec(contents);
-    if (!match) {
-      continue;
-    }
-    const broadFieldRegex =
-      /\b(?:TasksHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
-    for (
-      let broad = broadFieldRegex.exec(match[0]);
-      broad;
-      broad = broadFieldRegex.exec(match[0])
-    ) {
-      const offset = match.index + broad.index;
-      const line = contents.slice(0, offset).split(/\r?\n/u).length;
-      violations.push({
-        filePath,
-        line,
-        name: "task read metadata capability stores broad handle or daemon state",
-        text: lines[line - 1]?.trim() ?? broad[0],
-      });
-    }
-  }
+  const violations = scanTaskRouteHandleBroadStructFields({
+    filePath,
+    contents,
+    handleNames,
+    violationName: "task read metadata capability stores broad handle or daemon state",
+  });
+  const lines = contents.split(/\r?\n/u);
 
   const tasksHandleConstructionRegex = /\bTasksHandle::new\s*\(/gu;
   for (
@@ -17034,6 +17020,24 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceCompositionStateCutRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+  if (fs.existsSync(daemonTaskRouteHandlesPath)) {
+    const relativePath = repoRelative(daemonTaskRouteHandlesPath);
+    const contents = fs.readFileSync(daemonTaskRouteHandlesPath, "utf8");
+    violations.push(
+      ...scanTaskAdmissionHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskLifecycleHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskReadMetadataHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
