@@ -1107,6 +1107,7 @@ test("appstate terminal route handle ratchet rejects broad terminal route seams"
       pub struct TerminalRouteHandle {
         state: Arc<DaemonState>,
         transport: TransportHandle,
+        web: WebSessionRouteHandle,
       }
     `,
   }).map((violation) => violation.name);
@@ -1121,12 +1122,306 @@ test("appstate terminal route handle ratchet rejects broad terminal route seams"
       "terminal route capability exposes generic full-state escape hatch",
     ),
   );
+  assert(
+    fieldViolations.includes(
+      "terminal route capability exposes unexpected production field",
+    ),
+  );
+  assert.equal(
+    fieldViolations.filter(
+      (name) => name === "terminal route capability stores broad handle or daemon state",
+    ).length,
+    3,
+  );
 
   assert.deepEqual(
     scanTerminalRouteHandleRatchet({
       filePath: "core/crates/ctx-http/src/api/ws/terminal.rs",
       contents: `
         async fn route(State(terminals): State<TerminalRouteHandle>) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate terminal route handle ratchet rejects state-capturing terminal launch assembly", () => {
+  const violations = scanTerminalRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn terminal_route(&self) -> TerminalRouteHandle {
+          let create_terminal = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |req: CreateTerminalLaunchRequest| {
+              let state = Arc::clone(&state);
+              Box::pin(async move {
+                crate::daemon::terminals::create_workspace_terminal(&state, req).await
+              }) as CreateTerminalFuture
+            }
+          });
+          TerminalRouteHandle::new(
+            Arc::clone(&self.state.transport.terminals),
+            create_terminal,
+          )
+        }
+
+        pub fn web_session_route(&self) -> WebSessionRouteHandle {
+          let state = Arc::clone(&self.state);
+          WebSessionRouteHandle::new(state)
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("terminal route assembly captures full daemon state"),
+  );
+  assert(
+    violations.includes(
+      "terminal route assembly uses state-capturing terminal launch closure",
+    ),
+  );
+  assert.equal(
+    violations.filter(
+      (name) => name === "terminal route assembly captures full daemon state",
+    ).length,
+    1,
+  );
+});
+
+test("appstate terminal route handle ratchet allows typed terminal launch host assembly", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        impl DaemonHandle {
+          pub fn terminal_route(&self) -> TerminalRouteHandle {
+            TerminalRouteHandle::new(
+              Arc::clone(&self.state.transport.terminals),
+              self.terminal_launch_host(),
+            )
+          }
+        }
+
+        #[cfg(test)]
+        pub(in crate::daemon) type CreateTerminalFuture =
+          Pin<Box<dyn Future<Output = Result<TerminalSession, TerminalLaunchError>> + Send + 'static>>;
+        #[cfg(test)]
+        pub(in crate::daemon) type CreateTerminalEffect =
+          Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+
+        #[derive(Clone)]
+        enum TerminalRouteLaunch {
+          Host(TerminalLaunchHost),
+          #[cfg(test)]
+          Override(CreateTerminalEffect),
+        }
+
+        pub struct TerminalRouteHandle {
+          terminals: Arc<TerminalManager>,
+          launch: TerminalRouteLaunch,
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate terminal route handle ratchet rejects production callback storage", () => {
+  const violations = scanTerminalRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub(in crate::daemon) type CreateTerminalFuture =
+        Pin<Box<dyn Future<Output = Result<TerminalSession, TerminalLaunchError>> + Send + 'static>>;
+      pub(in crate::daemon) type CreateTerminalEffect =
+        Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+      type TerminalLauncher =
+        Box<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+
+      pub struct TerminalRouteHandle {
+        terminals: Arc<TerminalManager>,
+        create_terminal: CreateTerminalEffect,
+        create_terminal_alias: TerminalLauncher,
+        create_terminal_direct:
+          Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>,
+        create_terminal_boxed:
+          Box<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>,
+        create_terminal_fn: fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("terminal route production callback effect alias remains"),
+  );
+  assert(
+    violations.includes("terminal route capability stores production callback effect"),
+  );
+  assert(
+    violations.includes("terminal route capability stores production callback shape"),
+  );
+  assert(
+    violations.includes("terminal route production callback-shaped alias remains"),
+  );
+  assert(
+    violations.includes(
+      "terminal route capability exposes unexpected production field",
+    ),
+  );
+});
+
+test("appstate terminal route handle ratchet rejects production launch enum backdoors", () => {
+  const violations = scanTerminalRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      type TerminalLauncher =
+        Box<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+
+      enum TerminalRouteLaunch {
+        Host(TerminalLaunchHost),
+        Callback(Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>),
+        BoxedCallback(Box<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>),
+        AliasCallback(TerminalLauncher),
+        Broad(FooDomainHandle),
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "terminal route launch enum stores production callback effect",
+    ),
+  );
+  assert(
+    violations.includes(
+      "terminal route launch enum stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    violations.includes("terminal route production callback-shaped alias remains"),
+  );
+  assert(
+    violations.includes(
+      "terminal route launch enum exposes unexpected production variant",
+    ),
+  );
+});
+
+test("appstate terminal route handle ratchet allows test-gated callback alias use", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+      contents: `
+        type TerminalLauncher =
+          Box<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
+
+        enum TerminalRouteLaunch {
+          Host(TerminalLaunchHost),
+          #[cfg(test)]
+          Override(TerminalLauncher),
+        }
+
+        pub struct TerminalRouteHandle {
+          terminals: Arc<TerminalManager>,
+          launch: TerminalRouteLaunch,
+          #[cfg(test)]
+          override_launch: TerminalLauncher,
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate terminal launch ratchet rejects DaemonState in production launch files", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/worktree.rs",
+      contents: `
+        use crate::daemon::DaemonState;
+
+        async fn resolve(state: Arc<DaemonState>) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "terminal launch production helper mentions DaemonState",
+      "terminal launch production helper mentions DaemonState",
+    ],
+  );
+
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/tests.rs",
+      contents: `
+        use crate::daemon::DaemonState;
+
+        async fn test_state() -> Arc<DaemonState> {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate terminal launch ratchet rejects broad handles in production launch files", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch/worktree.rs",
+      contents: `
+        use crate::daemon::{DaemonHandle, FooDomainHandle};
+
+        async fn resolve(handle: &DaemonHandle, domain: &FooDomainHandle) {}
+      `,
+    }).map((violation) => violation.name),
+    [
+      "terminal launch production helper mentions broad daemon or route handle",
+      "terminal launch production helper mentions broad daemon or route handle",
+      "terminal launch production helper mentions broad daemon or route handle",
+      "terminal launch production helper mentions broad daemon or route handle",
+    ],
+  );
+});
+
+test("appstate terminal launch ratchet rejects broad host fields", () => {
+  const violations = scanTerminalRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch.rs",
+    contents: `
+      pub(in crate::daemon) struct TerminalLaunchHost {
+        state: Arc<DaemonState>,
+        route: TerminalRouteHandle,
+        domain: FooDomainHandle,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "terminal launch production helper mentions DaemonState",
+    ),
+  );
+  assert(
+    violations.includes("terminal launch host stores broad daemon or route handle"),
+  );
+  assert(
+    violations.includes(
+      "terminal launch host exposes generic full-state escape hatch",
+    ),
+  );
+});
+
+test("appstate terminal launch ratchet allows narrow host dependencies", () => {
+  assert.deepEqual(
+    scanTerminalRouteHandleRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/terminals/launch.rs",
+      contents: `
+        pub(in crate::daemon) struct TerminalLaunchHost {
+          global_store: Store,
+          workspace_stores: ProtectedWorkspaceStoreLookup,
+          data_root: PathBuf,
+          daemon_url: String,
+          harness: Arc<HarnessRuntimeManager>,
+          terminals: Arc<TerminalManager>,
+        }
       `,
     }),
     [],

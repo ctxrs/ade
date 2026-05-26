@@ -72,7 +72,7 @@ use super::{
         SessionStoreLookup, TaskStoreLookup, TelemetryRuntime, WeakSessionStoreLookup,
         WorkspaceFileCompletionsCache, WorktreeFileCompletionsCache,
     },
-    terminals::CreateTerminalLaunchRequest,
+    terminals::{CreateTerminalLaunchRequest, TerminalLaunchHost},
     web_sessions::{WebSessionLaunchError, WebSessionLaunchRequest},
     workspaces::{TaskWorktreeHost, TaskWorktreeHostParts},
 };
@@ -845,6 +845,17 @@ impl DaemonHandle {
         )
     }
 
+    fn terminal_launch_host(&self) -> TerminalLaunchHost {
+        TerminalLaunchHost::new(
+            self.state.global_store().clone(),
+            self.protected_workspace_store_lookup(),
+            self.state.core.data_root.clone(),
+            self.state.core.daemon_url.clone(),
+            Arc::clone(&self.state.execution.harness),
+            Arc::clone(&self.state.transport.terminals),
+        )
+    }
+
     fn task_store_lookup(&self) -> TaskStoreLookup {
         TaskStoreLookup::new(
             self.state.global_store().clone(),
@@ -1234,16 +1245,10 @@ impl DaemonHandle {
     }
 
     pub fn terminal_route(&self) -> TerminalRouteHandle {
-        let create_terminal = Arc::new({
-            let state = Arc::clone(&self.state);
-            move |req: CreateTerminalLaunchRequest| {
-                let state = Arc::clone(&state);
-                Box::pin(async move {
-                    crate::daemon::terminals::create_workspace_terminal(&state, req).await
-                }) as CreateTerminalFuture
-            }
-        });
-        TerminalRouteHandle::new(Arc::clone(&self.state.transport.terminals), create_terminal)
+        TerminalRouteHandle::new(
+            Arc::clone(&self.state.transport.terminals),
+            self.terminal_launch_host(),
+        )
     }
 
     pub fn web_session_route(&self) -> WebSessionRouteHandle {
@@ -4874,25 +4879,45 @@ impl LinuxSandboxRuntimeHandle {
     }
 }
 
+#[cfg(test)]
 pub(in crate::daemon) type CreateTerminalFuture =
     Pin<Box<dyn Future<Output = Result<TerminalSession, TerminalLaunchError>> + Send + 'static>>;
+#[cfg(test)]
 pub(in crate::daemon) type CreateTerminalEffect =
     Arc<dyn Fn(CreateTerminalLaunchRequest) -> CreateTerminalFuture + Send + Sync>;
 
 #[derive(Clone)]
+enum TerminalRouteLaunch {
+    Host(TerminalLaunchHost),
+    #[cfg(test)]
+    Override(CreateTerminalEffect),
+}
+
+#[derive(Clone)]
 pub struct TerminalRouteHandle {
     terminals: Arc<TerminalManager>,
-    create_terminal: CreateTerminalEffect,
+    launch: TerminalRouteLaunch,
 }
 
 impl TerminalRouteHandle {
     pub(in crate::daemon) fn new(
         terminals: Arc<TerminalManager>,
+        launch: TerminalLaunchHost,
+    ) -> Self {
+        Self {
+            terminals,
+            launch: TerminalRouteLaunch::Host(launch),
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn new_for_test(
+        terminals: Arc<TerminalManager>,
         create_terminal: CreateTerminalEffect,
     ) -> Self {
         Self {
             terminals,
-            create_terminal,
+            launch: TerminalRouteLaunch::Override(create_terminal),
         }
     }
 
@@ -4904,7 +4929,13 @@ impl TerminalRouteHandle {
         &self,
         req: CreateTerminalLaunchRequest,
     ) -> Result<TerminalSession, TerminalLaunchError> {
-        (self.create_terminal)(req).await
+        match &self.launch {
+            TerminalRouteLaunch::Host(host) => {
+                crate::daemon::terminals::create_workspace_terminal(host, req).await
+            }
+            #[cfg(test)]
+            TerminalRouteLaunch::Override(create_terminal) => create_terminal(req).await,
+        }
     }
 }
 

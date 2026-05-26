@@ -499,6 +499,11 @@ const terminalRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/terminal.rs",
 ]);
 
+const terminalLaunchProductionRoots = [
+  "core/crates/ctx-daemon/src/daemon/terminals/launch.rs",
+  "core/crates/ctx-daemon/src/daemon/terminals/launch/",
+];
+
 const taskCreationPlaceholderExtractorApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_task.rs",
 ];
@@ -7625,6 +7630,22 @@ function scanDaemonShutdownHandleRatchet({ filePath, contents }) {
 function scanTerminalRouteHandleRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
+  const hasAdjacentTestCfg = (line) => {
+    for (let index = line - 2; index >= Math.max(0, line - 5); index -= 1) {
+      const text = lines[index]?.trim() ?? "";
+      if (!text) {
+        continue;
+      }
+      if (/#\s*\[\s*cfg\s*\(\s*(?:test|any\s*\([^)]*\btest\b)/u.test(text)) {
+        return true;
+      }
+      if (/^#\s*\[/u.test(text)) {
+        continue;
+      }
+      return false;
+    }
+    return false;
+  };
 
   if (filePath.startsWith("core/crates/ctx-http/src/")) {
     const extractorRegex =
@@ -7683,18 +7704,64 @@ function scanTerminalRouteHandleRatchet({ filePath, contents }) {
   }
 
   if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const terminalRouteBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "terminal_route",
+    });
+    if (terminalRouteBlock) {
+      const stateCloneRegex = /\bArc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)/gu;
+      for (
+        let match = stateCloneRegex.exec(terminalRouteBlock.text);
+        match;
+        match = stateCloneRegex.exec(terminalRouteBlock.text)
+      ) {
+        const offset = terminalRouteBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route assembly captures full daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const stateCapturingLaunchRegex =
+        /\b(?:create_terminal|launch)\s*=\s*Arc\s*::\s*new\s*\(\s*\{[\s\S]*?\bstate\s*=\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)[\s\S]*?\bmove\s*\|/gu;
+      for (
+        let match = stateCapturingLaunchRegex.exec(terminalRouteBlock.text);
+        match;
+        match = stateCapturingLaunchRegex.exec(terminalRouteBlock.text)
+      ) {
+        const offset = terminalRouteBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route assembly uses state-capturing terminal launch closure",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
     const block = rustStructBlockForType({ contents, typeName: "TerminalRouteHandle" });
     if (block) {
       const broadFieldRegex =
-        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
       const genericEscapeFieldRegex =
         /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport)\s*:/gmu;
+      const callbackFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?:CreateTerminalEffect|CreateTerminalFuture)\b/gmu;
+      const callbackShapeFieldRegex =
+        /\bdyn\s+Fn(?:Mut|Once)?\b|:\s*fn\s*\(/gu;
 
       for (
         let match = broadFieldRegex.exec(block.text);
         match;
         match = broadFieldRegex.exec(block.text)
       ) {
+        if (match[0] === "TerminalRouteHandle") {
+          continue;
+        }
         const offset = block.index + match.index;
         const line = contents.slice(0, offset).split(/\r?\n/u).length;
         violations.push({
@@ -7716,6 +7783,271 @@ function scanTerminalRouteHandleRatchet({ filePath, contents }) {
           filePath,
           line,
           name: "terminal route capability exposes generic full-state escape hatch",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackFieldRegex.exec(block.text);
+        match;
+        match = callbackFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route capability stores production callback effect",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackShapeFieldRegex.exec(block.text);
+        match;
+        match = callbackShapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route capability stores production callback shape",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const allowedTerminalRouteFields = new Set(["terminals", "launch"]);
+      const fieldDeclarationRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu;
+      for (
+        let match = fieldDeclarationRegex.exec(block.text);
+        match;
+        match = fieldDeclarationRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const fieldName = match[1];
+        if (allowedTerminalRouteFields.has(fieldName)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route capability exposes unexpected production field",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const launchEnumBlock = rustEnumBlockForType({
+      contents,
+      typeName: "TerminalRouteLaunch",
+    });
+    if (launchEnumBlock) {
+      const broadVariantRegex =
+        /\b(?:DaemonState|DaemonHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|TransportHandle|WorkspacesHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const callbackVariantRegex =
+        /\b(?:CreateTerminalEffect|CreateTerminalFuture)\b|\bdyn\s+Fn(?:Mut|Once)?\b|\bfn\s*\(/gu;
+
+      for (
+        let match = broadVariantRegex.exec(launchEnumBlock.text);
+        match;
+        match = broadVariantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route launch enum stores broad handle or daemon state",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = callbackVariantRegex.exec(launchEnumBlock.text);
+        match;
+        match = callbackVariantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route launch enum stores production callback effect",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      const variantRegex = /^\s*([A-Z][A-Za-z0-9_]*)\s*(?:\(|,|\{)/gmu;
+      for (
+        let match = variantRegex.exec(launchEnumBlock.text);
+        match;
+        match = variantRegex.exec(launchEnumBlock.text)
+      ) {
+        const offset = launchEnumBlock.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        if (hasAdjacentTestCfg(line)) {
+          continue;
+        }
+        const variantName = match[1];
+        if (variantName === "Host") {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: "terminal route launch enum exposes unexpected production variant",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+
+    const callbackAliasRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?type\s+(?:CreateTerminalFuture|CreateTerminalEffect)\b/gmu;
+    for (
+      let match = callbackAliasRegex.exec(contents);
+      match;
+      match = callbackAliasRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      if (hasAdjacentTestCfg(line)) {
+        continue;
+      }
+      violations.push({
+        filePath,
+        line,
+        name: "terminal route production callback effect alias remains",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+
+    const callbackShapeAliasRegex =
+      /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:(?!;)[\s\S])*(?:\bdyn\s+Fn(?:Mut|Once)?\b|\bfn\s*\()/gmu;
+    for (
+      let match = callbackShapeAliasRegex.exec(contents);
+      match;
+      match = callbackShapeAliasRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      if (hasAdjacentTestCfg(line)) {
+        continue;
+      }
+      const aliasName = match[1];
+      const aliasUseRegex = new RegExp(`\\b${aliasName}\\b`, "gu");
+      const hasProductionAliasUse = (candidateBlock) => {
+        if (!candidateBlock) {
+          return false;
+        }
+        for (
+          let useMatch = aliasUseRegex.exec(candidateBlock.text);
+          useMatch;
+          useMatch = aliasUseRegex.exec(candidateBlock.text)
+        ) {
+          const offset = candidateBlock.index + useMatch.index;
+          const useLine = contents.slice(0, offset).split(/\r?\n/u).length;
+          if (!hasAdjacentTestCfg(useLine)) {
+            aliasUseRegex.lastIndex = 0;
+            return true;
+          }
+        }
+        aliasUseRegex.lastIndex = 0;
+        return false;
+      };
+      if (!hasProductionAliasUse(block) && !hasProductionAliasUse(launchEnumBlock)) {
+        continue;
+      }
+      violations.push({
+        filePath,
+        line,
+        name: "terminal route production callback-shaped alias remains",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  const isTerminalLaunchProductionPath =
+    terminalLaunchProductionRoots.some((root) => filePath.startsWith(root)) &&
+    filePath !== "core/crates/ctx-daemon/src/daemon/terminals/launch/tests.rs";
+  if (isTerminalLaunchProductionPath) {
+    const daemonStateRegex = /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu;
+    const broadHandleRegex =
+      /\b(?:DaemonHandle|TransportHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|TerminalRouteHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b/gu;
+    for (
+      let match = daemonStateRegex.exec(contents);
+      match;
+      match = daemonStateRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "terminal launch production helper mentions DaemonState",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+    for (
+      let match = broadHandleRegex.exec(contents);
+      match;
+      match = broadHandleRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "terminal launch production helper mentions broad daemon or route handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/terminals/launch.rs") {
+    const block = rustStructBlockForType({ contents, typeName: "TerminalLaunchHost" });
+    if (block) {
+      const broadFieldRegex =
+        /\b(?:DaemonState|DaemonHandle|TransportHandle|ExecutionHandle|SessionsHandle|ProvidersHandle|WorkspacesHandle|TerminalRouteHandle|[A-Za-z][A-Za-z0-9_]*(?:RouteHandle|DomainHandle))\b|\bArc\s*<\s*DaemonState\s*>/gu;
+      const genericEscapeFieldRegex =
+        /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state|transport|route|routes|handle|handles)\s*:/gmu;
+
+      for (
+        let match = broadFieldRegex.exec(block.text);
+        match;
+        match = broadFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal launch host stores broad daemon or route handle",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+
+      for (
+        let match = genericEscapeFieldRegex.exec(block.text);
+        match;
+        match = genericEscapeFieldRegex.exec(block.text)
+      ) {
+        const offset = block.index + match.index;
+        const line = contents.slice(0, offset).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "terminal launch host exposes generic full-state escape hatch",
           text: lines[line - 1]?.trim() ?? match[0],
         });
       }
@@ -9351,6 +9683,37 @@ function rustTraitImplBlocksForType({ contents, traitName, typeName }) {
 function rustStructBlockForType({ contents, typeName }) {
   const regex = new RegExp(
     `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?struct\\s+${typeName}(?:\\s*<[^>{]+>)?\\s*\\{`,
+    "gu",
+  );
+  const match = regex.exec(contents);
+  if (!match) {
+    return null;
+  }
+  const openBrace = contents.indexOf("{", match.index);
+  if (openBrace < 0) {
+    return null;
+  }
+  let depth = 0;
+  for (let index = openBrace; index < contents.length; index += 1) {
+    const char = contents[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+    }
+    if (depth === 0) {
+      return {
+        index: match.index,
+        text: contents.slice(match.index, index + 1),
+      };
+    }
+  }
+  return null;
+}
+
+function rustEnumBlockForType({ contents, typeName }) {
+  const regex = new RegExp(
+    `\\b(?:pub(?:\\s*\\([^)]*\\))?\\s+)?enum\\s+${typeName}(?:\\s*<[^>{]+>)?\\s*\\{`,
     "gu",
   );
   const match = regex.exec(contents);

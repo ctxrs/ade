@@ -1,5 +1,5 @@
-use super::infer_terminal_worktree;
-use crate::daemon::DaemonState;
+use super::{infer_terminal_worktree, TerminalLaunchHost};
+use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
@@ -54,6 +54,21 @@ async fn test_state(data_root: &std::path::Path) -> Arc<DaemonState> {
     ))
 }
 
+fn test_terminal_launch_host(state: &Arc<DaemonState>) -> TerminalLaunchHost {
+    TerminalLaunchHost::new(
+        state.global_store().clone(),
+        ProtectedWorkspaceStoreLookup::new(
+            state.core.stores.clone(),
+            Arc::clone(&state.sessions),
+            Arc::clone(&state.transport.merge_queue),
+        ),
+        state.core.data_root.clone(),
+        state.core.daemon_url.clone(),
+        Arc::clone(&state.execution.harness),
+        Arc::clone(&state.transport.terminals),
+    )
+}
+
 #[test]
 fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
     let data_root = tempfile::tempdir().unwrap();
@@ -98,8 +113,9 @@ async fn infer_terminal_worktree_returns_not_found_for_unknown_session_without_f
         .await
         .expect("insert worktree");
 
+    let host = test_terminal_launch_host(&state);
     let err = infer_terminal_worktree(
-        &state,
+        &host,
         workspace.id,
         Some(SessionId(uuid::Uuid::new_v4())),
         None,
@@ -139,8 +155,9 @@ async fn infer_terminal_worktree_returns_not_found_for_unknown_task_without_fall
         .await
         .expect("insert worktree");
 
+    let host = test_terminal_launch_host(&state);
     let err = infer_terminal_worktree(
-        &state,
+        &host,
         workspace.id,
         None,
         Some(TaskId(uuid::Uuid::new_v4())),

@@ -1,7 +1,5 @@
 use std::path::{Path as FsPath, PathBuf};
-use std::sync::Arc;
 
-use crate::daemon::DaemonState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
@@ -9,13 +7,13 @@ use ctx_transport_runtime::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec,
 };
 
-use super::{internal_error, TerminalLaunchError};
+use super::{internal_error, TerminalLaunchError, TerminalLaunchHost};
 
 #[path = "container/runtime.rs"]
 mod runtime;
 
 pub(super) async fn prepare_terminal_container_launch(
-    state: &Arc<DaemonState>,
+    host: &TerminalLaunchHost,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
     effective: &ctx_settings_model::ExecutionSettings,
@@ -40,7 +38,7 @@ pub(super) async fn prepare_terminal_container_launch(
     match effective.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
             let (canonical_cwd, spec) = runtime::prepare_native_container_terminal_launch(
-                state,
+                host,
                 workspace,
                 worktree,
                 effective,
@@ -53,7 +51,7 @@ pub(super) async fn prepare_terminal_container_launch(
         }
         ContainerRuntimeKind::SharedVmContainer => {
             let (canonical_cwd, spec) = runtime::prepare_shared_vm_container_terminal_launch(
-                state,
+                host,
                 workspace,
                 worktree,
                 effective,

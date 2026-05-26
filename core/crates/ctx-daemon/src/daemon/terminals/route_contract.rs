@@ -130,7 +130,7 @@ mod tests {
             + Sync
             + 'static,
     ) -> TerminalRouteHandle {
-        TerminalRouteHandle::new(terminals, Arc::new(create_terminal))
+        TerminalRouteHandle::new_for_test(terminals, Arc::new(create_terminal))
     }
 
     fn route_handle(terminals: Arc<TerminalManager>) -> TerminalRouteHandle {

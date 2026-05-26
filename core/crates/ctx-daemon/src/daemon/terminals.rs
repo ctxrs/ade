@@ -1,17 +1,13 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
 use ctx_transport_runtime::terminals::{TerminalManager, TerminalStreamSession};
 
-use crate::daemon::DaemonState;
-
 mod launch;
 mod route_contract;
 
-pub(in crate::daemon) use self::launch::CreateTerminalLaunchRequest;
+pub(in crate::daemon) use self::launch::{CreateTerminalLaunchRequest, TerminalLaunchHost};
 
 async fn list_workspace_terminals(
     terminals: &TerminalManager,
@@ -21,10 +17,10 @@ async fn list_workspace_terminals(
 }
 
 pub(in crate::daemon) async fn create_workspace_terminal(
-    state: &Arc<DaemonState>,
+    host: &TerminalLaunchHost,
     req: CreateTerminalLaunchRequest,
 ) -> Result<TerminalSession, TerminalLaunchError> {
-    launch::create_workspace_terminal(state, req).await
+    launch::create_workspace_terminal(host, req).await
 }
 
 async fn delete_terminal(terminals: &TerminalManager, terminal_id: TerminalId) -> bool {
