@@ -21,8 +21,9 @@ use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 use tokio::sync::{mpsc, Mutex};
 
-use crate::daemon::handle::{ProviderWorkspaceLaunchRuntime, SessionMessageSchedulerSpawner};
+use crate::daemon::handle::ProviderWorkspaceLaunchRuntime;
 use crate::daemon::scheduler::SchedulerCommand;
+use crate::daemon::session_route_handles::SessionMessageSchedulerSpawner;
 use crate::daemon::sessions::ask_user::{SubmitAskUserAnswer, SubmitAskUserAnswerError};
 use crate::daemon::sessions::auth::SessionAuthError;
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;

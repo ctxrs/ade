@@ -8,8 +8,8 @@ use ctx_session_message_service::message_admission::{
 use ctx_store::Store;
 
 use super::command_dispatch;
-use crate::daemon::handle::SessionMessageCommandHandle;
 use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
+use crate::daemon::SessionMessageCommandHandle;
 use crate::daemon::SessionStoreAccessError;
 
 pub struct PostUserMessageInput {

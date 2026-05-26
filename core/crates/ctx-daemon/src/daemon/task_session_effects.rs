@@ -14,7 +14,8 @@ use ctx_session_runtime::runtime::{
 use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-use super::handle::{MergeQueueNoticeSessionEvent, SessionArtifactEffects, SessionArtifactsFuture};
+use super::handle::MergeQueueNoticeSessionEvent;
+use super::session_route_handles::{SessionArtifactEffects, SessionArtifactsFuture};
 use super::task_route_handles::{
     TaskAdmissionFuture, TaskAdmissionSessionEffects, TaskLifecycleEffects, TaskLifecycleFuture,
     TaskMetadataEffects, TaskMetadataFuture,
@@ -579,7 +580,7 @@ pub(in crate::daemon) fn task_lifecycle_effects(
 pub(in crate::daemon) fn task_admission_session_effects(
     publisher: SessionPublicationEffects,
     session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
-    scheduler_spawner: crate::daemon::handle::SessionMessageSchedulerSpawner,
+    scheduler_spawner: crate::daemon::session_route_handles::SessionMessageSchedulerSpawner,
     title_model_mode: crate::daemon::SessionTitleModelModeHandle,
     task_publication: Arc<TaskPublicationHost>,
 ) -> Arc<TaskAdmissionSessionEffects> {

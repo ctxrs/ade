@@ -6,8 +6,8 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use super::PostUserMessageInput;
-use crate::daemon::handle::SessionMessageCommandHandle;
 use crate::daemon::scheduler::SchedulerCommand;
+use crate::daemon::SessionMessageCommandHandle;
 use crate::test_support::TestDaemon;
 
 async fn seed_session_for_message_command_test(

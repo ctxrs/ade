@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ctx_core::models::{Artifact, Session, SessionEventType};
 
-use crate::daemon::handle::{SessionArtifactsHandle, SessionMessageCommandHandle};
+use crate::daemon::{SessionArtifactsHandle, SessionMessageCommandHandle};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionImageBlobStoreError {

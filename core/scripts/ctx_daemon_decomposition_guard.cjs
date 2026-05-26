@@ -59,6 +59,10 @@ const RATCHETED_FILE_LIMITS = [
     limit: 1920,
   },
   {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles.rs",
+    limit: 2200,
+  },
+  {
     path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
     limit: 570,
   },

@@ -2866,6 +2866,63 @@ test("appstate guard scans moved task route handle definitions", () => {
   ]);
 });
 
+test("appstate guard scans moved session route handle definitions", () => {
+  const filePath = "core/crates/ctx-daemon/src/daemon/session_route_handles.rs";
+  const contents = `
+    pub struct SessionFileCompletionsHandle {
+      workspaces: WorkspacesHandle,
+    }
+
+    pub struct SessionArtifactsHandle {
+      sessions: SessionsHandle,
+    }
+
+    pub struct SessionReadModelsHandle {
+      daemon: DaemonHandle,
+    }
+
+    pub struct SessionTitleModelModeHandle {
+      state: Arc<DaemonState>,
+    }
+
+    pub struct SessionMessageCommandHandle {
+      scheduler: SessionsHandle,
+    }
+
+    pub struct SessionSubagentReadHandle {
+      daemon: DaemonHandle,
+    }
+
+    pub struct SessionSubagentMcpReadHandle {
+      state: Arc<DaemonState>,
+    }
+
+    pub struct SessionVcsHandle {
+      sessions: SessionsHandle,
+    }
+  `;
+
+  const violations = [
+    ...scanSessionControlHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionArtifactsHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionReadModelsHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionTitleModelModeHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionSubagentMcpReadHandleFieldRatchet({ filePath, contents }),
+    ...scanSessionVcsHandleFieldRatchet({ filePath, contents }),
+  ].map((violation) => violation.name);
+
+  assert(violations.includes("session control capability stores broad handle or daemon state"));
+  assert(violations.includes("session artifacts capability stores broad handle or daemon state"));
+  assert(violations.includes("session read-model capability stores broad handle or daemon state"));
+  assert(violations.includes("session title/model/mode capability stores broad handle or runtime bag"));
+  assert(violations.includes("session message command capability stores broad handle or runtime bag"));
+  assert(violations.includes("session subagent read capability stores broad handle or runtime bag"));
+  assert(violations.includes("session subagent MCP read capability stores broad handle or runtime bag"));
+  assert(violations.includes("session VCS capability stores broad handle or daemon state"));
+});
+
 test("appstate guard rejects session artifacts broad route handles", () => {
   const handlerViolations = scanSessionArtifactsHandleRatchet({
     filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",

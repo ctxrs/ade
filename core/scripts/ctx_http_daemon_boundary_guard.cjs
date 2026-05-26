@@ -24,6 +24,14 @@ const daemonTaskRouteHandlesPath = path.join(
   "daemon",
   "task_route_handles.rs",
 );
+const daemonSessionRouteHandlesPath = path.join(
+  coreRoot,
+  "crates",
+  "ctx-daemon",
+  "src",
+  "daemon",
+  "session_route_handles.rs",
+);
 const daemonRouteHandlesScanRoots = [
   "core/crates/ctx-http/src/",
   "core/crates/ctx-http/tests/",
@@ -253,6 +261,7 @@ const sessionControlHandleApiPaths = new Set([
 const sessionControlEffectSurfacePaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
+  "core/crates/ctx-daemon/src/daemon/session_route_handles.rs",
 ]);
 
 const sessionFileCompletionsHandleApiPaths = new Set([
@@ -609,6 +618,10 @@ const taskReadMetadataDaemonImplementationRoots = [
 const taskRouteHandleFieldRatchetPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/task_route_handles.rs",
+]);
+const sessionRouteHandleFieldRatchetPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/session_route_handles.rs",
 ]);
 
 const runArchiveApiRoots = [
@@ -12095,7 +12108,7 @@ function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, conten
 }
 
 function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -12125,7 +12138,7 @@ function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanSessionReadModelsHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -12276,7 +12289,7 @@ function scanSessionControlHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanSessionTitleModelModeHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -12325,7 +12338,7 @@ function scanSessionTitleModelModeHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanSessionMessageCommandHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -12576,7 +12589,7 @@ function scanTaskSessionPublicationEffectsStateRatchet({ filePath, contents }) {
 }
 
 function scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -12647,7 +12660,7 @@ function scanSessionSubagentReadHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanSessionSubagentMcpReadHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -16531,7 +16544,7 @@ function scanWorkspaceProviderModelPreferenceHandleFieldRatchet({ filePath, cont
 }
 
 function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!sessionRouteHandleFieldRatchetPaths.has(filePath)) {
     return [];
   }
   const violations = [];
@@ -17038,6 +17051,40 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskReadMetadataHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+  if (fs.existsSync(daemonSessionRouteHandlesPath)) {
+    const relativePath = repoRelative(daemonSessionRouteHandlesPath);
+    const contents = fs.readFileSync(daemonSessionRouteHandlesPath, "utf8");
+    violations.push(
+      ...scanSessionArtifactsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionReadModelsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionTitleModelModeHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionMessageCommandHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionSubagentReadHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionSubagentMcpReadHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionVcsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),

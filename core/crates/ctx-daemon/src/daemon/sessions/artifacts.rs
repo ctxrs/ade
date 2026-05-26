@@ -6,8 +6,8 @@ use ctx_session_artifacts::route_contract::{
     SessionArtifactsRouteResponse, SetSessionArtifactsRouteRequest,
 };
 
-use crate::daemon::handle::SessionArtifactsHandle;
 use crate::daemon::route_files::{open_canonical_route_file, RouteFileDownloadError};
+use crate::daemon::SessionArtifactsHandle;
 use crate::daemon::{ScopedMcpSessionAccessError, SessionStoreAccessError};
 use ctx_core::ids::{ArtifactId, SessionId};
 

@@ -13,9 +13,9 @@ use ctx_worktree_data_plane::{
 };
 
 use super::model_switch;
-use crate::daemon::handle::SessionTitleModelModeHandle;
 use crate::daemon::workspaces::ResolvedExistingWorktreeExecution;
 use crate::daemon::SessionStoreAccessError;
+use crate::daemon::SessionTitleModelModeHandle;
 
 #[derive(Debug)]
 pub enum SetSessionModeError {

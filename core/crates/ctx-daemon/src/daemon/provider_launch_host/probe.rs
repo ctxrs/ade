@@ -7,8 +7,8 @@ use ctx_core::models::{Workspace, Worktree};
 use ctx_store::Store;
 use ctx_worktree_data_plane::WorktreeDataPlaneHost;
 
-use super::super::handle::{ProviderWorkspaceLaunchRuntime, SessionTitleModelModeHandle};
 use crate::daemon::DaemonState;
+use crate::daemon::{ProviderWorkspaceLaunchRuntime, SessionTitleModelModeHandle};
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::probe::PreparedWorkspaceProbeRuntime;
 

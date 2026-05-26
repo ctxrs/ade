@@ -9,7 +9,7 @@ use ctx_session_tools::model_resolution::{
 use ctx_storage_admission::is_storage_exhaustion_error;
 
 use super::model_target_bridge::SessionModelTargetLoadError;
-use crate::daemon::handle::SessionTitleModelModeHandle;
+use crate::daemon::SessionTitleModelModeHandle;
 
 #[derive(Debug, Clone)]
 pub struct SetSessionModelRequest {

@@ -51,6 +51,7 @@ mod route_handles;
 mod runtime;
 pub mod scheduler;
 mod session_control_effects;
+mod session_route_handles;
 pub mod sessions;
 pub mod settings;
 mod state;
@@ -85,11 +86,8 @@ pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
     DaemonHandle, DaemonShutdownHandle, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle,
     MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ResourceUtilizationHandle,
-    RunArchiveHandle, SessionArtifactsHandle, SessionFileCompletionsHandle,
-    SessionMessageCommandHandle, SessionReadModelsHandle, SessionSubagentMcpReadHandle,
-    SessionSubagentReadHandle, SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle,
-    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle,
-    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
+    RunArchiveHandle, SettingsHandle, TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle,
+    WebSessionRouteHandle, WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspaceVcsStreamHandle,
 };
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use lifecycle::spawn_deferred_daemon_shutdown;
@@ -117,6 +115,11 @@ pub use route_handles::{
 };
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use session_control_effects::SessionControlHandle;
+pub use session_route_handles::{
+    SessionArtifactsHandle, SessionFileCompletionsHandle, SessionMessageCommandHandle,
+    SessionReadModelsHandle, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
+    SessionTitleModelModeHandle, SessionVcsHandle,
+};
 pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;

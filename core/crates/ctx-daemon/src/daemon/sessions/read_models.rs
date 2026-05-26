@@ -11,7 +11,7 @@ use ctx_core::models::{
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_store::Store;
 
-use crate::daemon::handle::SessionReadModelsHandle;
+use crate::daemon::SessionReadModelsHandle;
 use crate::daemon::SessionStoreAccessError;
 
 impl SessionReadModelsHandle {

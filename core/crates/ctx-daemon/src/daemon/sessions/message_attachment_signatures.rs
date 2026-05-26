@@ -5,7 +5,7 @@ use ctx_session_message_service::message_admission::{
 };
 use sha2::Digest;
 
-use crate::daemon::handle::SessionMessageCommandHandle;
+use crate::daemon::SessionMessageCommandHandle;
 
 #[async_trait::async_trait]
 impl MessageAttachmentSignatureResolver for SessionMessageCommandHandle {

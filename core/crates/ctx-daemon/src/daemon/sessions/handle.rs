@@ -4,7 +4,7 @@ use ctx_core::models::Session;
 use ctx_session_title_service::title_generation::TitleGenerationOutcome;
 
 use super::title_generation;
-use crate::daemon::handle::SessionTitleModelModeHandle;
+use crate::daemon::SessionTitleModelModeHandle;
 
 #[derive(Debug)]
 pub enum GenerateSessionTitleError {
