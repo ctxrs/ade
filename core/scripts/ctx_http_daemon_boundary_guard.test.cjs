@@ -192,6 +192,7 @@ const {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
+  scanDeletedBroadDomainMacroSourceRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,
@@ -572,12 +573,73 @@ test("appstate route handle ratchet rejects direct full-state route handles", ()
       pub struct SurpriseHandle {
         state: Arc<DaemonState>,
       }
+      pub struct OtherHandleParts {
+        state: std::sync::Arc<crate::daemon::state::DaemonState>,
+      }
+      pub struct CallbackHandleEffects {
+        daemon: Arc<DaemonHandle>,
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct full-state route handle",
+      "direct full-state route handle",
+      "direct full-state route handle",
+    ],
+  );
+});
+
+test("appstate route handle ratchet rejects parts outside central handle file", () => {
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::state::DaemonState;
+
+      pub(in crate::daemon) struct SessionControlHandleParts {
+        state: Arc<DaemonState>,
+      }
     `,
   });
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     ["direct full-state route handle"],
+  );
+});
+
+test("appstate route handle ratchet rejects aliases and broad return values", () => {
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub type AuthHandle = std::sync::Arc<crate::daemon::state::DaemonState>;
+
+      pub struct HealthHandle {
+        store: Store,
+      }
+
+      impl HealthHandle {
+        pub fn leak_state(&self) -> anyhow::Result<Arc<DaemonState>> {
+          todo!()
+        }
+
+        pub fn leak_handle(&self) -> DaemonHandle {
+          todo!()
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route handle aliases broad daemon state",
+      "route handle returns broad daemon state",
+      "route handle returns broad daemon state",
+    ],
   );
 });
 
@@ -618,6 +680,10 @@ test("deleted broad domain handle ratchet scans daemon test support surfaces", (
     ),
     true,
   );
+});
+
+test("deleted broad domain macro source ratchet scans source roots only", () => {
+  assert.deepEqual(scanDeletedBroadDomainMacroSourceRatchet(), []);
 });
 
 test("route state aggregate ratchet rejects broad route aggregate extraction", () => {
@@ -787,6 +853,27 @@ test("route capability cutover ratchet rejects retired DaemonHandle router assem
   );
 });
 
+test("route capability cutover ratchet rejects retired daemon route handle assembly", () => {
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_capabilities.rs",
+    contents: `
+      impl DaemonRouteHandles {
+        pub(in crate::daemon) fn from_handle(handle: &DaemonHandle) -> Self {
+          DaemonRouteHandles::from_handle(handle)
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "retired DaemonRouteHandles::from_handle",
+      "retired DaemonRouteHandles::from_handle",
+    ],
+  );
+});
+
 test("route capability cutover ratchet rejects DaemonHandle throughout ctx-http surfaces", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/server.rs",
@@ -921,7 +1008,53 @@ test("appstate daemon handle construction ratchet rejects new production reconst
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
-    ["unclassified daemon handle reconstruction"],
+    [
+      "unclassified daemon handle surface",
+      "unclassified daemon handle reconstruction",
+    ],
+  );
+});
+
+test("appstate daemon handle construction ratchet rejects broad production surfaces", () => {
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/other.rs",
+    contents: `
+      use crate::daemon::DaemonHandle;
+
+      pub struct TaskHelper {
+        handle: Option<DaemonHandle>,
+      }
+
+      pub fn build(handle: Arc<DaemonHandle>) -> Result<DaemonHandle> {
+        todo!()
+      }
+
+      pub fn callback() -> Box<dyn Fn() -> DaemonHandle> {
+        todo!()
+      }
+
+      impl From<TaskHelper> for DaemonHandle {
+        fn from(value: TaskHelper) -> Self {
+          todo!()
+        }
+      }
+
+      fn literal() {
+        let _ = DaemonHandle { state };
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
+    ],
   );
 });
 
@@ -947,6 +1080,8 @@ test("appstate daemon handle construction ratchet rejects From and into escape h
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "unclassified daemon handle surface",
+      "unclassified daemon handle surface",
       "unclassified daemon handle reconstruction",
       "unclassified daemon handle reconstruction",
       "unclassified daemon handle reconstruction",
@@ -978,8 +1113,8 @@ test("appstate daemon handle construction ratchet rejects Arc<DaemonState> From 
 
 test("appstate daemon handle construction ratchet preserves known baseline reconstructions", () => {
   const violations = scanDaemonHandleConstructionRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/runtime.rs",
-    contents: "let handle = DaemonHandle::new(state.clone());",
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: "let handle = DaemonHandle::new(Arc::clone(state));",
   });
 
   assert.deepEqual(violations, []);

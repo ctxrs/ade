@@ -85,7 +85,6 @@ pub async fn bootstrap_daemon_runtime(
         public_base_url,
         auth_token,
     ));
-    let handle = DaemonHandle::new(state.clone());
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
     lifecycle::spawn_cache_sweeper(state.clone());
@@ -127,11 +126,13 @@ pub async fn bootstrap_daemon_runtime(
         tracing::warn!("failed to apply tool cgroup settings: {err:#}");
     }
 
+    let route_handles = route_handles_from_state(&state);
+    let shutdown_signal = DaemonShutdownSignal::new(state.core.shutdown_tx.clone());
     background::spawn_daemon_background_services(state, requested_binds);
     Ok(DaemonRuntime {
         _daemon_lock: daemon_lock,
-        route_handles: handle.route_handles(),
-        shutdown_signal: handle.shutdown_signal(),
+        route_handles,
+        shutdown_signal,
         listeners,
         daemon_url,
     })

@@ -1442,8 +1442,8 @@ const DELETED_BROAD_DOMAIN_HANDLE_NAMES = new Set([
 
 const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
   {
-    path: "core/crates/ctx-daemon/src/daemon/runtime.rs",
-    regex: /\blet\s+handle\s*=\s*DaemonHandle::new\s*\(\s*state\.clone\s*\(\s*\)\s*\)\s*;/,
+    path: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    regex: /\blet\s+handle\s*=\s*DaemonHandle::new\s*\(\s*Arc::clone\s*\(\s*state\s*\)\s*\)\s*;/,
   },
 ];
 
@@ -7117,7 +7117,8 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
     });
   };
 
-  const retiredRouteAssemblyRegex = /\bfrom_daemon_handle\b/gu;
+  const retiredRouteAssemblyRegex =
+    /\bfrom_daemon_handle\b|\bDaemonRouteHandles\s*::\s*from_handle\b|\bfn\s+from_handle\s*\(\s*handle\s*:\s*&\s*DaemonHandle\b/gu;
   for (
     let match = retiredRouteAssemblyRegex.exec(contents);
     match;
@@ -7126,7 +7127,9 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
     const lineIndex = lineForOffset(match.index);
     pushViolation({
       lineIndex,
-      name: "retired RouteHandles::from_daemon_handle",
+      name: match[0].includes("from_handle")
+        ? "retired DaemonRouteHandles::from_handle"
+        : "retired RouteHandles::from_daemon_handle",
       text: lines[lineIndex]?.trim() ?? match[0],
     });
   }
@@ -7297,24 +7300,99 @@ function scanAppStateRouteHandleRatchet({ filePath, contents }) {
     });
   }
 
-  const directHandleRegex =
-    /pub(?:\s*\([^)]*\))?\s+struct\s+([A-Za-z][A-Za-z0-9_]*Handle)\s*\{[^}]*Arc\s*<\s*DaemonState\s*>/gsu;
+  const broadRouteHandleTypeRegex =
+    /(?:&\s*)?(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?(?:state\s*::\s*)?DaemonState\b|(?:std\s*::\s*sync\s*::\s*)?(?:Arc|Weak)\s*<\s*(?:&\s*)?(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?(?:state\s*::\s*)?DaemonState\s*>|(?:std\s*::\s*sync\s*::\s*)?Arc\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonHandle\s*>|\b(?:DaemonHandle|Into\s*<\s*DaemonHandle\s*>)\b/gu;
+  const routeStructRegex =
+    /pub(?:\s*\([^)]*\))?\s+struct\s+([A-Za-z][A-Za-z0-9_]*(?:Handle|HandleParts|HandleEffects))\b(?:\s*<[^>{]+>)?\s*\{/gu;
   for (
-    let match = directHandleRegex.exec(contents);
+    let match = routeStructRegex.exec(contents);
     match;
-    match = directHandleRegex.exec(contents)
+    match = routeStructRegex.exec(contents)
   ) {
     const handleName = match[1];
     if (handleName === "DaemonHandle") {
       continue;
     }
-    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    const block = rustStructBlockForType({ contents, typeName: handleName });
+    if (!block) {
+      continue;
+    }
+    const broadMatch = broadRouteHandleTypeRegex.exec(block.text);
+    broadRouteHandleTypeRegex.lastIndex = 0;
+    if (!broadMatch) {
+      continue;
+    }
+    const line = contents.slice(0, block.index + broadMatch.index).split(/\r?\n/u).length;
     violations.push({
       filePath,
       line,
       name: "direct full-state route handle",
       text: lines[line - 1]?.trim() ?? handleName,
     });
+  }
+
+  const routeAliasRegex =
+    /\btype\s+([A-Za-z][A-Za-z0-9_]*(?:Handle|HandleParts|HandleEffects))\s*=\s*([^;]*?(?:DaemonState|DaemonHandle)[^;]*);/gsu;
+  for (
+    let match = routeAliasRegex.exec(contents);
+    match;
+    match = routeAliasRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "route handle aliases broad daemon state",
+      text: lines[line - 1]?.trim() ?? match[0].trim().replace(/\s+/g, " "),
+    });
+  }
+
+  const routeHandleNames = new Set();
+  const routeFieldRegex = /^\s*pub\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*([A-Za-z][A-Za-z0-9_]*)\s*,/gmu;
+  for (
+    let match = routeFieldRegex.exec(contents);
+    match;
+    match = routeFieldRegex.exec(contents)
+  ) {
+    if (match[1].endsWith("Handle")) {
+      routeHandleNames.add(match[1]);
+    }
+  }
+  const routeImplNameRegex =
+    /\bimpl(?:\s*<[^>{]+>)?\s+([A-Za-z][A-Za-z0-9_]*Handle)(?:\s*<[^>{]+>)?\s*\{/gu;
+  for (
+    let match = routeImplNameRegex.exec(contents);
+    match;
+    match = routeImplNameRegex.exec(contents)
+  ) {
+    if (match[1] !== "DaemonHandle") {
+      routeHandleNames.add(match[1]);
+    }
+  }
+  for (const handleName of routeHandleNames) {
+    for (const block of rustImplBlocksForType({ contents, typeName: handleName })) {
+      const returnRegex = /\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;{]*?\)\s*(?:->\s*([^;{]+?))\s*\{/gsu;
+      for (
+        let returnMatch = returnRegex.exec(block.text);
+        returnMatch;
+        returnMatch = returnRegex.exec(block.text)
+      ) {
+        const returnType = returnMatch[1] ?? "";
+        broadRouteHandleTypeRegex.lastIndex = 0;
+        if (!broadRouteHandleTypeRegex.test(returnType)) {
+          continue;
+        }
+        const line = contents
+          .slice(0, block.index + returnMatch.index)
+          .split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: "route handle returns broad daemon state",
+          text: lines[line - 1]?.trim() ?? returnMatch[0].trim().replace(/\s+/g, " "),
+        });
+      }
+    }
   }
   return violations;
 }
@@ -7348,6 +7426,39 @@ function scanDeletedBroadDomainHandleRatchet({ filePath, contents }) {
     });
   }
 
+  return violations;
+}
+
+function scanDeletedBroadDomainMacroSourceRatchet() {
+  const violations = [];
+  const cratesRoot = path.join(coreRoot, "crates");
+  if (!fs.existsSync(cratesRoot)) {
+    return violations;
+  }
+  const macroRegex = /\bdomain_handle_with_accessor\b\s*!?/gu;
+  for (const crateEntry of fs.readdirSync(cratesRoot, { withFileTypes: true })) {
+    if (!crateEntry.isDirectory()) {
+      continue;
+    }
+    const srcRoot = path.join(cratesRoot, crateEntry.name, "src");
+    if (!fs.existsSync(srcRoot)) {
+      continue;
+    }
+    for (const filePath of listRustFiles(srcRoot)) {
+      const contents = fs.readFileSync(filePath, "utf8");
+      const lines = contents.split(/\r?\n/u);
+      for (let match = macroRegex.exec(contents); match; match = macroRegex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath: repoRelative(filePath),
+          line,
+          name: "deleted broad domain handle macro",
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+      macroRegex.lastIndex = 0;
+    }
+  }
   return violations;
 }
 
@@ -7483,6 +7594,17 @@ function isAllowedDaemonHandleConstruction({ filePath, line }) {
   );
 }
 
+function isAllowedDaemonHandleSurfacePath(filePath) {
+  return filePath === "core/crates/ctx-daemon/src/daemon/handle.rs"
+    || filePath === "core/crates/ctx-daemon/src/daemon.rs"
+    || filePath === "core/crates/ctx-daemon/src/daemon/runtime.rs"
+    || filePath === "core/crates/ctx-daemon/src/test_support.rs"
+    || /(?:^|\/)(?:tests|test_support|fixtures)\.rs$/u.test(filePath)
+    || filePath.includes("/tests/")
+    || filePath.includes("/test_support/")
+    || filePath.includes("/fixtures/");
+}
+
 function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
   const violations = [];
   const violationKeys = new Set();
@@ -7503,6 +7625,31 @@ function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
     }
     return lineIndex;
   };
+
+  if (!isAllowedDaemonHandleSurfacePath(filePath)) {
+    const broadSurfaceRegex =
+      /\buse\s+[^;]*\bDaemonHandle\b[^;]*;|\b(?:pub(?:\s*\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?:Option|Result|Arc|std\s*::\s*sync\s*::\s*Arc)?\s*<*\s*DaemonHandle\b|\b->\s*(?:[^;{]*\b)?DaemonHandle\b|\b(?:From|TryFrom)\s*<[^>]*>\s+for\s+DaemonHandle\b|\bimpl\s+(?:<[^>{]+>\s*)?Into\s*<\s*DaemonHandle\s*>|\b[A-Za-z_][A-Za-z0-9_]*\s*:\s*Into\s*<\s*DaemonHandle\s*>|\bBox\s*<\s*dyn\s+Fn\s*\([^)]*\)\s*->\s*DaemonHandle\s*>|\bDaemonHandle\s*\{/gsu;
+    for (
+      let match = broadSurfaceRegex.exec(contents);
+      match;
+      match = broadSurfaceRegex.exec(contents)
+    ) {
+      const lineIndex = lineForOffset(match.index);
+      const line = lines[lineIndex] ?? "";
+      const key = `${lineIndex + 1}:unclassified daemon handle surface`;
+      if (violationKeys.has(key)) {
+        continue;
+      }
+      violationKeys.add(key);
+      violations.push({
+        filePath,
+        line: lineIndex + 1,
+        name: "unclassified daemon handle surface",
+        text: line.trim() || match[0].trim().replace(/\s+/g, " "),
+      });
+    }
+  }
+
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const reconstructsDaemonHandle =
@@ -10572,6 +10719,37 @@ function rustFunctionBlockForName({ contents, fnName }) {
     }
   }
   return null;
+}
+
+function rustImplBlocksForType({ contents, typeName }) {
+  const regex = new RegExp(
+    `\\bimpl(?:\\s*<[^>{]+>)?\\s+${typeName}(?:\\s*<[^>{]+>)?\\s*\\{`,
+    "gu",
+  );
+  const blocks = [];
+  for (let match = regex.exec(contents); match; match = regex.exec(contents)) {
+    const openBrace = contents.indexOf("{", match.index);
+    if (openBrace < 0) {
+      continue;
+    }
+    let depth = 0;
+    for (let index = openBrace; index < contents.length; index += 1) {
+      const char = contents[index];
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+      }
+      if (depth === 0) {
+        blocks.push({
+          index: match.index,
+          text: contents.slice(match.index, index + 1),
+        });
+        break;
+      }
+    }
+  }
+  return blocks;
 }
 
 function scanMergeQueueApiHttpRouteRatchet({
@@ -15822,6 +16000,7 @@ function scanRepo() {
     });
   }
   violations.push(...scanWorkspaceCompositionDeletedPathRatchet());
+  violations.push(...scanDeletedBroadDomainMacroSourceRatchet());
 
   const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
   const hasWorkspaceVcsStreamRouteExtractor = workspaceVcsStreamRouteExtractorPresent();
@@ -16300,6 +16479,16 @@ function scanRepo() {
         contents,
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
       }),
+      ...scanRouteCapabilityCutoverRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...(relativePath === "core/crates/ctx-daemon/src/daemon/handle.rs"
+        ? []
+        : scanAppStateRouteHandleRatchet({
+            filePath: relativePath,
+            contents,
+          })),
       ...scanDeletedBroadDomainHandleRatchet({
         filePath: relativePath,
         contents,
@@ -17143,6 +17332,7 @@ module.exports = {
   scanAppStateRouteHandleRatchet,
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
+  scanDeletedBroadDomainMacroSourceRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanExecutionHandleRouteExtractorRatchet,

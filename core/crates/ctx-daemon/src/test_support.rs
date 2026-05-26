@@ -36,7 +36,8 @@ use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::daemon::{
-    self, AppRuntimeFlags, DaemonHandle, DaemonRouteHandles, DaemonShutdownSignal, DaemonState,
+    self, route_handles_from_state, AppRuntimeFlags, DaemonHandle, DaemonRouteHandles,
+    DaemonShutdownSignal, DaemonState,
 };
 
 mod cache_rehydration;
@@ -634,7 +635,7 @@ impl TestDaemon {
     }
 
     pub fn route_handles(&self) -> DaemonRouteHandles {
-        self.handle().route_handles()
+        route_handles_from_state(&self.state)
     }
 
     pub fn shutdown_signal(&self) -> DaemonShutdownSignal {

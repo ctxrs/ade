@@ -90,6 +90,81 @@ pub struct DaemonHandle {
     state: Arc<DaemonState>,
 }
 
+pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
+    let handle = DaemonHandle::new(Arc::clone(state));
+    DaemonRouteHandles {
+        auth: handle.auth(),
+        health: handle.health(),
+        diagnostics: handle.diagnostics(),
+        blob: handle.blob(),
+        request_base: handle.request_base(),
+        repo_onboarding: handle.repo_onboarding(),
+        logs: handle.logs(),
+        org_policy: handle.org_policy(),
+        workspace_org_policy: handle.workspace_org_policy(),
+        workspace_prompt_bootstrap_config: handle.workspace_prompt_bootstrap_config(),
+        workspace_execution_config: handle.workspace_execution_config(),
+        workspace_file_completions: handle.workspace_file_completions(),
+        workspace_harness_container: handle.workspace_harness_container(),
+        workspace_provider_model_preferences: handle.workspace_provider_model_preferences(),
+        workspace_worktree: handle.workspace_worktree(),
+        workspace_registry: handle.workspace_registry(),
+        workspace_merge_queue_config: handle.workspace_merge_queue_config(),
+        merge_queue_api: handle.merge_queue_api(),
+        workspace_attachments: handle.workspace_attachments(),
+        workspace_primary_branch: handle.workspace_primary_branch(),
+        dictation: handle.dictation(),
+        update_release: handle.update_release(),
+        update_activity: handle.update_activity(),
+        settings: handle.settings(),
+        mobile_store: handle.mobile_store(),
+        mobile_runtime: handle.mobile_runtime(),
+        mobile_secure_proxy: handle.mobile_secure_proxy(),
+        resource_utilization: handle.resource_utilization(),
+        run_archive: handle.run_archive(),
+        session_artifacts: handle.session_artifacts(),
+        session_control: handle.session_control(),
+        session_file_completions: handle.session_file_completions(),
+        session_message_command: handle.session_message_command(),
+        session_read_models: handle.session_read_models(),
+        session_subagent_mcp_read: handle.session_subagent_mcp_read(),
+        session_subagent_mcp_control: handle.session_subagent_mcp_control(),
+        session_subagent_read: handle.session_subagent_read(),
+        session_title_model_mode: handle.session_title_model_mode(),
+        session_vcs: handle.session_vcs(),
+        demo_seed_transcript: handle.demo_seed_transcript(),
+        title_generation_local: handle.title_generation_local(),
+        task_creation: handle.task_creation(),
+        task_lifecycle: handle.task_lifecycle(),
+        task_listing: handle.task_listing(),
+        task_read_state: handle.task_read_state(),
+        task_session_admission: handle.task_session_admission(),
+        task_session_listing: handle.task_session_listing(),
+        task_title: handle.task_title(),
+        workspace_deletion: handle.workspace_deletion(),
+        workspace_active: handle.workspace_active(),
+        workspace_stream: handle.workspace_stream(),
+        workspace_vcs_stream: handle.workspace_vcs_stream(),
+        provider_accounts: handle.provider_accounts(),
+        provider_auth_import: handle.provider_auth_import(),
+        provider_status: handle.provider_status(),
+        provider_admin: handle.provider_admin(),
+        provider_install: handle.provider_install(),
+        provider_usage: handle.provider_usage(),
+        provider_harness_config: handle.provider_harness_config(),
+        provider_bootstrap: handle.provider_bootstrap(),
+        provider_options: handle.provider_options(),
+        provider_workspace_auth: handle.provider_workspace_auth(),
+        telemetry: handle.telemetry(),
+        terminal_route: handle.terminal_route(),
+        web_session_route: handle.web_session_route(),
+        execution_launch: handle.execution_launch(),
+        linux_sandbox_runtime: handle.linux_sandbox_runtime(),
+        update_drain: handle.update_drain(),
+        daemon_shutdown: handle.daemon_shutdown(),
+    }
+}
+
 impl DaemonHandle {
     pub fn new(state: Arc<DaemonState>) -> Self {
         Self { state }
@@ -101,10 +176,6 @@ impl DaemonHandle {
 
     pub fn shutdown_signal(&self) -> DaemonShutdownSignal {
         DaemonShutdownSignal::new(self.state.core.shutdown_tx.clone())
-    }
-
-    pub fn route_handles(&self) -> DaemonRouteHandles {
-        DaemonRouteHandles::from_handle(self)
     }
 
     pub fn auth(&self) -> AuthHandle {

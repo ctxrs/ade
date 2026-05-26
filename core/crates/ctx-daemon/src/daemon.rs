@@ -76,6 +76,7 @@ pub use activity::{
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
+pub(crate) use handle::route_handles_from_state;
 pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
     AuthHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
