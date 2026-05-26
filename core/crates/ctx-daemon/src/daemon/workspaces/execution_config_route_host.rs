@@ -86,7 +86,7 @@ impl WorkspaceExecutionConfigHandle {
         Ok(())
     }
 
-    fn sandbox_runtime_available_for_execution_config(&self) -> bool {
+    pub(in crate::daemon) fn sandbox_runtime_available_for_execution_config(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
             ctx_harness_runtime::local_runtime_available(
