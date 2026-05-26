@@ -1,12 +1,10 @@
-use ctx_core::ids::WorkspaceId;
-use ctx_observability::telemetry::TelemetryEvent;
 use ctx_repo_onboarding_service::prepare_workspace_registration;
 use ctx_route_contracts::workspaces::{
     CreateWorkspaceRequest, WorkspaceRouteParams, WorkspaceRouteResponse,
 };
-use ctx_workspace_config as workspace_config;
 
 use super::super::{workspace_store_route_error, WorkspaceRouteError};
+use crate::daemon::workspaces::registry::WorkspaceRegistryError;
 use crate::daemon::WorkspaceRegistryHandle;
 
 impl WorkspaceRegistryHandle {
@@ -14,8 +12,7 @@ impl WorkspaceRegistryHandle {
         &self,
     ) -> Result<Vec<WorkspaceRouteResponse>, WorkspaceRouteError> {
         let workspaces = self
-            .global_store()
-            .list_workspaces()
+            .list_registered_workspaces()
             .await
             .map_err(WorkspaceRouteError::internal)?;
         Ok(workspaces.into_iter().map(Into::into).collect())
@@ -33,18 +30,12 @@ impl WorkspaceRegistryHandle {
 
     pub async fn get_workspace_for_route(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: ctx_core::ids::WorkspaceId,
     ) -> Result<Option<WorkspaceRouteResponse>, WorkspaceRouteError> {
         let workspace = self
-            .global_store()
-            .get_workspace(workspace_id)
+            .load_registered_workspace(workspace_id)
             .await
             .map_err(WorkspaceRouteError::internal)?;
-        if workspace.is_some() {
-            self.telemetry()
-                .emit(TelemetryEvent::workspace_opened())
-                .await;
-        }
         Ok(workspace.map(Into::into))
     }
 
@@ -55,23 +46,18 @@ impl WorkspaceRegistryHandle {
         let candidate = prepare_workspace_registration(&req.root_path)
             .await
             .map_err(|error| WorkspaceRouteError::bad_request(error.message()))?;
-        let root_path = candidate.root_path.to_string_lossy().to_string();
-        let name = req.name.unwrap_or(candidate.default_name);
+        let name = req.name.unwrap_or_else(|| candidate.default_name.clone());
         let workspace = self
-            .global_store()
-            .create_workspace(name, root_path, candidate.vcs_kind)
+            .register_workspace_candidate(name, candidate)
             .await
-            .map_err(WorkspaceRouteError::internal)?;
-        let store = self
-            .existing_workspace_store(workspace.id)
-            .await
-            .map_err(workspace_store_route_error)?;
-        workspace_config::update_primary_branch(&store, &candidate.primary_branch)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        self.telemetry()
-            .emit(TelemetryEvent::workspace_registered())
-            .await;
+            .map_err(workspace_registry_route_error)?;
         Ok(workspace.into())
+    }
+}
+
+fn workspace_registry_route_error(error: WorkspaceRegistryError) -> WorkspaceRouteError {
+    match error {
+        WorkspaceRegistryError::Store(error) => workspace_store_route_error(error),
+        WorkspaceRegistryError::Internal(error) => WorkspaceRouteError::internal(error),
     }
 }

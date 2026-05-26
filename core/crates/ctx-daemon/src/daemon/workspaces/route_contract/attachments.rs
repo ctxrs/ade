@@ -1,5 +1,4 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Workspace;
 use ctx_route_contracts::workspaces::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentCreateRouteSpec,
@@ -9,7 +8,7 @@ use ctx_workspace_attachments::AttachmentConfig;
 
 use crate::daemon::WorkspaceAttachmentsHandle;
 
-use super::super::{workspace_store_route_error, WorkspaceRouteError};
+use super::super::WorkspaceRouteError;
 
 fn attachment_config_from_route_spec(spec: WorkspaceAttachmentCreateRouteSpec) -> AttachmentConfig {
     AttachmentConfig {
@@ -24,35 +23,14 @@ fn attachment_config_from_route_spec(spec: WorkspaceAttachmentCreateRouteSpec) -
     }
 }
 
-async fn workspace_for_attachments_route(
-    handle: &WorkspaceAttachmentsHandle,
-    workspace_id: WorkspaceId,
-) -> Result<Workspace, WorkspaceRouteError> {
-    handle
-        .existing_workspace_store(workspace_id)
-        .await
-        .map_err(workspace_store_route_error)?;
-    handle
-        .global_store()
-        .get_workspace(workspace_id)
-        .await
-        .map_err(WorkspaceRouteError::internal)?
-        .ok_or_else(|| WorkspaceRouteError::not_found("workspace not found"))
-}
-
 impl WorkspaceAttachmentsHandle {
     pub async fn list_workspace_attachments_for_route(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(workspace_store_route_error)?;
-        let attachments = store
-            .list_workspace_attachments(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
+        let attachments = self
+            .list_workspace_attachments_for_route_domain(workspace_id)
+            .await?;
         Ok(attachments.into_iter().map(Into::into).collect())
     }
 
@@ -61,7 +39,7 @@ impl WorkspaceAttachmentsHandle {
         workspace_id: WorkspaceId,
         request: SyncWorkspaceAttachmentsRouteRequest,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
-        let workspace = workspace_for_attachments_route(self, workspace_id).await?;
+        let workspace = self.workspace_for_attachment_route(workspace_id).await?;
         let attachments = self
             .runtime()
             .sync_workspace_attachments(&workspace, request.refresh())
@@ -76,7 +54,7 @@ impl WorkspaceAttachmentsHandle {
         request: CreateWorkspaceAttachmentRouteRequest,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
         let cfg = attachment_config_from_route_spec(request.into_spec()?);
-        let workspace = workspace_for_attachments_route(self, workspace_id).await?;
+        let workspace = self.workspace_for_attachment_route(workspace_id).await?;
         self.runtime()
             .upsert_workspace_attachment(workspace_id, cfg)
             .await
@@ -95,7 +73,7 @@ impl WorkspaceAttachmentsHandle {
         request: DeleteWorkspaceAttachmentRouteRequest,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
         let spec = request.into_spec()?;
-        let workspace = workspace_for_attachments_route(self, workspace_id).await?;
+        let workspace = self.workspace_for_attachment_route(workspace_id).await?;
         let removed = self
             .runtime()
             .delete_workspace_attachment(workspace_id, spec.kind, &spec.name)

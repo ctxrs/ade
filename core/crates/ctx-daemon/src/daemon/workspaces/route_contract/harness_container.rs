@@ -1,11 +1,9 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Workspace;
 use ctx_route_contracts::workspaces::{
     WorkspaceHarnessContainerMountModeRouteValue, WorkspaceHarnessContainerNetworkModeRouteValue,
     WorkspaceHarnessContainerStatusRouteResponse, WorkspaceRouteParams,
 };
 use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
-use ctx_settings_service::EffectiveExecutionSettingsError;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::super::{WorkspaceHarnessContainerError, WorkspaceRouteError};
@@ -20,7 +18,7 @@ impl WorkspaceHarnessContainerHandle {
         workspace_id: WorkspaceId,
     ) -> Result<Option<WorkspaceHarnessContainerStatusRouteResponse>, WorkspaceHarnessContainerError>
     {
-        workspace_harness_container_status(self, workspace_id)
+        self.workspace_harness_container_status(workspace_id)
             .await
             .map(|status| status.map(workspace_harness_container_status_route_response))
     }
@@ -40,7 +38,7 @@ impl WorkspaceHarnessContainerHandle {
         params: WorkspaceRouteParams,
     ) -> Result<(), WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
-        stop_workspace_harness_container(self, workspace_id)
+        self.stop_workspace_harness_container(workspace_id)
             .await
             .map_err(workspace_harness_container_status_error)
     }
@@ -50,77 +48,10 @@ impl WorkspaceHarnessContainerHandle {
         params: WorkspaceRouteParams,
     ) -> Result<(), WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
-        ensure_workspace_harness_container(self, workspace_id)
+        self.ensure_workspace_harness_container(workspace_id)
             .await
             .map_err(workspace_harness_container_ensure_error)
     }
-}
-
-async fn workspace_harness_container_status(
-    handle: &WorkspaceHarnessContainerHandle,
-    workspace_id: WorkspaceId,
-) -> Result<Option<WorkspaceContainerStatus>, WorkspaceHarnessContainerError> {
-    ensure_workspace_exists(handle, workspace_id).await?;
-    handle
-        .harness()
-        .container_status(workspace_id)
-        .await
-        .map_err(WorkspaceHarnessContainerError::Internal)
-}
-
-async fn stop_workspace_harness_container(
-    handle: &WorkspaceHarnessContainerHandle,
-    workspace_id: WorkspaceId,
-) -> Result<(), WorkspaceHarnessContainerError> {
-    ensure_workspace_exists(handle, workspace_id).await?;
-    let stopped = handle
-        .harness()
-        .stop_container(workspace_id)
-        .await
-        .map_err(WorkspaceHarnessContainerError::Internal)?;
-    if stopped {
-        Ok(())
-    } else {
-        Err(WorkspaceHarnessContainerError::NotFound)
-    }
-}
-
-async fn ensure_workspace_harness_container(
-    handle: &WorkspaceHarnessContainerHandle,
-    workspace_id: WorkspaceId,
-) -> Result<(), WorkspaceHarnessContainerError> {
-    let workspace = ensure_workspace_exists(handle, workspace_id).await?;
-    let workspace_store = handle
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|error| {
-            WorkspaceHarnessContainerError::ExecutionSettings(
-                EffectiveExecutionSettingsError::Internal(error),
-            )
-        })?;
-    let execution_settings = ctx_settings_service::effective_execution_settings_classified(
-        handle.global_store(),
-        &workspace_store,
-    )
-    .await
-    .map_err(WorkspaceHarnessContainerError::ExecutionSettings)?;
-    handle
-        .harness()
-        .ensure_workspace_container(&workspace, &execution_settings, handle.daemon_url())
-        .await
-        .map_err(WorkspaceHarnessContainerError::Ensure)
-}
-
-async fn ensure_workspace_exists(
-    handle: &WorkspaceHarnessContainerHandle,
-    workspace_id: WorkspaceId,
-) -> Result<Workspace, WorkspaceHarnessContainerError> {
-    handle
-        .global_store()
-        .get_workspace(workspace_id)
-        .await
-        .map_err(WorkspaceHarnessContainerError::Internal)?
-        .ok_or(WorkspaceHarnessContainerError::NotFound)
 }
 
 fn workspace_harness_container_status_route_response(

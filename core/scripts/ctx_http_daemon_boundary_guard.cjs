@@ -368,6 +368,22 @@ const workspaceExecutionConfigRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
 ]);
 
+const workspaceExecutionConfigDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution_config_route_host.rs",
+]);
+
+const workspaceRestConfigStoreIntentPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/primary_branch.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/provider_model_preferences_route.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/attachments.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/harness_container.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/worktrees.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/workspace_file_completions_route.rs",
+]);
+
 const workspaceFileCompletionsRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
 ]);
@@ -377,6 +393,7 @@ const workspaceHarnessContainerRouteExtractorAllowedPaths = new Set([
 ]);
 
 const workspaceHarnessContainerDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/harness_container.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/harness_container.rs",
 ]);
 
@@ -386,6 +403,7 @@ const workspaceWorktreeRouteExtractorAllowedPaths = new Set([
 
 const workspaceWorktreeDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/worktrees.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktrees.rs",
 ]);
 
 const workspaceRegistryRouteExtractorAllowedPaths = new Set([
@@ -394,6 +412,7 @@ const workspaceRegistryRouteExtractorAllowedPaths = new Set([
 ]);
 
 const workspaceRegistryDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/registry.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
 ]);
 
@@ -452,6 +471,7 @@ const workspacePrimaryBranchRouteExtractorAllowedPaths = new Set([
 
 const workspacePrimaryBranchDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/primary_branch.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/primary_branch_route_host.rs",
 ]);
 
 const workspaceProviderModelPreferenceRouteExtractorAllowedPaths = new Set([
@@ -14111,7 +14131,7 @@ function scanWorkspaceExecutionConfigRouteExtractorRatchet({ filePath, contents 
 }
 
 function scanWorkspaceExecutionConfigDaemonImplementationRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs") {
+  if (!workspaceExecutionConfigDaemonImplementationPaths.has(filePath)) {
     return [];
   }
 
@@ -14896,6 +14916,62 @@ function scanWorkspaceRegistryHandleFieldRatchet({ filePath, contents }) {
       name: "workspace registry capability exposes generic full-state escape hatch",
       text: lines[line - 1]?.trim() ?? escape[0],
     });
+  }
+
+  return violations;
+}
+
+function scanWorkspaceRestConfigStoreIntentRatchet({ filePath, contents }) {
+  if (!workspaceRestConfigStoreIntentPaths.has(filePath)) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace REST/config route helper uses raw global store accessor",
+      regex: /\.global_store\s*\(/gu,
+    },
+    {
+      name: "workspace REST/config route helper uses raw workspace store accessor",
+      regex: /\.(?:existing_workspace_store|store_for_workspace)\s*\(/gu,
+    },
+    {
+      name: "workspace REST/config route helper uses raw worktree store accessor",
+      regex: /\.store_for_worktree\s*\(/gu,
+    },
+    {
+      name: "workspace REST/config route helper imports raw ctx_store Store",
+      regex: /\buse\s+ctx_store::(?:\{[^}]*\bStore\b[^}]*\}|Store)\b|\bctx_store::Store\b/gu,
+    },
+    {
+      name: "workspace REST/config route helper resolves execution settings directly",
+      regex: /\bctx_settings_service::effective_execution_settings\w*\s*\(/gu,
+    },
+  ];
+
+  if (
+    filePath ===
+    "core/crates/ctx-daemon/src/daemon/workspaces/provider_model_preferences_route.rs"
+  ) {
+    checks.push({
+      name: "workspace provider model preference route reaches through launch runtime",
+      regex: /\.launch\s*\(/gu,
+    });
+  }
+
+  for (const check of checks) {
+    check.regex.lastIndex = 0;
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
   }
 
   return violations;
@@ -16674,6 +16750,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceRestConfigStoreIntentRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceDeletionDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -17388,6 +17468,7 @@ module.exports = {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceRestConfigStoreIntentRatchet,
   scanWorkspaceDeletionDaemonImplementationRatchet,
   scanWorkspaceDeletionHandleFieldRatchet,
   scanWorkspaceDeletionRouteExtractorRatchet,

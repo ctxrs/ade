@@ -17,7 +17,10 @@ use ctx_worktree_vcs_service::{
 };
 
 use crate::daemon::state::WorkspaceFileCompletionsCache;
-use crate::daemon::{SessionFileCompletionsHandle, SessionStoreAccessError, TimedEntry};
+use crate::daemon::{
+    SessionFileCompletionsHandle, SessionStoreAccessError, TimedEntry,
+    WorkspaceFileCompletionsHandle,
+};
 
 mod container;
 
@@ -88,6 +91,25 @@ impl SessionFileCompletionsHandle {
         limit: Option<u32>,
     ) -> Result<Vec<String>, FileCompletionsError> {
         complete_files_for_session_with_runtime(self, session_id, query, limit).await
+    }
+}
+
+impl WorkspaceFileCompletionsHandle {
+    pub(in crate::daemon) async fn complete_files_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        query: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<String>, FileCompletionsError> {
+        complete_files_for_workspace_with_runtime(
+            self.global_store(),
+            self.workspace_file_completions_cache(),
+            self.perf_telemetry(),
+            workspace_id,
+            query,
+            limit,
+        )
+        .await
     }
 }
 

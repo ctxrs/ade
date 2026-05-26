@@ -6,14 +6,17 @@ mod deletion;
 mod diff_exec;
 mod execution;
 mod execution_config;
+mod execution_config_route_host;
 mod file_completions;
 mod harness_container;
 mod hydration;
 mod merge_queue_config;
 mod model_preferences;
 mod primary_branch;
+mod primary_branch_route_host;
 mod prompt_bootstrap_config;
 mod provider_model_preferences_route;
+mod registry;
 mod retry;
 mod route_config;
 mod route_contract;
@@ -25,6 +28,7 @@ mod task_worktree_host;
 pub mod vcs_hooks;
 mod workspace_file_completions_route;
 mod worktree_cleanup;
+mod worktrees;
 
 pub use active_snapshot_state::load_workspace_active_snapshot_state;
 pub use cache_stats::WorkspaceCacheDebugStats;
@@ -38,10 +42,7 @@ pub use execution::{
     ResolvedExistingWorktreeExecution,
 };
 pub use file_completions::{FileCompletionsError, FileCompletionsErrorKind};
-pub use harness_container::{
-    ensure_workspace_harness_container, stop_workspace_harness_container,
-    workspace_harness_container_status, WorkspaceHarnessContainerError,
-};
+pub use harness_container::WorkspaceHarnessContainerError;
 pub(in crate::daemon) use hydration::WorkspaceActiveHydrationRuntime;
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 pub use model_preferences::{

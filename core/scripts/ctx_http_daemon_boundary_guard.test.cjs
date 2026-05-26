@@ -251,6 +251,7 @@ const {
   scanWorkspaceRegistryDaemonImplementationRatchet,
   scanWorkspaceRegistryHandleFieldRatchet,
   scanWorkspaceRegistryRouteExtractorRatchet,
+  scanWorkspaceRestConfigStoreIntentRatchet,
   scanWorkspaceAttachmentsDaemonImplementationRatchet,
   scanWorkspaceAttachmentsHandleFieldRatchet,
   scanWorkspaceAttachmentsRouteExtractorRatchet,
@@ -7059,6 +7060,111 @@ test("appstate guard rejects workspace provider model preference broad handle fi
   });
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects raw store access in workspace REST/config route helpers", () => {
+  const violations = scanWorkspaceRestConfigStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/registry.rs",
+    contents: `
+      use ctx_store::Store;
+
+      async fn route(handle: WorkspaceRegistryHandle, workspace_id: WorkspaceId) {
+        let _typed: Option<ctx_store::Store> = None;
+        let _ = handle.global_store().list_workspaces().await;
+        let _ = handle.existing_workspace_store(workspace_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace REST/config route helper imports raw ctx_store Store"));
+  assert(
+    violations.includes("workspace REST/config route helper uses raw global store accessor"),
+  );
+  assert(
+    violations.includes("workspace REST/config route helper uses raw workspace store accessor"),
+  );
+
+  const worktreeViolations = scanWorkspaceRestConfigStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/worktrees.rs",
+    contents: `
+      async fn route(handle: WorkspaceWorktreeHandle, worktree_id: WorktreeId) {
+        let _ = handle.store_for_worktree(worktree_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(worktreeViolations, [
+    "workspace REST/config route helper uses raw worktree store accessor",
+  ]);
+
+  const settingsViolations = scanWorkspaceRestConfigStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/harness_container.rs",
+    contents: `
+      async fn route(handle: WorkspaceHarnessContainerHandle, store: Store) {
+        let _ = ctx_settings_service::effective_execution_settings_classified(
+          handle.global_store(),
+          &store,
+        ).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert(
+    settingsViolations.includes(
+      "workspace REST/config route helper resolves execution settings directly",
+    ),
+  );
+  const settingsPrefixViolations = scanWorkspaceRestConfigStoreIntentRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+    contents: `
+      async fn route(store: Store) {
+        let _ = ctx_settings_service::effective_execution_settings_for_environment(
+          &store,
+        ).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(settingsPrefixViolations, [
+    "workspace REST/config route helper resolves execution settings directly",
+  ]);
+
+  const launchViolations = scanWorkspaceRestConfigStoreIntentRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/workspaces/provider_model_preferences_route.rs",
+    contents: `
+      async fn route(handle: WorkspaceProviderModelPreferenceHandle) {
+        let _ = handle.launch().providers();
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(launchViolations, [
+    "workspace provider model preference route reaches through launch runtime",
+  ]);
+});
+
+test("appstate guard ignores workspace REST/config fixture store setup after cfg-test stripping", () => {
+  const contents = stripCfgTestItems(`
+    impl WorkspaceExecutionConfigHandle {
+      pub async fn route(&self, params: WorkspaceRouteParams) -> Result<(), WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.require_workspace_execution_config_update_target(workspace_id).await
+      }
+    }
+
+    #[cfg(test)]
+    mod tests {
+      async fn fixture(daemon: TestDaemon, workspace_id: WorkspaceId) {
+        let _ = daemon.global_store().get_workspace(workspace_id).await;
+        let _ = daemon.store_for_workspace(workspace_id).await;
+      }
+    }
+  `);
+
+  assert.deepEqual(
+    scanWorkspaceRestConfigStoreIntentRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/execution_config.rs",
+      contents,
+    }),
+    [],
+  );
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {
