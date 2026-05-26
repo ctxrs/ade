@@ -46,6 +46,7 @@ pub mod resource_utilization;
 mod retention;
 mod route_capabilities;
 mod route_files;
+mod route_handles;
 mod runtime;
 pub mod scheduler;
 mod session_control_effects;
@@ -79,19 +80,17 @@ pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRunt
 pub(crate) use handle::route_handles_from_state;
 pub(in crate::daemon) use handle::ProviderWorkspaceLaunchRuntime;
 pub use handle::{
-    AuthHandle, DaemonHandle, DaemonShutdownHandle, DiagnosticsHandle, DictationHandle,
-    ExecutionLaunchHandle, HealthHandle, LinuxSandboxRuntimeHandle, LogsHandle,
-    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, MobileStoreHandle,
-    OrgPolicyHandle, ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,
-    ProviderBootstrapHandle, ProviderHarnessConfigHandle, ProviderInstallHandle,
-    ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
-    RepoOnboardingHandle, RequestBaseHandle, ResourceUtilizationHandle, RunArchiveHandle,
-    SessionArtifactsHandle, SessionFileCompletionsHandle, SessionMessageCommandHandle,
-    SessionReadModelsHandle, SessionSubagentMcpReadHandle, SessionSubagentReadHandle,
-    SessionTitleModelModeHandle, SessionVcsHandle, SettingsHandle, TaskCreationHandle,
-    TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
-    TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TerminalRouteHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WebSessionRouteHandle,
+    DaemonHandle, DaemonShutdownHandle, ExecutionLaunchHandle, LinuxSandboxRuntimeHandle,
+    MergeQueueApiHandle, MobileRuntimeHandle, MobileSecureProxyHandle, ProviderAccountsHandle,
+    ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
+    ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
+    ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
+    ResourceUtilizationHandle, RunArchiveHandle, SessionArtifactsHandle,
+    SessionFileCompletionsHandle, SessionMessageCommandHandle, SessionReadModelsHandle,
+    SessionSubagentMcpReadHandle, SessionSubagentReadHandle, SessionTitleModelModeHandle,
+    SessionVcsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
+    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
+    TerminalRouteHandle, UpdateActivityHandle, UpdateDrainHandle, WebSessionRouteHandle,
     WorkspaceActiveHandle, WorkspaceAttachmentsHandle, WorkspaceDeletionHandle,
     WorkspaceExecutionConfigHandle, WorkspaceFileCompletionsHandle,
     WorkspaceHarnessContainerHandle, WorkspaceMergeQueueConfigHandle, WorkspaceOrgPolicyHandle,
@@ -114,6 +113,10 @@ pub use mcp_auth::{
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal};
 pub use route_files::RouteFileDownloadError;
+pub use route_handles::{
+    AuthHandle, DiagnosticsHandle, DictationHandle, HealthHandle, LogsHandle, MobileStoreHandle,
+    OrgPolicyHandle, RepoOnboardingHandle, RequestBaseHandle, TelemetryHandle, UpdateReleaseHandle,
+};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use session_control_effects::SessionControlHandle;
 pub use sessions::subagents::SessionSubagentMcpControlHandle;

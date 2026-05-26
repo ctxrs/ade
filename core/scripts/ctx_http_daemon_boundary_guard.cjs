@@ -13568,8 +13568,13 @@ function scanRepoOnboardingDaemonImplementationRatchet({ filePath, contents }) {
   return violations;
 }
 
+const repoOnboardingHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/route_handles.rs",
+]);
+
 function scanRepoOnboardingHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!repoOnboardingHandleDefinitionPaths.has(filePath)) {
     return [];
   }
 
@@ -13620,6 +13625,31 @@ function scanRepoOnboardingHandleFieldRatchet({ filePath, contents }) {
     });
   }
 
+  return violations;
+}
+
+function scanRepoOnboardingHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  for (const relativePath of repoOnboardingHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    violations.push(
+      ...scanRepoOnboardingHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
   return violations;
 }
 
@@ -16546,10 +16576,6 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
-      ...scanRepoOnboardingHandleFieldRatchet({
-        filePath: relativePath,
-        contents,
-      }),
       ...scanRunArchiveHandleFieldRatchet({
         filePath: relativePath,
         contents,
@@ -16609,6 +16635,7 @@ function scanRepo() {
       }),
     );
   }
+  violations.push(...scanRepoOnboardingHandleDefinitionFiles());
 
   const daemonFiles = [];
   if (fs.existsSync(daemonRootPath)) {
@@ -17517,6 +17544,7 @@ module.exports = {
   scanMergeQueueApiHandleFieldRatchet,
   scanMergeQueueApiHttpRouteRatchet,
   scanRepoOnboardingDaemonImplementationRatchet,
+  scanRepoOnboardingHandleDefinitionFiles,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,
   scanResourceUtilizationDaemonImplementationRatchet,

@@ -219,6 +219,7 @@ const {
   scanMergeQueueApiHandleFieldRatchet,
   scanMergeQueueApiHttpRouteRatchet,
   scanRepoOnboardingDaemonImplementationRatchet,
+  scanRepoOnboardingHandleDefinitionFiles,
   scanRepoOnboardingHandleFieldRatchet,
   scanRepoOnboardingRouteExtractorRatchet,
   scanResourceUtilizationDaemonImplementationRatchet,
@@ -5023,7 +5024,7 @@ test("appstate guard rejects repo onboarding daemon facade broad seams", () => {
 
 test("appstate guard rejects repo onboarding broad handle fields", () => {
   const fieldViolations = scanRepoOnboardingHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_handles.rs",
     contents: `
       pub struct RepoOnboardingHandle {
         workspaces: WorkspacesHandle,
@@ -5043,7 +5044,7 @@ test("appstate guard rejects repo onboarding broad handle fields", () => {
   );
 
   const narrowViolations = scanRepoOnboardingHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_handles.rs",
     contents: `
       pub struct RepoOnboardingHandle {
         data_root: PathBuf,
@@ -5052,6 +5053,35 @@ test("appstate guard rejects repo onboarding broad handle fields", () => {
   });
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard scans moved repo onboarding handle definitions in live path", () => {
+  const violations = scanRepoOnboardingHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (relativePath !== "core/crates/ctx-daemon/src/daemon/route_handles.rs") {
+        return null;
+      }
+      return `
+        pub struct RepoOnboardingHandle {
+          daemon: DaemonHandle,
+        }
+      `;
+    },
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => [violation.filePath, violation.name]),
+    [
+      [
+        "core/crates/ctx-daemon/src/daemon/route_handles.rs",
+        "repo onboarding capability stores broad handle or daemon state",
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/route_handles.rs",
+        "repo onboarding capability exposes generic full-state escape hatch",
+      ],
+    ],
+  );
 });
 
 test("appstate guard rejects run archive route extraction outside run archive route", () => {
