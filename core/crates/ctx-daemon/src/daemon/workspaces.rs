@@ -1,5 +1,4 @@
 mod active_snapshot_state;
-mod app_state;
 pub mod attachments;
 mod cache_stats;
 mod deletion;

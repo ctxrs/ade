@@ -14,7 +14,9 @@ use ctx_worktree_vcs_service::{
 };
 
 use crate::daemon::sessions::SessionSchedulerWorkerHostFactory;
-use crate::daemon::task_session_effects::{SessionPublicationEffects, TaskSessionCleanupHost};
+use crate::daemon::task_session_effects::{
+    SessionPublicationEffects, TaskPublicationHost, TaskSessionCleanupHost,
+};
 use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
 
 pub(crate) type WorkspaceFileCompletionsCache =
@@ -101,6 +103,7 @@ pub struct DaemonState {
     pub(crate) transport: TransportRuntime,
     pub(crate) execution: ExecutionRuntime,
     pub(crate) session_publication: SessionPublicationEffects,
+    pub(crate) task_publication: Arc<TaskPublicationHost>,
     pub(crate) task_session_cleanup: TaskSessionCleanupHost,
     pub(in crate::daemon) session_scheduler_worker_host: SessionSchedulerWorkerHostFactory,
 }

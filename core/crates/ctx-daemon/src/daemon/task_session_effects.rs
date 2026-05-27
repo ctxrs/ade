@@ -178,7 +178,7 @@ impl SessionEventPublicationHost for RouteSessionPublicationHost {
     }
 }
 
-pub(in crate::daemon) struct TaskPublicationHost {
+pub(crate) struct TaskPublicationHost {
     workspace_stores: ProtectedWorkspaceStoreLookup,
     active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
 }
@@ -198,21 +198,14 @@ impl TaskPublicationHost {
         Arc::clone(&self.active_snapshot)
     }
 
-    pub(in crate::daemon) async fn emit_workspace_task_delta(
-        &self,
-        task: Task,
-        kind: TaskDeltaKind,
-    ) {
+    pub(crate) async fn emit_workspace_task_delta(&self, task: Task, kind: TaskDeltaKind) {
         let _ = self
             .active_snapshot
             .publish_task_delta(task.workspace_id, task, kind)
             .await;
     }
 
-    pub(in crate::daemon) async fn emit_workspace_task_upsert(
-        &self,
-        task_id: TaskId,
-    ) -> Result<()> {
+    pub(crate) async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
         let mut task: Option<Task> = None;
         let store = self.workspace_stores.store_for_task(task_id).await?;
         match store.get_workspace_active_task_summary(task_id).await? {
@@ -257,7 +250,7 @@ impl TaskPublicationHost {
         Ok(())
     }
 
-    pub(in crate::daemon) async fn emit_workspace_archived_task_delete(
+    pub(crate) async fn emit_workspace_archived_task_delete(
         &self,
         workspace_id: WorkspaceId,
         task_id: TaskId,
@@ -297,7 +290,7 @@ impl TaskPublicationHost {
         }
     }
 
-    pub(in crate::daemon) async fn emit_workspace_task_delete(
+    pub(crate) async fn emit_workspace_task_delete(
         &self,
         workspace_id: WorkspaceId,
         task_id: TaskId,

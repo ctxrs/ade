@@ -154,6 +154,8 @@ pub(in crate::daemon) struct WorktreeVcsRuntimeHost {
     worktree_vcs_active: Arc<Mutex<HashMap<WorktreeId, usize>>>,
     worktree_vcs_refresh_locks: Arc<Mutex<HashMap<WorktreeId, Weak<Mutex<()>>>>>,
     worktree_vcs_open_panes: Arc<Mutex<HashMap<WorktreeId, usize>>>,
+    #[cfg(any(test, feature = "test-support"))]
+    worktree_vcs_summary_gen: Arc<Mutex<HashMap<WorktreeId, u64>>>,
     worktree_vcs_runtime: Arc<Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>>,
     worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime,
     worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
@@ -168,6 +170,8 @@ impl WorktreeVcsRuntimeHost {
             worktree_vcs_active: Arc::clone(&runtime.worktree_vcs_active),
             worktree_vcs_refresh_locks: Arc::clone(&runtime.worktree_vcs_refresh_locks),
             worktree_vcs_open_panes: Arc::clone(&runtime.worktree_vcs_open_panes),
+            #[cfg(any(test, feature = "test-support"))]
+            worktree_vcs_summary_gen: Arc::clone(&runtime.worktree_vcs_summary_gen),
             worktree_vcs_runtime: Arc::clone(&runtime.worktree_vcs_runtime),
             worktree_vcs_scheduler: runtime.worktree_vcs_scheduler.clone(),
             worktree_vcs_events: runtime.worktree_vcs_events.clone(),
@@ -381,6 +385,81 @@ impl WorktreeVcsRuntimeHost {
                 locks.insert(worktree_id, Arc::downgrade(&lock));
                 lock
             }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(in crate::daemon) async fn update_worktree_vcs_activity(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if !self.worktree_vcs_enabled || previous == next {
+            return;
+        }
+        let mut evicted = Vec::new();
+        {
+            let mut active = self.worktree_vcs_active.lock().await;
+            for worktree_id in previous.difference(next) {
+                if let Some(count) = active.get_mut(worktree_id) {
+                    if *count <= 1 {
+                        active.remove(worktree_id);
+                        evicted.push(*worktree_id);
+                    } else {
+                        *count -= 1;
+                    }
+                }
+            }
+            for worktree_id in next.difference(previous) {
+                let entry = active.entry(*worktree_id).or_insert(0);
+                *entry += 1;
+            }
+        }
+        if evicted.is_empty() {
+            return;
+        }
+        {
+            let mut cache = self.worktree_vcs_snapshots.lock().await;
+            for worktree_id in &evicted {
+                cache.remove(worktree_id);
+            }
+        }
+        {
+            let mut gens = self.worktree_vcs_summary_gen.lock().await;
+            for worktree_id in &evicted {
+                gens.remove(worktree_id);
+            }
+        }
+        {
+            let mut runtime = self.worktree_vcs_runtime.lock().await;
+            for worktree_id in &evicted {
+                runtime.remove(worktree_id);
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(in crate::daemon) async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if !self.worktree_vcs_enabled || previous == next {
+            return;
+        }
+        let mut open = self.worktree_vcs_open_panes.lock().await;
+        for worktree_id in previous.difference(next) {
+            if let Some(count) = open.get_mut(worktree_id) {
+                if *count <= 1 {
+                    open.remove(worktree_id);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+        for worktree_id in next.difference(previous) {
+            let entry = open.entry(*worktree_id).or_insert(0);
+            *entry += 1;
         }
     }
 

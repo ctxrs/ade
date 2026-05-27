@@ -151,21 +151,13 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
   "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/hydration.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/cleanup.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/task_events.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks/host.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
 ]);
-const daemonStateBoundaryAllowedAppStatePaths = new Set([
-  "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
-]);
+const daemonStateBoundaryAllowedAppStatePaths = new Set([]);
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
   "core/crates/ctx-http/src/api/tasks/",
@@ -1272,7 +1264,6 @@ const worktreeVcsExplicitHostImplementationRoots = [
   "core/crates/ctx-daemon/src/daemon/git_status/",
   "core/crates/ctx-daemon/src/daemon/workspaces/diff_exec.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/diff_exec/",
-  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/git_watchers.rs",
 ];
 
 const terminalStreamRuntimeApiRoots = [

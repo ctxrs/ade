@@ -401,8 +401,7 @@ impl TestDaemon {
             .task_session_cleanup
             .refresh_session_head_cache(session_id)
             .await;
-        self.state
-            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        self.ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
             .map_err(|err| anyhow::anyhow!("hydrate replay projection fixture: {err:?}"))
     }

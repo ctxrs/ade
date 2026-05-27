@@ -4,7 +4,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_store::Store;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-use crate::daemon::state::{DaemonState, ProtectedWorkspaceStoreLookup, WorkspaceRuntime};
+use crate::daemon::state::ProtectedWorkspaceStoreLookup;
 use crate::daemon::StoreLookup;
 
 mod payload;
@@ -146,27 +146,6 @@ pub(in crate::daemon) async fn ensure_workspace_active_snapshot_hydrated_with_de
         );
     }
     Ok(())
-}
-
-impl WorkspaceRuntime {
-    pub async fn ensure_workspace_active_snapshot_hydrated(
-        &self,
-        state: &DaemonState,
-        workspace_id: WorkspaceId,
-    ) -> std::result::Result<(), WorkspaceHydrationError> {
-        let runtime = WorkspaceActiveHydrationRuntime::new(
-            state.global_store().clone(),
-            ProtectedWorkspaceStoreLookup::new(
-                state.core.stores.clone(),
-                Arc::clone(&state.sessions),
-                Arc::clone(&state.transport.merge_queue),
-            ),
-            Arc::clone(&self.workspace_active_snapshot),
-        );
-        runtime
-            .ensure_workspace_active_snapshot_hydrated(workspace_id)
-            .await
-    }
 }
 
 #[cfg(test)]

@@ -164,6 +164,7 @@ impl DaemonState {
             transport,
             execution,
             session_publication,
+            task_publication,
             task_session_cleanup,
             session_scheduler_worker_host,
         }

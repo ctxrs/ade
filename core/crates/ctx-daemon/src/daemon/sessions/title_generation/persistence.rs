@@ -23,7 +23,11 @@ pub async fn apply_session_title_update(
         state.sessions.remember_session_meta(&updated_session).await;
     }
 
-    if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
+    if let Err(e) = state
+        .task_publication
+        .emit_workspace_task_upsert(session.task_id)
+        .await
+    {
         tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
 
@@ -41,7 +45,11 @@ pub async fn apply_session_title_update(
     }
 
     if task_updated {
-        if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
+        if let Err(e) = state
+            .task_publication
+            .emit_workspace_task_upsert(session.task_id)
+            .await
+        {
             tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
         }
     }

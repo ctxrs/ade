@@ -385,7 +385,7 @@ impl WorkspaceStreamHandle {
             .await;
     }
 
-    pub(in crate::daemon) async fn ensure_workspace_active_snapshot_hydrated(
+    pub(crate) async fn ensure_workspace_active_snapshot_hydrated(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<(), crate::daemon::workspaces::WorkspaceHydrationError> {

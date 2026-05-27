@@ -1993,7 +1993,8 @@ impl TestDaemon {
         &self,
         workspace_id: WorkspaceId,
     ) -> std::result::Result<(), daemon::workspaces::WorkspaceHydrationError> {
-        self.state
+        self.handle()
+            .workspace_stream()
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
     }
@@ -2772,8 +2773,7 @@ impl TestDaemon {
 
         tokio::time::timeout(
             timeout,
-            self.state
-                .ensure_workspace_active_snapshot_hydrated(workspace_id),
+            self.ensure_workspace_active_snapshot_hydrated(workspace_id),
         )
         .await
         .map_err(|_| anyhow::anyhow!("timed out hydrating workspace active snapshot"))?
@@ -2819,8 +2819,7 @@ impl TestDaemon {
 
         tokio::time::timeout(
             timeout,
-            self.state
-                .ensure_workspace_active_snapshot_hydrated(workspace_id),
+            self.ensure_workspace_active_snapshot_hydrated(workspace_id),
         )
         .await
         .map_err(|_| anyhow::anyhow!("timed out hydrating workspace active snapshot"))?
@@ -2887,7 +2886,10 @@ impl TestDaemon {
             .await
             .map_err(|err| anyhow::anyhow!("refresh active session head projection: {err}"))?;
 
-        self.state.emit_workspace_task_upsert(task_id).await?;
+        self.state
+            .task_publication
+            .emit_workspace_task_upsert(task_id)
+            .await?;
         self.state
             .task_session_cleanup
             .refresh_session_head_cache(session_id)
@@ -2928,11 +2930,10 @@ impl TestDaemon {
             anyhow::bail!("expected active snapshot to be cached for workspace {workspace_id:?}");
         }
         self.state
-            .cache_workspace_active_snapshot(cached_snapshot)
+            .test_cache_workspace_active_snapshot(cached_snapshot)
             .await;
 
-        self.state
-            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        self.ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
             .map_err(|err| anyhow::anyhow!("hydrate workspace active snapshot: {err:?}"))?;
 
@@ -2954,7 +2955,9 @@ impl TestDaemon {
         if cached_heads.heads.is_empty() {
             anyhow::bail!("expected active heads to be cached for workspace {workspace_id:?}");
         }
-        self.state.cache_workspace_active_heads(cached_heads).await;
+        self.state
+            .test_cache_workspace_active_heads(cached_heads)
+            .await;
 
         Ok(())
     }
@@ -3177,7 +3180,9 @@ impl TestDaemon {
     }
 
     pub async fn cache_rehydration_cleanup_workspace_for_test(&self, workspace_id: WorkspaceId) {
-        self.state.cleanup_workspace(workspace_id).await;
+        self.state
+            .test_cleanup_workspace_runtime(workspace_id)
+            .await;
     }
 
     pub async fn cache_rehydration_make_workspace_store_unopenable_for_test(
@@ -3390,7 +3395,7 @@ impl TestDaemon {
         let mut next_open = std::collections::HashSet::new();
         next_open.insert(worktree_id);
         self.state
-            .update_worktree_vcs_open_panes(&std::collections::HashSet::new(), &next_open)
+            .test_update_worktree_vcs_open_panes(&std::collections::HashSet::new(), &next_open)
             .await;
     }
 
@@ -3401,7 +3406,7 @@ impl TestDaemon {
         let mut previous_open = std::collections::HashSet::new();
         previous_open.insert(worktree_id);
         self.state
-            .update_worktree_vcs_open_panes(&previous_open, &std::collections::HashSet::new())
+            .test_update_worktree_vcs_open_panes(&previous_open, &std::collections::HashSet::new())
             .await;
     }
 
@@ -3418,7 +3423,7 @@ impl TestDaemon {
         &self,
         worktree_id: WorktreeId,
     ) -> tokio::sync::OwnedMutexGuard<()> {
-        let refresh_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        let refresh_lock = self.state.test_worktree_vcs_refresh_lock(worktree_id).await;
         refresh_lock.lock_owned().await
     }
 
@@ -3426,7 +3431,7 @@ impl TestDaemon {
         &self,
         worktree_id: WorktreeId,
     ) -> usize {
-        let refresh_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        let refresh_lock = self.state.test_worktree_vcs_refresh_lock(worktree_id).await;
         Arc::as_ptr(&refresh_lock) as *const () as usize
     }
 
@@ -3435,10 +3440,10 @@ impl TestDaemon {
         worktree_id: WorktreeId,
     ) -> anyhow::Result<()> {
         self.mark_worktree_vcs_active_for_test(worktree_id).await;
-        let initial_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        let initial_lock = self.state.test_worktree_vcs_refresh_lock(worktree_id).await;
         self.mark_worktree_vcs_inactive_for_test(worktree_id).await;
 
-        let next_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        let next_lock = self.state.test_worktree_vcs_refresh_lock(worktree_id).await;
         if !Arc::ptr_eq(&initial_lock, &next_lock) {
             anyhow::bail!("worktree VCS reactivation should reuse an in-flight refresh lock");
         }
@@ -3447,7 +3452,7 @@ impl TestDaemon {
         drop(next_lock);
         drop(initial_lock);
 
-        let replacement_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        let replacement_lock = self.state.test_worktree_vcs_refresh_lock(worktree_id).await;
         if old_lock.upgrade().is_some() {
             anyhow::bail!("evicted refresh lock should be released once no refreshes are using it");
         }
@@ -3523,11 +3528,11 @@ impl TestDaemon {
     }
 
     pub fn worktree_vcs_enabled_for_test(&self) -> bool {
-        self.state.worktree_vcs_enabled()
+        self.state.test_worktree_vcs_enabled()
     }
 
     pub async fn is_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) -> bool {
-        self.state.is_worktree_vcs_active(worktree_id).await
+        self.state.test_is_worktree_vcs_active(worktree_id).await
     }
 
     pub async fn emit_worktree_vcs_snapshot_for_worktree(
@@ -3536,7 +3541,7 @@ impl TestDaemon {
         include_commit_info: bool,
     ) -> anyhow::Result<()> {
         self.state
-            .emit_worktree_vcs_snapshot_for_worktree(worktree, include_commit_info)
+            .test_emit_worktree_vcs_snapshot_for_worktree(worktree, include_commit_info)
             .await
     }
 
@@ -3547,7 +3552,7 @@ impl TestDaemon {
         touched_files: bool,
     ) -> anyhow::Result<()> {
         self.state
-            .request_worktree_vcs_refresh_for_worktree(worktree, summary, touched_files)
+            .test_request_worktree_vcs_refresh_for_worktree(worktree, summary, touched_files)
             .await
     }
 
@@ -3557,7 +3562,7 @@ impl TestDaemon {
         candidate_path: impl Into<String>,
     ) -> anyhow::Result<()> {
         self.state
-            .mark_worktree_vcs_dirty_for_worktree(
+            .test_mark_worktree_vcs_dirty_for_worktree(
                 worktree,
                 ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
                     worktree_fs: true,
@@ -3574,7 +3579,7 @@ impl TestDaemon {
         candidate_path: impl Into<String>,
     ) -> anyhow::Result<()> {
         self.state
-            .mark_worktree_vcs_dirty_for_worktree(
+            .test_mark_worktree_vcs_dirty_for_worktree(
                 worktree,
                 ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
                     worktree_fs: false,
@@ -3590,13 +3595,13 @@ impl TestDaemon {
         worktree: Worktree,
     ) -> anyhow::Result<()> {
         self.state
-            .refresh_worktree_vcs_summary_for_worktree(worktree)
+            .test_refresh_worktree_vcs_summary_for_worktree(worktree)
             .await
     }
 
     pub async fn run_git_status_watcher_for_test(&self, worktree: Worktree) -> anyhow::Result<()> {
         self.state
-            .run_git_status_watcher_for_worktree(worktree)
+            .test_run_git_status_watcher_for_worktree(worktree)
             .await
     }
 
@@ -3643,7 +3648,7 @@ impl TestDaemon {
         &self,
         worktree_id: WorktreeId,
     ) -> Option<WorktreeVcsSnapshot> {
-        self.state.get_worktree_vcs_snapshot(worktree_id).await
+        self.state.test_get_worktree_vcs_snapshot(worktree_id).await
     }
 
     pub async fn terminal_output_snapshot(&self, terminal_id: TerminalId) -> Option<Vec<u8>> {

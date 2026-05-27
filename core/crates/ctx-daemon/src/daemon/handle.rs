@@ -739,12 +739,7 @@ impl DaemonHandle {
     fn task_publication_host(
         &self,
     ) -> Arc<crate::daemon::task_session_effects::TaskPublicationHost> {
-        Arc::new(
-            crate::daemon::task_session_effects::TaskPublicationHost::new(
-                self.protected_workspace_store_lookup(),
-                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            ),
-        )
+        Arc::clone(&self.state.task_publication)
     }
 
     fn task_session_cleanup_host(

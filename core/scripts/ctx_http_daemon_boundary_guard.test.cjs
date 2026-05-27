@@ -718,8 +718,6 @@ test("daemon state boundary ratchet allows current broad baseline files", () => 
   const baselineFixtures = [
     "core/crates/ctx-daemon/src/daemon/handle.rs",
     "core/crates/ctx-daemon/src/daemon/state.rs",
-    "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
-    "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
   ];
 
   for (const filePath of baselineFixtures) {
@@ -742,6 +740,8 @@ test("daemon state boundary ratchet rejects new app_state modules", () => {
   for (const filePath of [
     "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
     "core/crates/ctx-daemon/src/daemon/providers/app_state.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
     "core/crates/ctx-daemon/src/daemon/workspaces/app_state/new.rs",
   ]) {
     const violations = scanDaemonStateBoundaryRatchet({

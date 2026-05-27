@@ -19,7 +19,9 @@ use ctx_transport_runtime::terminals::TerminalSessionHandle;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
-use crate::daemon::DaemonState;
+use crate::daemon::git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
+use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
+use ctx_worktree_vcs_service::WorktreeVcsDirtyBits;
 
 impl DaemonState {
     pub fn test_data_root(&self) -> &Path {
@@ -200,6 +202,25 @@ impl DaemonState {
             .contains(&worktree_id)
     }
 
+    fn test_worktree_vcs_runtime_host(&self) -> WorktreeVcsRuntimeHost {
+        WorktreeVcsRuntimeHost::from_workspace_runtime(&self.workspaces)
+    }
+
+    fn test_worktree_vcs_execution_host(&self) -> WorktreeVcsExecutionHost {
+        let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+            self.core.stores.clone(),
+            Arc::clone(&self.sessions),
+            Arc::clone(&self.transport.merge_queue),
+        );
+        WorktreeVcsExecutionHost::new(
+            self.core.data_root.clone(),
+            self.core.daemon_url.clone(),
+            self.global_store().clone(),
+            workspace_stores,
+            Arc::clone(&self.execution.harness),
+        )
+    }
+
     pub fn test_workspace_active_snapshot_hub(&self) -> Arc<WorkspaceActiveSnapshotHub> {
         Arc::clone(&self.workspaces.workspace_active_snapshot)
     }
@@ -239,18 +260,190 @@ impl DaemonState {
             .await;
     }
 
+    pub async fn test_cache_workspace_active_snapshot(
+        &self,
+        snapshot: ctx_core::models::WorkspaceActiveSnapshot,
+    ) {
+        crate::daemon::workspaces::WorkspaceActiveCacheRuntime::new(
+            Arc::clone(&self.workspaces.workspace_active_snapshot_cache),
+            Arc::clone(&self.workspaces.workspace_active_heads_cache),
+        )
+        .cache_workspace_active_snapshot(snapshot)
+        .await;
+    }
+
+    pub async fn test_cache_workspace_active_heads(
+        &self,
+        heads: ctx_core::models::WorkspaceActiveHeadBatch,
+    ) {
+        crate::daemon::workspaces::WorkspaceActiveCacheRuntime::new(
+            Arc::clone(&self.workspaces.workspace_active_snapshot_cache),
+            Arc::clone(&self.workspaces.workspace_active_heads_cache),
+        )
+        .cache_workspace_active_heads(heads)
+        .await;
+    }
+
     pub async fn test_update_worktree_vcs_activity(
         &self,
         previous: &std::collections::HashSet<WorktreeId>,
         next: &std::collections::HashSet<WorktreeId>,
     ) {
-        self.workspaces
+        self.test_worktree_vcs_runtime_host()
             .update_worktree_vcs_activity(previous, next)
             .await;
     }
 
+    pub async fn test_update_worktree_vcs_open_panes(
+        &self,
+        previous: &std::collections::HashSet<WorktreeId>,
+        next: &std::collections::HashSet<WorktreeId>,
+    ) {
+        self.test_worktree_vcs_runtime_host()
+            .update_worktree_vcs_open_panes(previous, next)
+            .await;
+    }
+
+    pub fn test_worktree_vcs_enabled(&self) -> bool {
+        self.test_worktree_vcs_runtime_host().enabled()
+    }
+
+    pub async fn test_is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
+        self.test_worktree_vcs_runtime_host()
+            .is_worktree_vcs_active(worktree_id)
+            .await
+    }
+
+    pub async fn test_worktree_vcs_refresh_lock(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        self.test_worktree_vcs_runtime_host()
+            .worktree_vcs_refresh_lock(worktree_id)
+            .await
+    }
+
+    pub async fn test_get_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        let runtime = self.test_worktree_vcs_runtime_host();
+        let execution = self.test_worktree_vcs_execution_host();
+        runtime
+            .get_worktree_vcs_snapshot(&execution, worktree_id)
+            .await
+    }
+
+    pub async fn test_emit_worktree_vcs_snapshot_for_worktree(
+        &self,
+        worktree: &Worktree,
+        force_emit: bool,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+            &self.test_worktree_vcs_runtime_host(),
+            &self.test_worktree_vcs_execution_host(),
+            worktree,
+            force_emit,
+        )
+        .await
+    }
+
+    pub async fn test_request_worktree_vcs_refresh_for_worktree(
+        &self,
+        worktree: &Worktree,
+        summary: bool,
+        touched_files: bool,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::request_worktree_vcs_refresh(
+            &self.test_worktree_vcs_runtime_host(),
+            &self.test_worktree_vcs_execution_host(),
+            worktree,
+            summary,
+            touched_files,
+        )
+        .await
+    }
+
+    pub async fn test_mark_worktree_vcs_dirty_for_worktree(
+        &self,
+        worktree: &Worktree,
+        dirty_bits: WorktreeVcsDirtyBits,
+        candidate_paths: Vec<String>,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::mark_worktree_vcs_dirty(
+            &self.test_worktree_vcs_runtime_host(),
+            &self.test_worktree_vcs_execution_host(),
+            worktree,
+            dirty_bits,
+            candidate_paths,
+        )
+        .await
+    }
+
+    pub async fn test_refresh_worktree_vcs_summary_for_worktree(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::refresh_worktree_vcs_summary(
+            self.test_worktree_vcs_runtime_host(),
+            self.test_worktree_vcs_execution_host(),
+            worktree,
+        )
+        .await
+    }
+
+    pub async fn test_run_git_status_watcher_for_worktree(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::run_git_status_watcher(
+            self.test_worktree_vcs_runtime_host(),
+            self.test_worktree_vcs_execution_host(),
+            worktree,
+        )
+        .await
+    }
+
     pub async fn test_cache_worktree_vcs_snapshot(&self, snapshot: WorktreeVcsSnapshot) {
-        self.workspaces.cache_worktree_vcs_snapshot(snapshot).await;
+        self.test_worktree_vcs_runtime_host()
+            .cache_worktree_vcs_snapshot(snapshot)
+            .await;
+    }
+
+    pub async fn test_cleanup_workspace_runtime(&self, workspace_id: WorkspaceId) {
+        let _ = self.execution.harness.stop_container(workspace_id).await;
+        let _ = self
+            .execution
+            .harness
+            .remove_workspace_volume(workspace_id)
+            .await;
+        let session_ids = self
+            .sessions
+            .cached_session_ids_for_workspace(workspace_id)
+            .await;
+        for session_id in session_ids {
+            self.task_session_cleanup.cleanup_session(session_id).await;
+        }
+        self.workspaces
+            .workspace_active_snapshot_cache
+            .lock()
+            .await
+            .remove(&workspace_id);
+        self.workspaces
+            .workspace_active_heads_cache
+            .lock()
+            .await
+            .remove(&workspace_id);
+        self.workspaces
+            .workspace_file_completions_cache
+            .lock()
+            .await
+            .remove(&workspace_id);
+        self.workspaces
+            .workspace_active_snapshot
+            .remove_workspace(workspace_id)
+            .await;
+        self.core.stores.evict_workspace(workspace_id).await;
     }
 
     pub async fn test_set_provider_inactivity_timeout(&self, timeout: Duration) {
