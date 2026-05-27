@@ -16,6 +16,8 @@ const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src"
 const daemonRoot = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon");
 const daemonRootPath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon.rs");
 const daemonHandlePath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon", "handle.rs");
+const daemonRouteBuildersRelativePath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs";
 const daemonTaskRouteHandlesPath = path.join(
   coreRoot,
   "crates",
@@ -113,6 +115,7 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs",
+  daemonRouteBuildersRelativePath,
   "core/crates/ctx-daemon/src/daemon/runtime.rs",
   "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs",
   "core/crates/ctx-daemon/src/daemon/scheduler/persistence.rs",
@@ -7354,23 +7357,6 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
     });
   }
 
-  const daemonRouteHandlesRegex = /\bDaemonRouteHandles\b/gu;
-  if (!DAEMON_ROUTE_HANDLES_ALLOWED_PATHS.has(filePath)) {
-    for (
-      let match = daemonRouteHandlesRegex.exec(contents);
-      match;
-      match = daemonRouteHandlesRegex.exec(contents)
-    ) {
-      const lineIndex = lineForOffset(match.index);
-      pushViolation({
-        lineIndex,
-        name: "DaemonRouteHandles outside router assembly",
-        text: lines[lineIndex]?.trim() ?? match[0],
-      });
-    }
-    return violations;
-  }
-
   const isInsideRouteHandlesConstructor = (lineIndex) =>
     filePath === "core/crates/ctx-http/src/api/router.rs"
     && isInsideDeclaredFunction(
@@ -7379,21 +7365,25 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
       /\bpub\s+fn\s+from_daemon_route_handles\s*\(/,
     );
 
-  const destructuringRegex = /\bDaemonRouteHandles\s*\{/gsu;
-  for (
-    let match = destructuringRegex.exec(contents);
-    match;
-    match = destructuringRegex.exec(contents)
-  ) {
-    const lineIndex = lineForOffset(match.index);
+  const pushRouteHandlesFieldAccessViolation = (lineIndex) => {
     if (isInsideRouteHandlesConstructor(lineIndex)) {
-      continue;
+      return;
     }
     pushViolation({
       lineIndex,
-      name: "DaemonRouteHandles destructuring outside RouteHandles constructor",
-      text: lines[lineIndex]?.trim() ?? match[0].trim(),
+      name: "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      text: lines[lineIndex]?.trim(),
     });
+  };
+
+  const directTempFieldAccessRegex =
+    /\.route_handles\s*\(\s*\)\s*\.\s*[A-Za-z_][A-Za-z0-9_]*/gu;
+  for (
+    let match = directTempFieldAccessRegex.exec(contents);
+    match;
+    match = directTempFieldAccessRegex.exec(contents)
+  ) {
+    pushRouteHandlesFieldAccessViolation(lineForOffset(match.index));
   }
 
   const routeHandleVariables = new Set();
@@ -7433,27 +7423,6 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
     }
   }
 
-  const pushRouteHandlesFieldAccessViolation = (lineIndex) => {
-    if (isInsideRouteHandlesConstructor(lineIndex)) {
-      return;
-    }
-    pushViolation({
-      lineIndex,
-      name: "direct DaemonRouteHandles field access outside RouteHandles constructor",
-      text: lines[lineIndex]?.trim(),
-    });
-  };
-
-  const directTempFieldAccessRegex =
-    /\.route_handles\s*\(\s*\)\s*\.\s*[A-Za-z_][A-Za-z0-9_]*/gu;
-  for (
-    let match = directTempFieldAccessRegex.exec(contents);
-    match;
-    match = directTempFieldAccessRegex.exec(contents)
-  ) {
-    pushRouteHandlesFieldAccessViolation(lineForOffset(match.index));
-  }
-
   for (const variableName of routeHandleVariables) {
     const escapedName = variableName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     const fieldAccessRegex = new RegExp(
@@ -7468,6 +7437,40 @@ function scanRouteCapabilityCutoverRatchet({ filePath, contents }) {
       const prefixLength = match[1]?.length ?? 0;
       pushRouteHandlesFieldAccessViolation(lineForOffset(match.index + prefixLength));
     }
+  }
+
+  const daemonRouteHandlesRegex = /\bDaemonRouteHandles\b/gu;
+  if (!DAEMON_ROUTE_HANDLES_ALLOWED_PATHS.has(filePath)) {
+    for (
+      let match = daemonRouteHandlesRegex.exec(contents);
+      match;
+      match = daemonRouteHandlesRegex.exec(contents)
+    ) {
+      const lineIndex = lineForOffset(match.index);
+      pushViolation({
+        lineIndex,
+        name: "DaemonRouteHandles outside router assembly",
+        text: lines[lineIndex]?.trim() ?? match[0],
+      });
+    }
+    return violations;
+  }
+
+  const destructuringRegex = /\bDaemonRouteHandles\s*\{/gsu;
+  for (
+    let match = destructuringRegex.exec(contents);
+    match;
+    match = destructuringRegex.exec(contents)
+  ) {
+    const lineIndex = lineForOffset(match.index);
+    if (isInsideRouteHandlesConstructor(lineIndex)) {
+      continue;
+    }
+    pushViolation({
+      lineIndex,
+      name: "DaemonRouteHandles destructuring outside RouteHandles constructor",
+      text: lines[lineIndex]?.trim() ?? match[0].trim(),
+    });
   }
 
   return violations;
@@ -7807,6 +7810,11 @@ function isAllowedDaemonHandleSurfacePath(filePath) {
     || filePath.includes("/fixtures/");
 }
 
+function isDaemonRouteAssemblyPath(filePath) {
+  return filePath === "core/crates/ctx-daemon/src/daemon/handle.rs"
+    || filePath === daemonRouteBuildersRelativePath;
+}
+
 function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
   const violations = [];
   const violationKeys = new Set();
@@ -7943,6 +7951,29 @@ function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
       name: "daemon handle Arc<DaemonState> From impl",
       text: match[0].trim().replace(/\s+/g, " "),
     });
+  }
+
+  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    const routeFactoryRegex =
+      /\b(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*->\s*(?!Self\b)[^{;]*(?:[A-Za-z][A-Za-z0-9_]*(?:Handle|Lookup|Host|Effects|Runtime)|DaemonRouteHandles)\b/gsu;
+    for (
+      let match = routeFactoryRegex.exec(contents);
+      match;
+      match = routeFactoryRegex.exec(contents)
+    ) {
+      const lineIndex = lineForOffset(match.index);
+      const key = `${lineIndex + 1}:daemon handle route factory method`;
+      if (violationKeys.has(key)) {
+        continue;
+      }
+      violationKeys.add(key);
+      violations.push({
+        filePath,
+        line: lineIndex + 1,
+        name: "daemon handle route factory method",
+        text: lines[lineIndex]?.trim() || match[0].trim().replace(/\s+/g, " "),
+      });
+    }
   }
   return violations;
 }
@@ -10510,7 +10541,7 @@ function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
 }
 
 function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (filePath !== daemonRouteBuildersRelativePath) {
     return [];
   }
 
@@ -10566,7 +10597,7 @@ function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
 }
 
 function scanWorktreeVcsAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (filePath !== daemonRouteBuildersRelativePath) {
     return [];
   }
 
@@ -11787,7 +11818,7 @@ function scanSessionControlDaemonImplementationRatchet({ filePath, contents }) {
 }
 
 function scanSessionControlAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
   }
   const block = rustFunctionBlockForName({ contents, fnName: "session_control" });
@@ -11838,7 +11869,7 @@ function scanSessionControlAssemblyRatchet({ filePath, contents }) {
 function scanSessionFileCompletionsDaemonSeamRatchet({ filePath, contents }) {
   if (
     filePath !== "core/crates/ctx-daemon/src/daemon/sessions/workspace_bridge.rs" &&
-    filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs"
+    !isDaemonRouteAssemblyPath(filePath)
   ) {
     return [];
   }
@@ -11860,7 +11891,7 @@ function scanSessionFileCompletionsDaemonSeamRatchet({ filePath, contents }) {
       });
     }
   }
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (isDaemonRouteAssemblyPath(filePath)) {
     const block = rustFunctionBlockForName({ contents, fnName: "session_file_completions" });
     if (block) {
       const hiddenStateRegex =
@@ -12713,7 +12744,7 @@ function scanTaskSessionPublicationEffectsStateRatchet({ filePath, contents }) {
     }
   }
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (isDaemonRouteAssemblyPath(filePath)) {
     for (const fnName of [
       "merge_queue_api",
       "session_artifact_effects",
@@ -13129,7 +13160,7 @@ function scanSubagentSpawnHostStateRatchet({ filePath, contents }) {
     }
   }
 
-  if (filePath === "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (isDaemonRouteAssemblyPath(filePath)) {
     const removedRuntimeRegex =
       /\b(?:task_session_admission_workspace_runtime|task_lifecycle_workspace_runtime|TaskAdmissionWorkspaceRuntime|TaskLifecycleWorkspaceRuntime)\b/gu;
     for (
@@ -13251,7 +13282,7 @@ function scanSessionTitleModelModeTitleImplementationRatchet({ filePath, content
 }
 
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
   }
   const violations = [];
@@ -13661,7 +13692,7 @@ function scanWorkspaceActiveHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanWorkspaceActiveAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (filePath !== daemonRouteBuildersRelativePath) {
     return [];
   }
 

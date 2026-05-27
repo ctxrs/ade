@@ -81,7 +81,7 @@ async fn test_workspace_stream() -> (tempfile::TempDir, WorkspaceStreamHandle) {
         TestDaemon::new_for_test(root.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon should start");
-    (root, daemon.handle().workspace_stream())
+    (root, daemon.workspace_stream_handle_for_test())
 }
 
 #[tokio::test]

@@ -50,6 +50,7 @@ pub mod resource_telemetry;
 pub mod resource_utilization;
 mod resource_utilization_route_handles;
 mod retention;
+mod route_builders;
 mod route_capabilities;
 mod route_files;
 mod route_handles;
@@ -88,7 +89,6 @@ pub use activity::{
 };
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
-pub(crate) use handle::route_handles_from_state;
 pub use handle::DaemonHandle;
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use launch_route_handles::ProviderWorkspaceLaunchRuntime;
@@ -118,6 +118,13 @@ pub use provider_route_handles::{
 pub use resource_utilization_route_handles::ResourceUtilizationHandle;
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
+pub(crate) use route_builders::route_handles_from_state;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use route_builders::workspace_attachments_runtime_from_state;
+#[cfg(test)]
+pub(crate) use route_builders::workspace_primary_branch_with_refresh_effect_from_state;
+#[cfg(test)]
+pub(crate) use route_builders::workspace_vcs_stream_with_refresh_effect_from_state;
 pub use route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal};
 pub use route_files::RouteFileDownloadError;
 pub use route_handles::{
@@ -148,6 +155,8 @@ pub use task_route_handles::{
     TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
     TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
 };
+#[cfg(test)]
+pub(crate) use workspace_route_handles::WorkspacePrimaryBranchRefreshEffect;
 pub use workspace_route_handles::{
     WorkspaceAttachmentsHandle, WorkspaceDeletionHandle, WorkspaceExecutionConfigHandle,
     WorkspaceFileCompletionsHandle, WorkspaceHarnessContainerHandle,

@@ -304,8 +304,8 @@ mod tests {
                 .expect("test daemon");
 
         let err = daemon
-            .handle()
-            .provider_accounts()
+            .route_handles()
+            .provider_accounts
             .start_kimi_login_for_route(ProviderLoginStartRouteRequest::default())
             .await
             .expect_err("device authorization failure should happen before session creation");

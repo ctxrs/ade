@@ -429,8 +429,8 @@ mod route_tests {
                 .expect("test daemon");
 
         let err = daemon
-            .handle()
-            .provider_accounts()
+            .route_handles()
+            .provider_accounts
             .start_codex_login_for_route(CodexLoginStartRouteRequest::default())
             .await
             .expect_err("config parse failure should fail before session creation");

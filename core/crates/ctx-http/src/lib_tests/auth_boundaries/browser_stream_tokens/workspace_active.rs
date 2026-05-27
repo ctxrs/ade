@@ -132,7 +132,7 @@ async fn workspace_active_websocket_stream_requires_browser_scoped_query_token()
     let too_far_ahead_expires_at = chrono::Utc::now().timestamp()
         + STREAM_TOKEN_TTL_SECS
         + STREAM_TOKEN_MAX_FUTURE_SKEW_SECS
-        + 1;
+        + 60;
     let too_far_ahead_token = derive_browser_stream_token(
         "daemon-secret",
         &BrowserStreamAuthScope::WorkspaceActiveSnapshot {

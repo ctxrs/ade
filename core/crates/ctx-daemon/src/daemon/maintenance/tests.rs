@@ -144,7 +144,7 @@ async fn begin_update_drain_acquires_until_released() {
 #[tokio::test]
 async fn begin_update_drain_route_requires_confirm() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(state).update_drain();
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
 
     let error = handle
         .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(false, None, None))
@@ -158,7 +158,7 @@ async fn begin_update_drain_route_requires_confirm() {
 #[tokio::test]
 async fn begin_update_drain_route_defaults_reason_and_owner() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
 
     let result = handle
         .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(
@@ -179,7 +179,7 @@ async fn begin_update_drain_route_defaults_reason_and_owner() {
 #[tokio::test]
 async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
     begin_update_drain(&state, "existing".to_string(), "unit_test".to_string())
         .await
         .expect("acquire initial drain");
@@ -197,7 +197,7 @@ async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
 async fn begin_update_drain_route_rejects_queued_turns() {
     let (data_dir, state) = test_state().await;
     insert_turn_with_status(&state, data_dir.path(), SessionTurnStatus::Queued).await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).update_drain();
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
 
     let error = handle
         .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(true, None, None))
@@ -215,7 +215,7 @@ async fn begin_update_drain_route_rejects_queued_turns() {
 #[tokio::test]
 async fn release_update_drain_route_requires_confirm() {
     let (_data_dir, state) = test_state().await;
-    let handle = crate::daemon::DaemonHandle::new(state).update_drain();
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
 
     let error = handle
         .release_update_drain_for_route(ReleaseUpdateDrainRouteRequest::new(false))
@@ -229,7 +229,7 @@ async fn release_update_drain_route_requires_confirm() {
 #[tokio::test]
 async fn shutdown_route_rejects_missing_or_invalid_local_token() {
     let (_data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
-    let handle = crate::daemon::DaemonHandle::new(state).daemon_shutdown();
+    let handle = crate::daemon::route_handles_from_state(&state).daemon_shutdown;
 
     for token in [None, Some("wrong".to_string())] {
         let error = handle
@@ -248,10 +248,10 @@ async fn shutdown_route_rejects_missing_or_invalid_local_token() {
 async fn shutdown_route_interrupts_running_scheduler_sessions() {
     let (data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
     let session = insert_session(&state, data_dir.path()).await.1;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state));
+    let handle = crate::daemon::route_handles_from_state(&state);
     let (seen_tx, mut seen_rx) = tokio::sync::mpsc::channel(1);
     handle
-        .session_message_command()
+        .session_message_command
         .ensure_scheduler_for_test(session.clone(), move |_session, mut rx| async move {
             let interrupted = matches!(rx.recv().await, Some(SchedulerCommand::Interrupt(_)));
             let _ = seen_tx.send(interrupted).await;
@@ -263,7 +263,7 @@ async fn shutdown_route_interrupts_running_scheduler_sessions() {
         .await;
 
     let result = handle
-        .daemon_shutdown()
+        .daemon_shutdown
         .request_daemon_shutdown_for_route(
             ShutdownDaemonRouteRequest::new(true, Some("unit_test_shutdown".to_string()))
                 .with_supplied_shutdown_token(Some("secret".to_string())),
@@ -288,7 +288,7 @@ async fn shutdown_route_tolerates_running_sessions_without_scheduler_sender() {
         .task_session_cleanup
         .set_running(session.id, true)
         .await;
-    let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).daemon_shutdown();
+    let handle = crate::daemon::route_handles_from_state(&state).daemon_shutdown;
 
     let result = handle
         .request_daemon_shutdown_for_route(

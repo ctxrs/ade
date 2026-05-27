@@ -124,8 +124,7 @@ async fn policy_snapshot_invalid_signature_returns_bad_request() {
     let org_id = OrgId::new();
     fixture
         .daemon()
-        .handle()
-        .org_policy()
+        .org_policy_handle_for_test()
         .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");
@@ -199,8 +198,7 @@ async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
     let org_id = OrgId::new();
     fixture
         .daemon()
-        .handle()
-        .org_policy()
+        .org_policy_handle_for_test()
         .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");
@@ -248,8 +246,7 @@ async fn workspace_policy_overlay_get_returns_null_then_stored_overlay() {
     let org_id = OrgId::new();
     fixture
         .daemon()
-        .handle()
-        .org_policy()
+        .org_policy_handle_for_test()
         .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");

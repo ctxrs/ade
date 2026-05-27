@@ -63,7 +63,7 @@ mod tests {
     #[tokio::test]
     async fn public_listing_routes_preserve_bare_status_errors() {
         let fixture = sessions_fixture().await;
-        let handle = fixture.daemon().handle().session_subagent_read();
+        let handle = fixture.daemon().session_subagent_read_handle_for_test();
 
         assert_eq!(
             list_session_subagents(State(handle.clone()), Path("not-a-session".to_string()))
@@ -122,8 +122,10 @@ mod tests {
     #[tokio::test]
     async fn mcp_subagent_routes_preserve_json_invalid_id_errors() {
         let fixture = sessions_fixture().await;
-        let handle = fixture.daemon().handle().session_subagent_mcp_control();
-        let mcp_read_handle = fixture.daemon().handle().session_subagent_mcp_read();
+        let handle = fixture
+            .daemon()
+            .session_subagent_mcp_control_handle_for_test();
+        let mcp_read_handle = fixture.daemon().session_subagent_mcp_read_handle_for_test();
 
         let err = mcp_spawn_agent(
             State(handle.clone()),

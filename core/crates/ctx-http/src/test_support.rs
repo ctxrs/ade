@@ -77,19 +77,19 @@ impl TestDaemonFixture {
     }
 
     pub(crate) fn provider_accounts(&self) -> ProviderAccountsHandle {
-        self.daemon.handle().provider_accounts()
+        self.daemon.provider_accounts_handle_for_test()
     }
 
     pub(crate) fn provider_harness_config(&self) -> ProviderHarnessConfigHandle {
-        self.daemon.handle().provider_harness_config()
+        self.daemon.provider_harness_config_handle_for_test()
     }
 
     pub(crate) fn provider_install(&self) -> ProviderInstallHandle {
-        self.daemon.handle().provider_install()
+        self.daemon.provider_install_handle_for_test()
     }
 
     pub(crate) fn settings(&self) -> SettingsHandle {
-        self.daemon.handle().settings()
+        self.daemon.settings_handle_for_test()
     }
 }
 

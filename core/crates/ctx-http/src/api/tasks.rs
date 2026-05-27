@@ -44,22 +44,22 @@ use ctx_route_contracts::tasks::{
 pub(super) fn task_api_task_session_listing_state(
     daemon: &TestDaemon,
 ) -> State<TaskSessionListingHandle> {
-    State(daemon.handle().task_session_listing())
+    State(daemon.task_session_listing_handle_for_test())
 }
 
 #[cfg(test)]
 pub(super) fn task_api_task_read_state_state(daemon: &TestDaemon) -> State<TaskReadStateHandle> {
-    State(daemon.handle().task_read_state())
+    State(daemon.task_read_state_handle_for_test())
 }
 
 #[cfg(test)]
 pub(super) fn task_api_task_title_state(daemon: &TestDaemon) -> State<TaskTitleHandle> {
-    State(daemon.handle().task_title())
+    State(daemon.task_title_handle_for_test())
 }
 
 #[cfg(test)]
 pub(super) fn task_api_lifecycle_state(daemon: &TestDaemon) -> State<TaskLifecycleHandle> {
-    State(daemon.handle().task_lifecycle())
+    State(daemon.task_lifecycle_handle_for_test())
 }
 
 fn task_route_status(error: &TaskRouteError) -> StatusCode {

@@ -50,8 +50,8 @@ async fn run_archive_route_maps_missing_workspace_to_not_found() {
             .expect("test daemon");
 
     let error = match daemon
-        .handle()
-        .run_archive()
+        .route_handles()
+        .run_archive
         .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest::new(
             RunArchiveRouteParams::new(
                 WorkspaceId::new().0.to_string(),
@@ -91,8 +91,8 @@ async fn run_archive_route_treats_deleting_workspace_as_not_found() {
     daemon.stores().begin_workspace_delete(workspace.id).await;
 
     let error = match daemon
-        .handle()
-        .run_archive()
+        .route_handles()
+        .run_archive
         .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest::new(
             RunArchiveRouteParams::new(workspace.id.0.to_string(), RunId::new().0.to_string()),
             RunArchiveBatchRouteQuery::default(),
@@ -133,8 +133,8 @@ async fn run_archive_route_maps_unavailable_workspace_store_to_internal() {
         .expect("block workspace store");
 
     let error = match daemon
-        .handle()
-        .run_archive()
+        .route_handles()
+        .run_archive
         .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest::new(
             RunArchiveRouteParams::new(workspace.id.0.to_string(), RunId::new().0.to_string()),
             RunArchiveBatchRouteQuery::default(),
@@ -171,7 +171,7 @@ async fn run_archive_route_maps_ack_conflict_to_conflict() {
         .seed_org_visible_run_archive_fixture_for_test(workspace.id, temp.path())
         .await
         .expect("seed run archive fixture");
-    let handle = daemon.handle().run_archive();
+    let handle = daemon.route_handles().run_archive;
     let response = handle
         .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest::new(
             RunArchiveRouteParams::new(workspace.id.0.to_string(), fixture.run_id.0.to_string()),

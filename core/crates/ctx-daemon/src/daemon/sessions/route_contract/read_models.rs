@@ -268,7 +268,7 @@ mod tests {
             .await
             .expect("archive subagent"));
 
-        let handle = daemon.handle().session_read_models();
+        let handle = daemon.route_handles().session_read_models;
         let snapshot = handle
             .load_session_snapshot(fixture.subagent.id, 10, true)
             .await
@@ -323,8 +323,8 @@ mod tests {
             .cache_rehydration_begin_workspace_delete_for_test(fixture.workspace.id)
             .await;
         let error = daemon
-            .handle()
-            .session_read_models()
+            .route_handles()
+            .session_read_models
             .session_head_for_route(
                 SessionRouteParams::new(fixture.session.id.0.to_string()),
                 SessionHeadRouteQuery {

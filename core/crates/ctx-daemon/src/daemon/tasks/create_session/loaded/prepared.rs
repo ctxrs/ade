@@ -154,8 +154,8 @@ mod tests {
             .expect("task");
 
         let error = daemon
-            .handle()
-            .task_session_admission()
+            .route_handles()
+            .task_session_admission
             .create_session_for_task(
                 task.id,
                 CreateTaskSessionInput {
@@ -178,7 +178,7 @@ mod tests {
             .expect_err("missing turn id should be rejected");
 
         assert!(matches!(error, TaskSessionCreateError::BadRequest));
-        let summary = daemon.handle().telemetry().perf_telemetry().summary(
+        let summary = daemon.route_handles().telemetry.perf_telemetry().summary(
             Some("compat.payload_reject_count"),
             None,
             None,

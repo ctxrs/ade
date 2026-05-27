@@ -69,7 +69,7 @@ mod tests {
     #[tokio::test]
     async fn execution_config_route_rejects_invalid_workspace_id() {
         let (_temp, daemon) = test_daemon().await;
-        let handle = daemon.handle().workspace_execution_config();
+        let handle = daemon.route_handles().workspace_execution_config;
 
         let get_error = handle
             .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(
@@ -99,7 +99,7 @@ mod tests {
     async fn execution_config_route_maps_missing_workspace_to_not_found() {
         let (_temp, daemon) = test_daemon().await;
         let missing_workspace_id = WorkspaceId::new();
-        let handle = daemon.handle().workspace_execution_config();
+        let handle = daemon.route_handles().workspace_execution_config;
 
         let get_error = handle
             .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(
@@ -130,7 +130,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let workspace = create_workspace(&daemon, "deleting-execution-config").await;
         daemon.stores().begin_workspace_delete(workspace.id).await;
-        let handle = daemon.handle().workspace_execution_config();
+        let handle = daemon.route_handles().workspace_execution_config;
 
         let get_error = handle
             .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(
@@ -165,7 +165,7 @@ mod tests {
             .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
             .await
             .expect("block workspace store");
-        let handle = daemon.handle().workspace_execution_config();
+        let handle = daemon.route_handles().workspace_execution_config;
 
         let get_error = handle
             .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(
@@ -194,8 +194,8 @@ mod tests {
     async fn execution_config_sandbox_runtime_is_available_on_non_macos() {
         let (_temp, daemon) = test_daemon().await;
         assert!(daemon
-            .handle()
-            .workspace_execution_config()
+            .route_handles()
+            .workspace_execution_config
             .sandbox_runtime_available_for_execution_config());
     }
 }

@@ -207,8 +207,8 @@ mod route_tests {
                 .expect("test daemon");
 
         let err = daemon
-            .handle()
-            .provider_accounts()
+            .route_handles()
+            .provider_accounts
             .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
             .await
             .expect_err("missing runtime should fail before session creation");
@@ -236,8 +236,8 @@ mod route_tests {
                 .expect("test daemon");
 
         let err = daemon
-            .handle()
-            .provider_accounts()
+            .route_handles()
+            .provider_accounts
             .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
             .await
             .expect_err("config parse failure should fail before session creation");

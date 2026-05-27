@@ -5,7 +5,9 @@ use super::fixtures::{
 use super::*;
 use std::collections::{HashMap, HashSet};
 
-use crate::daemon::DaemonHandle;
+use crate::daemon::{
+    route_handles_from_state, workspace_vcs_stream_with_refresh_effect_from_state,
+};
 use chrono::Utc;
 use ctx_core::ids::{
     MergeQueueEntryId, SessionEventId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId,
@@ -1576,7 +1578,7 @@ async fn handle_subscription_resolution_hydrates_active_snapshot_without_initial
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
     let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
-    let handle = DaemonHandle::new(Arc::clone(&state)).workspace_stream();
+    let handle = route_handles_from_state(&state).workspace_stream;
 
     handle
         .resolve_workspace_active_snapshot_subscriptions(
@@ -1931,8 +1933,7 @@ async fn workspace_vcs_refresh_suppresses_fresh_snapshots_and_invokes_effect_for
         }
     })
         as crate::daemon::workspace_stream_route_handles::WorkspaceVcsStreamRefreshEffect;
-    let handle = DaemonHandle::new(Arc::clone(&state))
-        .workspace_vcs_stream_with_refresh_effect(refresh_effect);
+    let handle = workspace_vcs_stream_with_refresh_effect_from_state(&state, refresh_effect);
 
     handle
         .runtime()

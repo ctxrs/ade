@@ -644,7 +644,7 @@ mod tests {
     use ctx_store::StoreManager;
 
     use crate::daemon::task_session_effects::TaskPublicationHost;
-    use crate::daemon::{DaemonHandle, DaemonState, ProtectedWorkspaceStoreLookup};
+    use crate::daemon::{route_handles_from_state, DaemonState, ProtectedWorkspaceStoreLookup};
 
     struct SessionFixture {
         store: Store,
@@ -989,7 +989,7 @@ mod tests {
             Some("feature/test".to_string()),
         )
         .await;
-        let handle = DaemonHandle::new(Arc::clone(&state)).session_control();
+        let handle = route_handles_from_state(&state).session_control;
 
         handle
             .interrupt_session(
@@ -1025,10 +1025,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state = test_state(root.path()).await;
         let fixture = create_session(Arc::clone(&state), root.path(), "dispatch", None).await;
-        let handle = DaemonHandle::new(Arc::clone(&state));
+        let handle = route_handles_from_state(&state);
         let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
         let _scheduler_tx = handle
-            .session_message_command()
+            .session_message_command
             .ensure_scheduler_for_test(
                 fixture.session.clone(),
                 move |_session, mut rx| async move {
@@ -1041,7 +1041,7 @@ mod tests {
                 },
             )
             .await;
-        let session_control = handle.session_control();
+        let session_control = handle.session_control;
 
         session_control
             .cancel_session(fixture.session.id)

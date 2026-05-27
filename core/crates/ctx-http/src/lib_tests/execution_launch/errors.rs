@@ -62,7 +62,7 @@ async fn execution_launch_start_rejects_while_maintenance_drain_active() {
     let data_dir = tempfile::tempdir().unwrap();
     let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = fixture.router();
-    let update_drain = fixture.daemon().handle().update_drain();
+    let update_drain = fixture.daemon().update_drain_handle_for_test();
     update_drain
         .begin_update_drain("test_update".to_string(), "unit_test".to_string())
         .await

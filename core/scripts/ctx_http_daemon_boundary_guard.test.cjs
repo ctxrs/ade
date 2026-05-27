@@ -1095,12 +1095,37 @@ test("route capability cutover ratchet rejects DaemonRouteHandles field access o
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+      "direct DaemonRouteHandles field access outside RouteHandles constructor",
       "DaemonRouteHandles destructuring outside RouteHandles constructor",
-      "direct DaemonRouteHandles field access outside RouteHandles constructor",
-      "direct DaemonRouteHandles field access outside RouteHandles constructor",
-      "direct DaemonRouteHandles field access outside RouteHandles constructor",
-      "direct DaemonRouteHandles field access outside RouteHandles constructor",
-      "direct DaemonRouteHandles field access outside RouteHandles constructor",
+    ],
+  );
+});
+
+test("route capability cutover ratchet rejects route_handles field access outside router assembly", () => {
+  const violations = scanRouteCapabilityCutoverRatchet({
+    filePath: "core/crates/ctx-http/src/api/tasks.rs",
+    contents: `
+      fn task_state(daemon: &TestDaemon) {
+        let _ = daemon.route_handles().task_session_listing;
+        let handles = daemon.route_handles();
+        let _ = handles.task_title;
+        let multiline = daemon
+          .route_handles();
+        let _ = multiline.task_lifecycle;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
       "direct DaemonRouteHandles field access outside RouteHandles constructor",
       "direct DaemonRouteHandles field access outside RouteHandles constructor",
       "direct DaemonRouteHandles field access outside RouteHandles constructor",
@@ -1250,6 +1275,30 @@ test("appstate daemon handle construction ratchet preserves known baseline recon
   });
 
   assert.deepEqual(violations, []);
+});
+
+test("appstate daemon handle construction ratchet rejects route factories on DaemonHandle", () => {
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      impl DaemonHandle {
+        pub fn provider_status(&self) -> ProviderStatusHandle { todo!() }
+        fn session_store_lookup(&self) -> SessionStoreLookup { todo!() }
+        pub(crate) fn workspace_stream(&self) -> WorkspaceStreamHandle { todo!() }
+        pub(crate) fn workspace_attachments_runtime(&self) -> Arc<WorkspaceAttachmentsRuntime> { todo!() }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon handle route factory method",
+      "daemon handle route factory method",
+      "daemon handle route factory method",
+      "daemon handle route factory method",
+    ],
+  );
 });
 
 test("appstate execution handle extractor ratchet rejects all HTTP routes", () => {
@@ -5206,7 +5255,7 @@ test("appstate guard rejects workspace active broad handle fields and escape hat
 
 test("appstate guard rejects workspace active assembly through broad active loader", () => {
   const violations = scanWorkspaceActiveAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_active(&self) -> WorkspaceActiveHandle {
@@ -5236,7 +5285,7 @@ test("appstate guard rejects workspace active assembly through broad active load
 
 test("appstate guard rejects workspace stream hidden full-state assembly", () => {
   const violations = scanWorkspaceStreamAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_stream(&self) -> WorkspaceStreamHandle {
@@ -5265,7 +5314,7 @@ test("appstate guard rejects workspace stream hidden full-state assembly", () =>
 
 test("appstate guard rejects worktree VCS hidden full-state assembly", () => {
   const violations = scanWorktreeVcsAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
@@ -5326,7 +5375,7 @@ test("appstate guard rejects worktree VCS hidden full-state assembly", () => {
 
 test("appstate guard accepts explicit worktree VCS assembly hosts", () => {
   const violations = scanWorktreeVcsAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {

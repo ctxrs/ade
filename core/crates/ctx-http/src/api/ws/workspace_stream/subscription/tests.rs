@@ -17,7 +17,7 @@ async fn merge_replayed_and_live_subscriptions_keeps_live_cursor_authoritative_a
         TestDaemon::new_for_test(root.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon should start");
-    let state = daemon.handle().workspace_stream();
+    let state = daemon.workspace_stream_handle_for_test();
     let replayed_session_id = SessionId::new();
     let live_only_session_id = SessionId::new();
     let removed_session_id = SessionId::new();

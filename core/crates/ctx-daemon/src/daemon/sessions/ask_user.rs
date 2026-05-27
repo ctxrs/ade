@@ -25,7 +25,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::daemon::{DaemonHandle, DaemonState};
+    use crate::daemon::{route_handles_from_state, DaemonState};
     use ctx_core::models::ExecutionEnvironment;
     use ctx_store::StoreManager;
 
@@ -96,8 +96,8 @@ mod tests {
         session_id: SessionId,
         submission: SubmitAskUserAnswer,
     ) -> Result<(), SubmitAskUserAnswerError> {
-        DaemonHandle::new(Arc::clone(state))
-            .session_control()
+        route_handles_from_state(state)
+            .session_control
             .submit_ask_user_answer(session_id, submission)
             .await
     }

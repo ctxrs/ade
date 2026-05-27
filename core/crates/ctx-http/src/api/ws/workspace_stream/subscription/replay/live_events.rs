@@ -105,7 +105,7 @@ mod tests {
             TestDaemon::new_for_test(root.path().to_path_buf(), "http://127.0.0.1:0".to_string())
                 .await
                 .expect("test daemon should start");
-        let state = daemon.handle().workspace_stream();
+        let state = daemon.workspace_stream_handle_for_test();
         let workspace_id = WorkspaceId::new();
         let task_id = TaskId::new();
         let session_id = SessionId::new();

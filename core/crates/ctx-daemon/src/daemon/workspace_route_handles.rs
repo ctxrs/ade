@@ -258,7 +258,7 @@ impl WorkspaceAttachmentsHandle {
 
 pub(in crate::daemon) type WorkspacePrimaryBranchRefreshFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
-pub(in crate::daemon) type WorkspacePrimaryBranchRefreshEffect =
+pub(crate) type WorkspacePrimaryBranchRefreshEffect =
     Arc<dyn Fn(Worktree) -> WorkspacePrimaryBranchRefreshFuture + Send + Sync>;
 
 #[derive(Clone)]

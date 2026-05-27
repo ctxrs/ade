@@ -114,7 +114,7 @@ mod tests {
         )
         .await
         .expect("test daemon");
-        (data_root, daemon.handle().repo_onboarding())
+        (data_root, daemon.route_handles().repo_onboarding)
     }
 
     #[tokio::test]

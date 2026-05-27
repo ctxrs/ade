@@ -371,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn set_session_artifacts_persists_state_and_artifacts_set_event() {
         let fixture = seeded_artifact_fixture().await;
-        let handle = fixture.daemon.handle().session_artifacts();
+        let handle = fixture.daemon.route_handles().session_artifacts;
 
         let artifacts = handle
             .set_session_artifacts_for_route_params(
@@ -433,8 +433,8 @@ mod tests {
 
         let error = fixture
             .daemon
-            .handle()
-            .session_artifacts()
+            .route_handles()
+            .session_artifacts
             .list_session_artifacts_with_missing_for_route_params(SessionRouteParams::new(
                 child.id.0.to_string(),
             ))
@@ -454,8 +454,8 @@ mod tests {
 
         let error = fixture
             .daemon
-            .handle()
-            .session_artifacts()
+            .route_handles()
+            .session_artifacts
             .list_session_artifacts_with_missing_for_route_params(SessionRouteParams::new(
                 fixture.session.id.0.to_string(),
             ))
@@ -482,8 +482,8 @@ mod tests {
 
         let error = fixture
             .daemon
-            .handle()
-            .session_artifacts()
+            .route_handles()
+            .session_artifacts
             .set_session_artifacts_for_route_params(
                 SessionRouteParams::new(fixture.session.id.0.to_string()),
                 None,
@@ -506,8 +506,8 @@ mod tests {
 
         let error = fixture
             .daemon
-            .handle()
-            .session_artifacts()
+            .route_handles()
+            .session_artifacts
             .set_session_artifacts_for_route_params(
                 SessionRouteParams::new(fixture.session.id.0.to_string()),
                 Some(context),

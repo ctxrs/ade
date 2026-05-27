@@ -57,7 +57,7 @@ async fn delete_queued_message_removes_state_and_does_not_spawn_scheduler() -> a
     let message_id = daemon
         .seed_global_id_routing_queued_message_for_test(session.id, "queued")
         .await?;
-    let handle = daemon.handle().session_message_command();
+    let handle = daemon.route_handles().session_message_command;
     assert!(handle.scheduler_sender(session.id).await.is_none());
 
     handle
@@ -82,7 +82,7 @@ async fn delete_queued_message_notifies_existing_scheduler() -> anyhow::Result<(
     let message_id = daemon
         .seed_global_id_routing_queued_message_for_test(session.id, "queued")
         .await?;
-    let handle = daemon.handle().session_message_command();
+    let handle = daemon.route_handles().session_message_command;
     let mut commands = capture_scheduler_commands(&handle, session.clone()).await;
 
     handle
@@ -107,7 +107,7 @@ async fn post_user_message_publishes_event_and_titles_only_first_message() -> an
         .ensure_workspace_active_snapshot_hydrated(session.workspace_id)
         .await
         .expect("hydrate workspace active snapshot");
-    let handle = daemon.handle().session_message_command();
+    let handle = daemon.route_handles().session_message_command;
     let mut commands = capture_scheduler_commands(&handle, session.clone()).await;
     let mut event_head_rx = handle
         .subscribe_session_event_head_for_test(session.id)

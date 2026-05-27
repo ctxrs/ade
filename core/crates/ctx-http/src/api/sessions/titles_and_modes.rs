@@ -65,8 +65,7 @@ mod tests {
         crate::test_support::TestDaemonFixture::new("http://127.0.0.1:0")
             .await
             .daemon()
-            .handle()
-            .session_title_model_mode()
+            .session_title_model_mode_handle_for_test()
     }
 
     #[tokio::test]
