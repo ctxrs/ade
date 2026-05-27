@@ -229,9 +229,11 @@ const {
   scanRepoOnboardingRouteExtractorRatchet,
   scanWorkspaceRouteHandleDefinitionFiles,
   scanResourceUtilizationDaemonImplementationRatchet,
+  scanResourceUtilizationHandleDefinitionFiles,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
   scanRunArchiveDaemonImplementationRatchet,
+  scanRunArchiveHandleDefinitionFiles,
   scanRunArchiveHandleFieldRatchet,
   scanRunArchiveRouteExtractorRatchet,
   scanWorkspaceOrgPolicyDaemonImplementationRatchet,
@@ -5371,7 +5373,7 @@ test("appstate guard rejects resource utilization daemon facade broad seams", ()
 
 test("appstate guard rejects resource utilization broad handle fields", () => {
   const fieldViolations = scanResourceUtilizationHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/resource_utilization_route_handles.rs",
     contents: `
       pub struct ResourceUtilizationHandle {
         workspaces: WorkspacesHandle,
@@ -5393,7 +5395,7 @@ test("appstate guard rejects resource utilization broad handle fields", () => {
   );
 
   const narrowViolations = scanResourceUtilizationHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/resource_utilization_route_handles.rs",
     contents: `
       pub struct ResourceUtilizationHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
@@ -5404,6 +5406,27 @@ test("appstate guard rejects resource utilization broad handle fields", () => {
   });
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard scans moved resource utilization handle definition file", () => {
+  const violations = scanResourceUtilizationHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (
+        relativePath !==
+        "core/crates/ctx-daemon/src/daemon/resource_utilization_route_handles.rs"
+      ) {
+        return null;
+      }
+      return `
+        pub struct ResourceUtilizationHandle {
+          workspaces: WorkspacesHandle,
+          state: Arc<DaemonState>,
+        }
+      `;
+    },
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("resource utilization capability stores broad handle or daemon state"));
 });
 
 test("appstate guard rejects repo onboarding route extraction outside repo routes", () => {
@@ -5778,7 +5801,7 @@ test("appstate guard rejects run archive daemon facade broad seams", () => {
 
 test("appstate guard rejects run archive broad handle fields", () => {
   const fieldViolations = scanRunArchiveHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/run_archive_route_handles.rs",
     contents: `
       pub struct RunArchiveHandle {
         workspaces: WorkspacesHandle,
@@ -5794,7 +5817,7 @@ test("appstate guard rejects run archive broad handle fields", () => {
   );
 
   const narrowViolations = scanRunArchiveHandleFieldRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/run_archive_route_handles.rs",
     contents: `
       pub struct RunArchiveHandle {
         workspace_stores: ProtectedWorkspaceStoreLookup,
@@ -5803,6 +5826,24 @@ test("appstate guard rejects run archive broad handle fields", () => {
   });
 
   assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard scans moved run archive handle definition file", () => {
+  const violations = scanRunArchiveHandleDefinitionFiles({
+    readFileForRelativePath(relativePath) {
+      if (relativePath !== "core/crates/ctx-daemon/src/daemon/run_archive_route_handles.rs") {
+        return null;
+      }
+      return `
+        pub struct RunArchiveHandle {
+          workspaces: WorkspacesHandle,
+          state: Arc<DaemonState>,
+        }
+      `;
+    },
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("run archive capability stores broad handle or daemon state"));
 });
 
 test("appstate guard rejects workspace org policy route extraction outside overlay route", () => {

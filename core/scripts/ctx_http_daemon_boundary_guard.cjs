@@ -657,6 +657,14 @@ const maintenanceRouteHandleDefinitionPaths = new Set([
 const mobileRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/mobile_route_handles.rs",
 ]);
+const resourceUtilizationHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_utilization_route_handles.rs",
+]);
+const runArchiveHandleDefinitionPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/run_archive_route_handles.rs",
+]);
 const launchRouteHandleDefinitionPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   daemonLaunchRouteHandlesRelativePath,
@@ -13709,7 +13717,7 @@ function scanResourceUtilizationDaemonImplementationRatchet({ filePath, contents
 }
 
 function scanResourceUtilizationHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!resourceUtilizationHandleDefinitionPaths.has(filePath)) {
     return [];
   }
 
@@ -13760,6 +13768,31 @@ function scanResourceUtilizationHandleFieldRatchet({ filePath, contents }) {
     });
   }
 
+  return violations;
+}
+
+function scanResourceUtilizationHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  for (const relativePath of resourceUtilizationHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    violations.push(
+      ...scanResourceUtilizationHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
   return violations;
 }
 
@@ -14406,7 +14439,7 @@ function scanRunArchiveDaemonImplementationRatchet({ filePath, contents }) {
 }
 
 function scanRunArchiveHandleFieldRatchet({ filePath, contents }) {
-  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+  if (!runArchiveHandleDefinitionPaths.has(filePath)) {
     return [];
   }
 
@@ -14457,6 +14490,31 @@ function scanRunArchiveHandleFieldRatchet({ filePath, contents }) {
     });
   }
 
+  return violations;
+}
+
+function scanRunArchiveHandleDefinitionFiles({
+  readFileForRelativePath = (relativePath) => {
+    const filePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath, "utf8");
+  },
+} = {}) {
+  const violations = [];
+  for (const relativePath of runArchiveHandleDefinitionPaths) {
+    const contents = readFileForRelativePath(relativePath);
+    if (contents === null || contents === undefined) {
+      continue;
+    }
+    violations.push(
+      ...scanRunArchiveHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
   return violations;
 }
 
@@ -17315,6 +17373,8 @@ function scanRepo() {
   }
   violations.push(...scanMaintenanceRouteHandleDefinitionFiles());
   violations.push(...scanMobileRouteHandleDefinitionFiles());
+  violations.push(...scanResourceUtilizationHandleDefinitionFiles());
+  violations.push(...scanRunArchiveHandleDefinitionFiles());
   violations.push(...scanRepoOnboardingHandleDefinitionFiles());
   violations.push(
     ...scanWorkspaceRouteHandleDefinitionFiles({
@@ -18244,9 +18304,11 @@ module.exports = {
   scanRepoOnboardingRouteExtractorRatchet,
   scanWorkspaceRouteHandleDefinitionFiles,
   scanResourceUtilizationDaemonImplementationRatchet,
+  scanResourceUtilizationHandleDefinitionFiles,
   scanResourceUtilizationHandleFieldRatchet,
   scanResourceUtilizationRouteExtractorRatchet,
   scanRunArchiveDaemonImplementationRatchet,
+  scanRunArchiveHandleDefinitionFiles,
   scanRunArchiveHandleFieldRatchet,
   scanRunArchiveRouteExtractorRatchet,
   scanWorkspaceOrgPolicyDaemonImplementationRatchet,

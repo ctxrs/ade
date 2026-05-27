@@ -48,16 +48,19 @@ pub mod repo_onboarding;
 pub mod resource_governance;
 pub mod resource_telemetry;
 pub mod resource_utilization;
+mod resource_utilization_route_handles;
 mod retention;
 mod route_capabilities;
 mod route_files;
 mod route_handles;
+mod run_archive_route_handles;
 mod runtime;
 pub mod scheduler;
 mod session_control_effects;
 mod session_route_handles;
 pub mod sessions;
 pub mod settings;
+mod settings_route_handles;
 mod state;
 pub mod storage_guard;
 mod task_route_handles;
@@ -87,7 +90,7 @@ pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub(in crate::daemon) use git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
 pub(crate) use handle::route_handles_from_state;
-pub use handle::{DaemonHandle, ResourceUtilizationHandle, RunArchiveHandle, SettingsHandle};
+pub use handle::DaemonHandle;
 pub use health::HealthSnapshotError;
 pub(in crate::daemon) use launch_route_handles::ProviderWorkspaceLaunchRuntime;
 pub use launch_route_handles::{
@@ -113,6 +116,7 @@ pub use provider_route_handles::{
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle,
 };
+pub use resource_utilization_route_handles::ResourceUtilizationHandle;
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal};
@@ -121,6 +125,7 @@ pub use route_handles::{
     AuthHandle, DiagnosticsHandle, DictationHandle, HealthHandle, LogsHandle, MobileStoreHandle,
     OrgPolicyHandle, RepoOnboardingHandle, RequestBaseHandle, TelemetryHandle, UpdateReleaseHandle,
 };
+pub use run_archive_route_handles::RunArchiveHandle;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use session_control_effects::SessionControlHandle;
 pub use session_route_handles::{
@@ -131,6 +136,7 @@ pub use session_route_handles::{
 pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;
+pub use settings_route_handles::SettingsHandle;
 pub(in crate::daemon) use state::{
     session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
     WeakSessionStoreLookup,

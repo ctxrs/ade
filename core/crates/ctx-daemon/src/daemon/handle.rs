@@ -6,16 +6,10 @@ use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
 };
-use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-use ctx_observability::telemetry::Telemetry;
-use ctx_provider_runtime::ProviderRuntime;
-use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
-use ctx_resource_utilization::ResourceSampler;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_session_vcs_service::vcs::SessionVcsDiffBaseQuery;
-use ctx_store::Store;
-use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_worktree_vcs_service::{WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseQuery};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
 use crate::daemon::sessions::title_generation::{
     TitleGenerationLocalHandle, TitleGenerationLocalInstallEffect,
@@ -50,12 +44,14 @@ use super::{
         ProviderOptionsHandle, ProviderStatusHandle, ProviderUsageHandle,
         ProviderWorkspaceAuthHandle,
     },
+    resource_utilization_route_handles::ResourceUtilizationHandle,
     route_capabilities::{DaemonRouteHandles, DaemonShutdownSignal},
     route_handles::{
         AuthHandle, DiagnosticsHandle, DictationHandle, HealthHandle, LogsHandle,
         MobileStoreHandle, OrgPolicyHandle, RepoOnboardingHandle, RequestBaseHandle,
         TelemetryHandle, UpdateReleaseHandle,
     },
+    run_archive_route_handles::RunArchiveHandle,
     session_control_effects::{SessionControlHandle, SessionControlHandleParts},
     session_route_handles::{
         SessionArtifactEffects, SessionArtifactsHandle, SessionFileCompletionsHandle,
@@ -65,6 +61,7 @@ use super::{
         SessionTitleModelModeHandleParts, SessionVcsEffects, SessionVcsEffectsParts,
         SessionVcsFuture, SessionVcsHandle,
     },
+    settings_route_handles::SettingsHandle,
     state::{
         DaemonState, ProtectedWorkspaceStoreLookup, SessionStoreLookup, TaskStoreLookup,
         WeakSessionStoreLookup,
@@ -1514,128 +1511,5 @@ impl DaemonHandle {
             shutdown_signal: self.state.core.shutdown_tx.clone(),
         });
         DaemonShutdownHandle::new(self.state.core.local_shutdown_token.clone(), shutdown_host)
-    }
-}
-
-#[derive(Clone)]
-pub struct SettingsHandle {
-    store: Store,
-    telemetry: Telemetry,
-    perf_telemetry: PerfTelemetry,
-    resource_sampler: Arc<Mutex<ResourceSampler>>,
-    resource_governance: Arc<Mutex<ResourceGovernanceRuntime>>,
-    providers: Arc<ProviderRuntime>,
-    terminals: Arc<TerminalManager>,
-}
-
-impl SettingsHandle {
-    pub(in crate::daemon) fn new(
-        store: Store,
-        telemetry: Telemetry,
-        perf_telemetry: PerfTelemetry,
-        resource_sampler: Arc<Mutex<ResourceSampler>>,
-        resource_governance: Arc<Mutex<ResourceGovernanceRuntime>>,
-        providers: Arc<ProviderRuntime>,
-        terminals: Arc<TerminalManager>,
-    ) -> Self {
-        Self {
-            store,
-            telemetry,
-            perf_telemetry,
-            resource_sampler,
-            resource_governance,
-            providers,
-            terminals,
-        }
-    }
-
-    pub(in crate::daemon) fn store(&self) -> &Store {
-        &self.store
-    }
-
-    pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
-        &self.telemetry
-    }
-
-    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
-        &self.perf_telemetry
-    }
-
-    pub(in crate::daemon) fn resource_sampler(&self) -> &Mutex<ResourceSampler> {
-        self.resource_sampler.as_ref()
-    }
-
-    pub(in crate::daemon) fn resource_governance(&self) -> &Mutex<ResourceGovernanceRuntime> {
-        self.resource_governance.as_ref()
-    }
-
-    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
-        self.providers.as_ref()
-    }
-
-    pub(in crate::daemon) fn terminals(&self) -> &TerminalManager {
-        self.terminals.as_ref()
-    }
-}
-
-#[derive(Clone)]
-pub struct RunArchiveHandle {
-    workspace_stores: ProtectedWorkspaceStoreLookup,
-}
-
-impl RunArchiveHandle {
-    pub(in crate::daemon) fn new(workspace_stores: ProtectedWorkspaceStoreLookup) -> Self {
-        Self { workspace_stores }
-    }
-
-    pub(in crate::daemon) async fn existing_workspace_store(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
-        self.workspace_stores
-            .existing_workspace_store(workspace_id)
-            .await
-    }
-}
-
-#[derive(Clone)]
-pub struct ResourceUtilizationHandle {
-    workspace_stores: ProtectedWorkspaceStoreLookup,
-    providers: Arc<ProviderRuntime>,
-    resource_sampler: Arc<Mutex<ResourceSampler>>,
-}
-
-impl ResourceUtilizationHandle {
-    pub(in crate::daemon) fn new(
-        workspace_stores: ProtectedWorkspaceStoreLookup,
-        providers: Arc<ProviderRuntime>,
-        resource_sampler: Arc<Mutex<ResourceSampler>>,
-    ) -> Self {
-        Self {
-            workspace_stores,
-            providers,
-            resource_sampler,
-        }
-    }
-
-    pub(in crate::daemon) fn global_store(&self) -> &Store {
-        self.workspace_stores.global_store()
-    }
-
-    pub(in crate::daemon) async fn existing_workspace_store(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
-        self.workspace_stores
-            .existing_workspace_store(workspace_id)
-            .await
-    }
-
-    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
-        self.providers.as_ref()
-    }
-
-    pub(in crate::daemon) fn resource_sampler(&self) -> &Mutex<ResourceSampler> {
-        self.resource_sampler.as_ref()
     }
 }
