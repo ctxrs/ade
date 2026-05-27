@@ -255,6 +255,33 @@ test("final tail route handle split modules have line-cap ratchets", () => {
   );
 });
 
+test("route builder split modules have line-cap ratchets", () => {
+  const rootDir = makeRoot();
+  const cappedPaths = [
+    "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/execution.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/providers.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/transport.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+  ];
+  for (const cappedPath of cappedPaths) {
+    const capped = RATCHETED_FILE_LIMITS.find((entry) => entry.path === cappedPath);
+    assert.ok(capped, `expected ${cappedPath} to have a line cap`);
+    writeFile(rootDir, capped.path, lines(capped.limit + 1));
+  }
+
+  const violations = checkRatchetedFileCaps(rootDir);
+
+  assert.deepEqual(
+    violations.map((entry) => entry.path).sort(),
+    cappedPaths.sort(),
+  );
+});
+
 test("cargo dependency parser finds simple dependencies, package aliases, and dependency tables", () => {
   const dependencies = parseCargoDependencies(`
     [package]

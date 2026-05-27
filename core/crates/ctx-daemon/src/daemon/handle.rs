@@ -1,24 +1,22 @@
-use std::sync::Arc;
-
 use tokio::sync::broadcast;
 
-use super::{route_capabilities::DaemonShutdownSignal, state::DaemonState};
+use super::route_capabilities::DaemonShutdownSignal;
 
 #[derive(Clone)]
 pub struct DaemonHandle {
-    state: Arc<DaemonState>,
+    shutdown_tx: broadcast::Sender<()>,
 }
 
 impl DaemonHandle {
-    pub fn new(state: Arc<DaemonState>) -> Self {
-        Self { state }
+    pub fn new(shutdown_tx: broadcast::Sender<()>) -> Self {
+        Self { shutdown_tx }
     }
 
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
-        self.state.core.shutdown_tx.subscribe()
+        self.shutdown_tx.subscribe()
     }
 
     pub fn shutdown_signal(&self) -> DaemonShutdownSignal {
-        DaemonShutdownSignal::new(self.state.core.shutdown_tx.clone())
+        DaemonShutdownSignal::new(self.shutdown_tx.clone())
     }
 }

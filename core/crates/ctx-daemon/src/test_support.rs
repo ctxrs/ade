@@ -633,7 +633,7 @@ impl TestDaemon {
     }
 
     pub fn handle(&self) -> DaemonHandle {
-        DaemonHandle::new(Arc::clone(&self.state))
+        DaemonHandle::new(self.state.core.shutdown_tx.clone())
     }
 
     pub fn route_handles(&self) -> DaemonRouteHandles {

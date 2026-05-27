@@ -16,8 +16,9 @@ const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src"
 const daemonRoot = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon");
 const daemonRootPath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon.rs");
 const daemonHandlePath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon", "handle.rs");
-const daemonRouteBuildersRelativePath =
-  "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs";
+const daemonRouteBuildersRelativeRoot =
+  "core/crates/ctx-daemon/src/daemon/route_builders/";
+const daemonRouteBuildersRelativePath = `${daemonRouteBuildersRelativeRoot}mod.rs`;
 const daemonTaskRouteHandlesPath = path.join(
   coreRoot,
   "crates",
@@ -161,6 +162,110 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
 ]);
 const daemonStateBoundaryAllowedAppStatePaths = new Set([]);
+const daemonStateBucketAccessBaseline = new Map(
+  `
+1 core/crates/ctx-daemon/src/daemon/activity/collect.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|transport|state.transport
+2 core/crates/ctx-daemon/src/daemon/activity/turns.rs|core|state.core
+7 core/crates/ctx-daemon/src/daemon/execution_setup.rs|core|state.core
+6 core/crates/ctx-daemon/src/daemon/execution_setup.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs|providers|state.providers
+2 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|providers|state.providers
+7 core/crates/ctx-daemon/src/daemon/maintenance.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/maintenance.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/maintenance.rs|transport|state.transport
+2 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|self.state.core
+1 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|state.core
+3 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs|telemetry|state.telemetry
+3 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|telemetry|state.telemetry
+2 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|transport|state.transport
+1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|workspaces|state.workspaces
+1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/sessions.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/workspaces.rs|workspaces|state.workspaces
+1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|session_publication|state.session_publication
+1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|transport|state.transport
+2 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|transport|state.transport
+1 core/crates/ctx-daemon/src/daemon/provider_guard.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/provider_guard.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|session_publication|state.session_publication
+1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/provider_guard/snapshot.rs|core|state.core
+3 core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/provider_restart.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/provider_restart.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs|session_publication|state.session_publication
+2 core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs|providers|state.providers
+2 core/crates/ctx-daemon/src/daemon/providers/harness_config.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/providers/options_cache.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/providers/restarts.rs|providers|state.providers
+1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|providers|state.providers
+4 core/crates/ctx-daemon/src/daemon/resource_governance.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|transport|state.transport
+3 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|providers|state.providers
+2 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/runtime.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/runtime.rs|telemetry|state.telemetry
+2 core/crates/ctx-daemon/src/daemon/runtime.rs|transport|state.transport
+1 core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/scheduler/reconcile/provider_exit.rs|session_publication|state.session_publication
+1 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|core|state.core
+3 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|sessions|state.sessions
+3 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|transport|state.transport
+1 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|workspaces|state.workspaces
+4 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|task_session_cleanup|state.task_session_cleanup
+1 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|session_publication|state.session_publication
+1 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|session_scheduler_worker_host|state.session_scheduler_worker_host
+2 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|session_publication|state.session_publication
+1 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|sessions|state.sessions
+2 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|task_publication|state.task_publication
+2 core/crates/ctx-daemon/src/daemon/settings.rs|telemetry|state.telemetry
+5 core/crates/ctx-daemon/src/daemon/storage_guard.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|sessions|state.sessions
+1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|telemetry|state.telemetry
+2 core/crates/ctx-daemon/src/daemon/tool_cgroup.rs|telemetry|state.telemetry
+1 core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs|workspaces|state.workspaces
+2 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|core|state.core
+1 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|execution|state.execution
+1 core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs|core|state.core
+2 core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs|core|state.core
+`
+    .trim()
+    .split(/\n/u)
+    .map((line) => {
+      const match = /^(\d+)\s+(.+)$/u.exec(line);
+      return [match[2], Number.parseInt(match[1], 10)];
+    }),
+);
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
   "core/crates/ctx-http/src/api/tasks/",
@@ -7810,9 +7915,18 @@ function isAllowedDaemonHandleSurfacePath(filePath) {
     || filePath.includes("/fixtures/");
 }
 
+function isDaemonRouteBuilderPath(filePath) {
+  return filePath.startsWith(daemonRouteBuildersRelativeRoot) && filePath.endsWith(".rs");
+}
+
+function isDaemonStatePrivateGraphPath(filePath) {
+  return filePath === "core/crates/ctx-daemon/src/daemon/state.rs"
+    || filePath.startsWith("core/crates/ctx-daemon/src/daemon/state/");
+}
+
 function isDaemonRouteAssemblyPath(filePath) {
   return filePath === "core/crates/ctx-daemon/src/daemon/handle.rs"
-    || filePath === daemonRouteBuildersRelativePath;
+    || isDaemonRouteBuilderPath(filePath);
 }
 
 function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
@@ -10541,7 +10655,7 @@ function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
 }
 
 function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== daemonRouteBuildersRelativePath) {
+  if (!isDaemonRouteBuilderPath(filePath)) {
     return [];
   }
 
@@ -10597,7 +10711,7 @@ function scanWorkspaceStreamAssemblyRatchet({ filePath, contents }) {
 }
 
 function scanWorktreeVcsAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== daemonRouteBuildersRelativePath) {
+  if (!isDaemonRouteBuilderPath(filePath)) {
     return [];
   }
 
@@ -13692,7 +13806,7 @@ function scanWorkspaceActiveHandleFieldRatchet({ filePath, contents }) {
 }
 
 function scanWorkspaceActiveAssemblyRatchet({ filePath, contents }) {
-  if (filePath !== daemonRouteBuildersRelativePath) {
+  if (!isDaemonRouteBuilderPath(filePath)) {
     return [];
   }
 
@@ -17000,6 +17114,147 @@ function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+const daemonStateBucketNames = [
+  "core",
+  "sessions",
+  "workspaces",
+  "providers",
+  "telemetry",
+  "transport",
+  "execution",
+  "session_publication",
+  "task_publication",
+  "task_session_cleanup",
+  "session_scheduler_worker_host",
+];
+
+function maskRustCommentsAndStrings(contents) {
+  let masked = "";
+  let index = 0;
+  let mode = "code";
+  while (index < contents.length) {
+    const char = contents[index];
+    const next = contents[index + 1];
+
+    if (mode === "code") {
+      if (char === "/" && next === "/") {
+        masked += "  ";
+        index += 2;
+        mode = "line-comment";
+        continue;
+      }
+      if (char === "/" && next === "*") {
+        masked += "  ";
+        index += 2;
+        mode = "block-comment";
+        continue;
+      }
+      if (char === '"') {
+        masked += " ";
+        index += 1;
+        mode = "string";
+        continue;
+      }
+      masked += char;
+      index += 1;
+      continue;
+    }
+
+    if (mode === "line-comment") {
+      masked += char === "\n" ? "\n" : " ";
+      index += 1;
+      if (char === "\n") {
+        mode = "code";
+      }
+      continue;
+    }
+
+    if (mode === "block-comment") {
+      if (char === "*" && next === "/") {
+        masked += "  ";
+        index += 2;
+        mode = "code";
+      } else {
+        masked += char === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      continue;
+    }
+
+    if (mode === "string") {
+      if (char === "\\") {
+        masked += next === "\n" ? " \n" : "  ";
+        index += 2;
+        continue;
+      }
+      if (char === '"') {
+        masked += " ";
+        index += 1;
+        mode = "code";
+        continue;
+      }
+      masked += char === "\n" ? "\n" : " ";
+      index += 1;
+    }
+  }
+
+  return masked;
+}
+
+function scanDaemonStateBucketAccessRatchet({
+  filePath,
+  contents,
+  bucketAccessBaseline = daemonStateBucketAccessBaseline,
+}) {
+  if (
+    !filePath.startsWith("core/crates/ctx-daemon/src/daemon/")
+    || isTestRustPath(filePath)
+    || isDaemonStatePrivateGraphPath(filePath)
+    || isDaemonRouteBuilderPath(filePath)
+  ) {
+    return [];
+  }
+
+  const masked = maskRustCommentsAndStrings(contents);
+  const rawLines = contents.split(/\r?\n/u);
+  const bucketAccessRegex = new RegExp(
+    String.raw`\b(?:(?:self|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?:state|daemon_state)\s*\.\s*(${daemonStateBucketNames.join("|")})\b`,
+    "gu",
+  );
+  const observed = new Map();
+  for (
+    let match = bucketAccessRegex.exec(masked);
+    match;
+    match = bucketAccessRegex.exec(masked)
+  ) {
+    const expression = match[0].replace(/\s+/gu, "");
+    const key = `${filePath}|${match[1]}|${expression}`;
+    const line = masked.slice(0, match.index).split(/\r?\n/u).length;
+    const current = observed.get(key) ?? {
+      count: 0,
+      line,
+      text: rawLines[line - 1]?.trim() ?? expression,
+    };
+    current.count += 1;
+    observed.set(key, current);
+  }
+
+  const violations = [];
+  for (const [key, entry] of observed.entries()) {
+    const allowedCount = bucketAccessBaseline.get(key) ?? 0;
+    if (entry.count <= allowedCount) {
+      continue;
+    }
+    violations.push({
+      filePath,
+      line: entry.line,
+      name: "daemon state bucket access grows private startup graph",
+      text: `${entry.text} (${entry.count} > ${allowedCount})`,
+    });
+  }
+  return violations;
+}
+
 function daemonStateBoundaryLineForIndex(contents, index) {
   return contents.slice(0, index).split(/\r?\n/u).length;
 }
@@ -17045,7 +17300,11 @@ function scanDaemonStateBoundaryRatchet({
     });
   }
 
-  if (isTestRustPath(filePath) || broadPathBaseline.has(filePath)) {
+  if (
+    isTestRustPath(filePath)
+    || isDaemonRouteBuilderPath(filePath)
+    || broadPathBaseline.has(filePath)
+  ) {
     return violations;
   }
 
@@ -17655,6 +17914,10 @@ function scanRepo() {
         contents,
       }),
       ...scanDaemonStateBoundaryRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanDaemonStateBucketAccessRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -18523,6 +18786,7 @@ module.exports = {
   scanDeletedBroadDomainHandleRatchet,
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
+  scanDaemonStateBucketAccessRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,

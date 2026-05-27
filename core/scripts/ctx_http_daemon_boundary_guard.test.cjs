@@ -196,6 +196,7 @@ const {
   scanDeletedBroadDomainHandleRatchet,
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
+  scanDaemonStateBucketAccessRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
@@ -728,6 +729,94 @@ test("daemon state boundary ratchet allows current broad baseline files", () => 
           use crate::daemon::DaemonState;
           impl DaemonState {
             pub fn current_baseline_fixture(&self) {}
+          }
+        `,
+      }),
+      [],
+    );
+  }
+});
+
+test("daemon state boundary ratchet allows split route-builder assembly files", () => {
+  assert.deepEqual(
+    scanDaemonStateBoundaryRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+      contents: `
+        use std::sync::Arc;
+        use crate::daemon::state::DaemonState;
+
+        impl RouteBuilder {
+          pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+            let state: Arc<DaemonState> = Arc::clone(&self.state);
+            todo!()
+          }
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("daemon state bucket access ratchet rejects new direct bucket access", () => {
+  const violations = scanDaemonStateBucketAccessRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/new_runtime.rs",
+    bucketAccessBaseline: new Map(),
+    contents: `
+      fn build(state: &DaemonState, daemon_state: &DaemonState) {
+        let _ = state.providers.clone();
+        let _ = self.state.core.stores.clone();
+        let _ = Arc::clone(&daemon_state.sessions);
+        let _ = &state.transport;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon state bucket access grows private startup graph",
+      "daemon state bucket access grows private startup graph",
+      "daemon state bucket access grows private startup graph",
+      "daemon state bucket access grows private startup graph",
+    ],
+  );
+  assert(violations.some((violation) => violation.text.includes("state.providers")));
+  assert(violations.some((violation) => violation.text.includes("self.state.core")));
+  assert(violations.some((violation) => violation.text.includes("daemon_state.sessions")));
+  assert(violations.some((violation) => violation.text.includes("state.transport")));
+});
+
+test("daemon state bucket access ratchet preserves baseline counts and ignores comments", () => {
+  const key = "core/crates/ctx-daemon/src/daemon/workspaces/existing.rs|core|state.core";
+  assert.deepEqual(
+    scanDaemonStateBucketAccessRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/workspaces/existing.rs",
+      bucketAccessBaseline: new Map([[key, 1]]),
+      contents: `
+        fn build(state: &DaemonState) {
+          let _ = state.core.stores.clone();
+          // state.providers must not count in comments
+          let _ = "state.sessions must not count in strings";
+        }
+      `,
+    }),
+    [],
+  );
+});
+
+test("daemon state bucket access ratchet allows private state graph internals", () => {
+  for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/state.rs",
+    "core/crates/ctx-daemon/src/daemon/state/builder.rs",
+  ]) {
+    assert.deepEqual(
+      scanDaemonStateBucketAccessRatchet({
+        filePath,
+        bucketAccessBaseline: new Map(),
+        contents: `
+          fn build(state: &DaemonState) {
+            let _ = state.core.stores.clone();
+            let _ = Arc::clone(&state.providers);
           }
         `,
       }),
@@ -5255,7 +5344,7 @@ test("appstate guard rejects workspace active broad handle fields and escape hat
 
 test("appstate guard rejects workspace active assembly through broad active loader", () => {
   const violations = scanWorkspaceActiveAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_active(&self) -> WorkspaceActiveHandle {
@@ -5285,7 +5374,7 @@ test("appstate guard rejects workspace active assembly through broad active load
 
 test("appstate guard rejects workspace stream hidden full-state assembly", () => {
   const violations = scanWorkspaceStreamAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_stream(&self) -> WorkspaceStreamHandle {
@@ -5314,7 +5403,7 @@ test("appstate guard rejects workspace stream hidden full-state assembly", () =>
 
 test("appstate guard rejects worktree VCS hidden full-state assembly", () => {
   const violations = scanWorktreeVcsAssemblyRatchet({
-    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
     contents: `
       impl DaemonHandle {
         pub fn workspace_primary_branch(&self) -> WorkspacePrimaryBranchHandle {
