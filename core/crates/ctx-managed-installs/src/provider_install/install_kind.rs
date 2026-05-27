@@ -2,7 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn install_provider_release(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     requested_target_label: &str,

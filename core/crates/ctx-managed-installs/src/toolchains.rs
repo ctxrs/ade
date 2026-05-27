@@ -95,7 +95,7 @@ pub fn install_dir_for_provider(
 }
 
 pub async fn ensure_node_runtime(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     data_root: &Path,

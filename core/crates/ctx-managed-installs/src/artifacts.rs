@@ -112,7 +112,7 @@ pub(crate) fn agent_server_download_tmp_name(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn install_agent_server_url_binary(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     event_provider_id: &str,

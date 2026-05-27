@@ -14,7 +14,7 @@ pub enum ProviderStatusResponseError {
 }
 
 pub async fn refresh_provider_statuses(
-    state: &ctx_managed_installs::AppState,
+    state: &ctx_managed_installs::ManagedInstallHostObject,
 ) -> anyhow::Result<()> {
     ctx_managed_installs::refresh_provider_statuses(state).await
 }

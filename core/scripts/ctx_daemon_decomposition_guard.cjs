@@ -283,6 +283,7 @@ const DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS = [
   "is_transient_store_open_error",
   "scoped_mcp_session_store_error",
 ];
+const MANAGED_INSTALLS_SRC_ROOT = "core/crates/ctx-managed-installs/src";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -720,6 +721,29 @@ const checkHeadProjectionPurity = (rootDir) => {
   return violations;
 };
 
+const checkManagedInstallsAppStateAlias = (rootDir) => {
+  const srcRoot = path.join(rootDir, MANAGED_INSTALLS_SRC_ROOT);
+  const violations = [];
+  for (const absolutePath of walkFiles(srcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    const appStatePattern = /\bAppState\b/gu;
+    for (
+      let match = appStatePattern.exec(contents);
+      match;
+      match = appStatePattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "managed_installs_app_state_alias",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message: "ctx-managed-installs must not use the AppState name; use ManagedInstallHostObject or a narrower host trait.",
+      });
+    }
+  }
+  return violations;
+};
+
 const checkCtxHttpCliOnlyServiceUsage = (rootDir) => {
   const srcRoot = path.join(rootDir, "core", "crates", "ctx-http", "src");
   const violations = [];
@@ -837,6 +861,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkRatchetedFileCaps(rootDir),
     ...checkCargoDependencyDirection(rootDir),
     ...checkHeadProjectionPurity(rootDir),
+    ...checkManagedInstallsAppStateAlias(rootDir),
     ...checkCtxHttpCliOnlyServiceUsage(rootDir),
     ...checkDaemonRootRouteFacades(rootDir),
     ...checkDaemonHandleStoreLookupOwnership(rootDir),
@@ -902,6 +927,7 @@ module.exports = {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
+  checkManagedInstallsAppStateAlias,
   checkRatchetedFileCaps,
   countLines,
   evaluateDecompositionBoundaries,

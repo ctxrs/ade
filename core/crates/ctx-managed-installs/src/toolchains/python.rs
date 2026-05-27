@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn ensure_python_runtime_versioned(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     data_root: &Path,

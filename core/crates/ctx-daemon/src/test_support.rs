@@ -4067,7 +4067,7 @@ impl TestDaemon {
         provider_id: String,
         target: InstallTarget,
     ) -> anyhow::Result<()> {
-        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        let state: Arc<ctx_managed_installs::ManagedInstallHostObject> = self.state.clone();
         ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
             .await
     }
@@ -4078,7 +4078,7 @@ impl TestDaemon {
         provider_id: String,
         target: InstallTarget,
     ) -> anyhow::Result<()> {
-        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        let state: Arc<ctx_managed_installs::ManagedInstallHostObject> = self.state.clone();
         ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
             .await
     }

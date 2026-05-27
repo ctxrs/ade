@@ -2,7 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn install_managed_npm_provider(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     package: &str,
@@ -74,7 +74,7 @@ pub(super) async fn install_managed_npm_provider(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn install_managed_archive_provider(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     version: &str,
@@ -124,7 +124,7 @@ pub(super) async fn install_managed_archive_provider(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn install_managed_python_provider(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     package: &str,

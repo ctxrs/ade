@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn install_managed_npm_dependency(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     dependency_id: &str,
@@ -107,7 +107,7 @@ pub(super) async fn install_managed_npm_dependency(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn install_managed_archive_dependency(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     dependency_id: &str,

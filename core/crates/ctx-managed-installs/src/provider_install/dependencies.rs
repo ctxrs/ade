@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn install_provider_blocking_dependencies(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     provider_id: &str,
     dependencies: &[provider_install_contract::ProviderInstallDependency],
     install_id: Option<InstallId>,
@@ -103,7 +103,7 @@ pub(super) async fn install_provider_blocking_dependencies(
 }
 
 pub(super) async fn wait_for_provider_readiness_dependencies(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     provider_id: &str,
     dependencies: &[provider_install_contract::ProviderInstallDependency],
     install_id: Option<InstallId>,

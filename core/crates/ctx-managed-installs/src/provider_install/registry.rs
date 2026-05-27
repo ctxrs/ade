@@ -67,7 +67,7 @@ pub(super) async fn update_registry_last_error(
 
 pub(crate) async fn repair_install_dir(
     install_id: Option<InstallId>,
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     provider_id: &str,
     install_dir: &Path,
     expected_entrypoint_rel: &str,

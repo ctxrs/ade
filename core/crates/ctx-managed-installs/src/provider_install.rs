@@ -43,7 +43,7 @@ fn apply_managed_provider_install_to_cfg(
 }
 
 async fn wait_for_tracked_install(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: InstallId,
     provider_id: &str,
     target: InstallTarget,
@@ -84,7 +84,7 @@ async fn wait_for_tracked_install(
 }
 
 pub(super) async fn run_tracked_provider_install(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: InstallId,
     provider_id: &str,
     target: InstallTarget,
@@ -242,7 +242,7 @@ pub(super) fn classify_install_error(stage: &str, err: &anyhow::Error) -> Instal
     InstallErrorCode::Unknown
 }
 
-pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
+pub async fn refresh_provider_statuses(state: &ManagedInstallHostObject) -> Result<()> {
     let cfg = load_agent_server_config(state.data_root())
         .await
         .context("loading managed install registry for provider status refresh")?;
@@ -250,7 +250,7 @@ pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
 }
 
 async fn refresh_provider_statuses_with_cfg(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
     let matrix = state.load_provider_matrix().await;

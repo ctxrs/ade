@@ -31,6 +31,7 @@ const {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
+  checkManagedInstallsAppStateAlias,
   checkRatchetedFileCaps,
   countLines,
   evaluateDecompositionBoundaries,
@@ -958,6 +959,22 @@ test("head projection purity ignores line comments", () => {
   `);
 
   assert.deepEqual(checkHeadProjectionPurity(rootDir), []);
+});
+
+test("managed installs AppState alias cannot be reintroduced", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-managed-installs/src/lib.rs", `
+    pub trait ManagedInstallHost {}
+    pub type AppState = dyn ManagedInstallHost;
+    pub fn install(state: &AppState) {}
+  `);
+
+  const violations = checkManagedInstallsAppStateAlias(rootDir);
+
+  assert.equal(violations.length, 2);
+  assert(
+    violations.every((violation) => violation.kind === "managed_installs_app_state_alias"),
+  );
 });
 
 test("full evaluator aggregates all static decomposition violations", () => {

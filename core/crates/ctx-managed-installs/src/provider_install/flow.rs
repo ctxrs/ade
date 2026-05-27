@@ -2,7 +2,7 @@ use super::install_kind::install_provider_release;
 use super::*;
 
 pub(crate) async fn install_provider_impl(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     provider_id: &str,
     target: InstallTarget,
     install_id: Option<InstallId>,

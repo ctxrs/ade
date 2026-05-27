@@ -206,7 +206,7 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
     ) -> AgentServerCommand;
 }
 
-pub type AppState = dyn ManagedInstallHost;
+pub type ManagedInstallHostObject = dyn ManagedInstallHost;
 
 #[async_trait]
 pub trait InstallProgressHost: Send + Sync + 'static {
@@ -512,7 +512,7 @@ async fn acquire_provider_install_lock(
     lock.lock_owned().await
 }
 
-pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
+pub async fn install_provider(state: &ManagedInstallHostObject, provider_id: &str) -> Result<()> {
     install_provider_impl(state, provider_id, InstallTarget::Host, None).await
 }
 
@@ -551,7 +551,7 @@ fn validate_post_install_status(
 }
 
 pub async fn install_provider_with_progress(
-    state: std::sync::Arc<AppState>,
+    state: std::sync::Arc<ManagedInstallHostObject>,
     install_id: InstallId,
     provider_id: String,
     target: InstallTarget,

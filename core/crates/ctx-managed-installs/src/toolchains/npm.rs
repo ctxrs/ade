@@ -1,7 +1,7 @@
 use super::*;
 
 pub async fn npm_install(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     node: &NodeRuntime,
@@ -201,7 +201,7 @@ pub fn sanitize_npm_package_for_path(pkg: &str) -> String {
 }
 
 pub async fn npm_install_one(
-    state: &AppState,
+    state: &ManagedInstallHostObject,
     install_id: Option<InstallId>,
     provider_id: &str,
     node: &NodeRuntime,
