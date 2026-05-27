@@ -85,8 +85,7 @@ mod tests {
     async fn provider_model_preference_route_rejects_invalid_workspace_id() {
         let (_temp, daemon) = test_daemon().await;
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new("not-a-workspace", "codex"),
             )
@@ -102,8 +101,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let workspace = create_workspace(&daemon, "empty-provider").await;
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new(workspace.id.0.to_string(), "   "),
             )
@@ -119,8 +117,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let workspace = create_workspace(&daemon, "unknown-provider").await;
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new(
                     workspace.id.0.to_string(),
@@ -139,8 +136,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let missing_workspace_id = WorkspaceId::new();
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new(
                     missing_workspace_id.0.to_string(),
@@ -160,8 +156,7 @@ mod tests {
         let workspace = create_workspace(&daemon, "deleting-provider-pref").await;
         daemon.stores().begin_workspace_delete(workspace.id).await;
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new(
                     workspace.id.0.to_string(),
@@ -184,8 +179,7 @@ mod tests {
             .await
             .expect("block workspace store");
         let error = daemon
-            .route_handles()
-            .workspace_provider_model_preferences
+            .workspace_provider_model_preferences_handle_for_test()
             .workspace_provider_model_preference_for_route(
                 WorkspaceProviderModelPreferenceRouteParams::new(
                     workspace.id.0.to_string(),
@@ -206,7 +200,7 @@ mod tests {
             .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{ not json")
             .await
             .expect("seed invalid runtime settings");
-        let handle = daemon.route_handles().workspace_provider_model_preferences;
+        let handle = daemon.workspace_provider_model_preferences_handle_for_test();
 
         let get_error = handle
             .workspace_provider_model_preference_for_route(

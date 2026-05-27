@@ -281,8 +281,7 @@ mod tests {
         request.plan_type = PlanType::Pro;
 
         let error = daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_for_route(
                 OrgPolicyOrgRouteParams::new(route_org_id.0.to_string()),
                 UpsertDaemonEnrollmentRouteRequest::from(request),
@@ -298,8 +297,7 @@ mod tests {
     async fn snapshot_route_checks_route_body_mismatch_first() {
         let (_temp, daemon) = test_daemon().await;
         let error = daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(OrgId::new().0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot(OrgId::new())),
@@ -318,8 +316,7 @@ mod tests {
     async fn overlay_route_checks_route_body_mismatch_first() {
         let (_temp, daemon) = test_daemon().await;
         let error = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(WorkspaceId::new().0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(
@@ -343,8 +340,7 @@ mod tests {
         let org_id = OrgId::new();
 
         let snapshot_error = daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot(org_id)),
@@ -371,8 +367,7 @@ mod tests {
             .await
             .expect("create workspace");
         let overlay_error = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(workspace.id.0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(workspace.id, OrgId::new())),
@@ -387,15 +382,13 @@ mod tests {
 
         let org_id = OrgId::new();
         daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
         let missing_workspace_id = WorkspaceId::new();
         let missing_workspace_error = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(missing_workspace_id.0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(
@@ -421,8 +414,7 @@ mod tests {
         let org_id = OrgId::new();
         let enrollment = enrollment(org_id);
         daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_unchecked(enrollment)
             .await
             .expect("seed enrollment");
@@ -430,8 +422,7 @@ mod tests {
         snapshot.signature = "invalid".to_string();
 
         let error = daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot),
@@ -451,8 +442,7 @@ mod tests {
         let org_id = OrgId::new();
         let enrollment = enrollment(org_id);
         daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_unchecked(enrollment.clone())
             .await
             .expect("seed enrollment");
@@ -460,8 +450,7 @@ mod tests {
         snapshot.signature = sign_snapshot(&enrollment, &snapshot);
 
         let response = daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot.clone()),

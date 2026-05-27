@@ -71,7 +71,7 @@ mod tests {
             TestDaemon::new_for_test(data_dir.path().to_path_buf(), "http://127.0.0.1:0".into())
                 .await
                 .expect("test daemon");
-        (data_dir, daemon.route_handles().blob)
+        (data_dir, daemon.blob_handle_for_test())
     }
 
     #[tokio::test]

@@ -197,6 +197,7 @@ const {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
@@ -9936,6 +9937,218 @@ test("daemon boundary guard allows daemon-owned test support accessors", () => {
       }
     `,
     patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard rejects daemon test route aggregate field access", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/org_policy.rs",
+    contents: `
+      #[cfg(test)]
+      mod tests {
+        async fn direct(daemon: TestDaemon) {
+          let registry = daemon.route_handles().workspace_registry;
+          let deletion = daemon
+            .route_handles()
+            .workspace_deletion;
+          let parenthesized = (daemon.route_handles()).workspace_registry;
+          let parenthesized_cloned = (daemon.route_handles()).clone().workspace_deletion;
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate field access",
+      "daemon test route aggregate field access",
+      "daemon test route aggregate field access",
+      "daemon test route aggregate field access",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects daemon test route aggregate aliases", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn alias(daemon: TestDaemon) {
+        let handles = daemon.route_handles();
+        handles.workspace_registry.list_workspaces_for_route().await;
+        handles.clone().workspace_worktree.get_worktree_for_route().await;
+        let typed: DaemonRouteHandles = daemon.route_handles();
+        typed.workspace_deletion.delete_workspace_for_route().await;
+        let braced = { daemon.route_handles() };
+        braced.workspace_worktree.get_worktree_for_route().await;
+        let cloned = daemon.route_handles().clone();
+        cloned.workspace_attachments.list_workspace_attachments_for_route().await;
+        let owned = daemon.route_handles().to_owned();
+        owned.workspace_provider_model_preferences.get_workspace_provider_model_preferences().await;
+        let parenthesized = (daemon.route_handles());
+        parenthesized.workspace_merge_queue_config.get_merge_queue_config_for_route().await;
+        let parenthesized_cloned = (daemon.route_handles()).clone();
+        parenthesized_cloned.workspace_primary_branch.primary_branch_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+      "daemon test route aggregate alias field access",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects daemon test route aggregate alias destructuring", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn destructure_alias(daemon: TestDaemon) {
+        let handles = daemon.route_handles();
+        let DaemonRouteHandles { workspace_registry, .. } = handles;
+        workspace_registry.list_workspaces_for_route().await;
+        let crate::daemon::DaemonRouteHandles {
+          workspace_deletion,
+          ..
+        } = (handles).clone();
+        workspace_deletion.delete_workspace_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate alias destructuring",
+      "daemon test route aggregate alias destructuring",
+    ],
+  );
+});
+
+test("daemon boundary guard keeps route aggregate aliases active after inner shadowing", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn inner_shadow(daemon: TestDaemon) {
+        let handles = daemon.route_handles();
+        {
+          let handles = FakeRouteHandles::new();
+          handles.workspace_registry();
+        }
+        handles.workspace_registry.list_workspaces_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate alias field access",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects cloned daemon test route aggregate field chains", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn cloned_chain(daemon: TestDaemon) {
+        daemon.route_handles().clone().workspace_registry.list_workspaces_for_route().await;
+        daemon.route_handles().to_owned().workspace_deletion.delete_workspace_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate field access",
+      "daemon test route aggregate field access",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects daemon test route aggregate destructuring", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn destructured(daemon: TestDaemon) {
+        let DaemonRouteHandles { workspace_registry, .. } = daemon.route_handles();
+        workspace_registry.list_workspaces_for_route().await;
+        let crate::daemon::DaemonRouteHandles {
+          workspace_deletion,
+          ..
+        } = daemon.route_handles().clone();
+        workspace_deletion.delete_workspace_for_route().await;
+        let DaemonRouteHandles { workspace_worktree, .. } = (daemon.route_handles());
+        workspace_worktree.get_worktree_for_route().await;
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon test route aggregate destructuring",
+      "daemon test route aggregate destructuring",
+      "daemon test route aggregate destructuring",
+    ],
+  );
+});
+
+test("daemon boundary guard allows named helpers and router aggregate handoff", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/route_contract/tests.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon) {
+        let handle = daemon.workspace_registry_handle_for_test();
+        handle.list_workspaces_for_route().await;
+        let route_handles = daemon.route_handles();
+        let app = api::router(RouteHandles::from_daemon_route_handles(route_handles));
+        let _text = "daemon.route_handles().workspace_registry";
+        // daemon.route_handles().workspace_registry
+      }
+
+      async fn unrelated_shadow() {
+        let route_handles = FakeRouteHandles::new();
+        route_handles.workspace_registry();
+      }
+
+      async fn inner_unrelated_shadow(daemon: TestDaemon) {
+        let route_handles = daemon.route_handles();
+        let app = api::router(RouteHandles::from_daemon_route_handles(route_handles));
+        {
+          let route_handles = FakeRouteHandles::new();
+          route_handles.workspace_registry();
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard allows aggregate field access inside test support", () => {
+  const violations = scanDaemonTestRouteHandlesAggregateRatchet({
+    filePath: "core/crates/ctx-daemon/src/test_support.rs",
+    contents: `
+      impl TestDaemon {
+        pub fn workspace_registry_handle_for_test(&self) -> WorkspaceRegistryHandle {
+          self.route_handles().workspace_registry
+        }
+      }
+    `,
   });
 
   assert.deepEqual(violations, []);

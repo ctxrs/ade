@@ -7898,6 +7898,194 @@ function scanRouteStateAggregateRatchet({ filePath, contents }) {
   return violations;
 }
 
+function isAllowedDaemonTestRouteHandlesAggregatePath(filePath) {
+  return filePath === "core/crates/ctx-daemon/src/test_support.rs"
+    || filePath === "core/crates/ctx-daemon/src/daemon/runtime.rs"
+    || isDaemonRouteAssemblyPath(filePath);
+}
+
+function scanDaemonTestRouteHandlesAggregateRatchet({ filePath, contents }) {
+  if (
+    !filePath.startsWith("core/crates/ctx-daemon/src/")
+    || isAllowedDaemonTestRouteHandlesAggregatePath(filePath)
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const masked = maskRustCommentsAndStrings(contents);
+  const lines = contents.split(/\r?\n/u);
+  const lineForOffset = (matchOffset) => masked.slice(0, matchOffset).split(/\r?\n/u).length;
+  const violationKeys = new Set();
+  const routeHandlesReceiver = String.raw`[A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*`;
+  const aggregateValueChain = String.raw`(?:\s*\.\s*(?:clone|to_owned)\s*\(\s*\))*`;
+  const routeHandlesBaseExpression = String.raw`(?:\(\s*)*\b${routeHandlesReceiver}\s*\.\s*route_handles\s*\(\s*\)(?:\s*\))*`;
+  const routeHandlesAggregateExpression = String.raw`${routeHandlesBaseExpression}${aggregateValueChain}(?:\s*\))*`;
+  const routeFieldRead = String.raw`(?!clone\b|to_owned\b|into\b)[A-Za-z_][A-Za-z0-9_]*`;
+
+  const braceDepthAtOffset = (offset) => {
+    let depth = 0;
+    for (let index = 0; index < offset; index += 1) {
+      if (masked[index] === "{") {
+        depth += 1;
+      } else if (masked[index] === "}") {
+        depth = Math.max(0, depth - 1);
+      }
+    }
+    return depth;
+  };
+
+  const findScopeEnd = (startOffset, initialDepth) => {
+    let depth = initialDepth;
+    for (let index = startOffset; index < masked.length; index += 1) {
+      if (masked[index] === "{") {
+        depth += 1;
+      } else if (masked[index] === "}") {
+        depth -= 1;
+        if (depth < initialDepth) {
+          return index;
+        }
+      }
+    }
+    return masked.length;
+  };
+
+  const pushViolation = ({ offset, name, text }) => {
+    const line = lineForOffset(offset);
+    const key = `${line}:${name}:${text}`;
+    if (violationKeys.has(key)) {
+      return;
+    }
+    violationKeys.add(key);
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() || text,
+    });
+  };
+
+  const directFieldRegex = new RegExp(
+    String.raw`${routeHandlesAggregateExpression}\s*\.\s*${routeFieldRead}`,
+    "gsu",
+  );
+  for (
+    let match = directFieldRegex.exec(masked);
+    match;
+    match = directFieldRegex.exec(masked)
+  ) {
+    pushViolation({
+      offset: match.index,
+      name: "daemon test route aggregate field access",
+      text: match[0].trim().replace(/\s+/gu, " "),
+    });
+  }
+
+  const aliasRegex = new RegExp(
+    String.raw`\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonRouteHandles)?\s*=\s*(?:\{\s*)?${routeHandlesAggregateExpression}(?:\s*\})?\s*;`,
+    "gsu",
+  );
+  const aliasBindings = [];
+  for (let match = aliasRegex.exec(masked); match; match = aliasRegex.exec(masked)) {
+    aliasBindings.push({
+      name: match[1],
+      scanStart: match.index + match[0].length,
+    });
+  }
+  for (const alias of aliasBindings) {
+    const aliasName = alias.name;
+    const scanStart = alias.scanStart;
+    const escapedAlias = aliasName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const initialDepth = braceDepthAtOffset(scanStart);
+    let scanEnd = findScopeEnd(scanStart, initialDepth);
+    const innerShadowRanges = [];
+    const shadowRegex = new RegExp(
+      String.raw`\blet\s+(?:mut\s+)?${escapedAlias}\b\s*(?::|=)`,
+      "gsu",
+    );
+    const lexicalScope = masked.slice(scanStart, scanEnd);
+    for (
+      let match = shadowRegex.exec(lexicalScope);
+      match;
+      match = shadowRegex.exec(lexicalScope)
+    ) {
+      const shadowOffset = scanStart + match.index;
+      const shadowDepth = braceDepthAtOffset(shadowOffset);
+      if (shadowDepth === initialDepth) {
+        scanEnd = Math.min(scanEnd, shadowOffset);
+        break;
+      }
+      if (shadowDepth > initialDepth) {
+        innerShadowRanges.push([
+          shadowOffset,
+          findScopeEnd(shadowOffset, shadowDepth),
+        ]);
+      }
+    }
+    const isOriginalAliasActiveAt = (offset) => offset < scanEnd
+      && !innerShadowRanges.some(([start, end]) => offset >= start && offset < end);
+    const aliasScope = masked.slice(scanStart, scanEnd);
+    const aliasAggregateExpression = String.raw`(?:\(\s*)*\b${escapedAlias}\b(?:\s*\))*${aggregateValueChain}(?:\s*\))*`;
+    const aliasFieldRegex = new RegExp(
+      String.raw`${aliasAggregateExpression}\s*\.\s*${routeFieldRead}`,
+      "gsu",
+    );
+    for (
+      let match = aliasFieldRegex.exec(aliasScope);
+      match;
+      match = aliasFieldRegex.exec(aliasScope)
+    ) {
+      const offset = scanStart + match.index;
+      if (!isOriginalAliasActiveAt(offset)) {
+        continue;
+      }
+      pushViolation({
+        offset,
+        name: "daemon test route aggregate alias field access",
+        text: match[0].trim().replace(/\s+/gu, " "),
+      });
+    }
+
+    const aliasDestructuringRegex = new RegExp(
+      String.raw`\blet\s+(?:mut\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonRouteHandles\s*\{[\s\S]*?\}\s*=\s*${aliasAggregateExpression}\s*;`,
+      "gsu",
+    );
+    for (
+      let match = aliasDestructuringRegex.exec(aliasScope);
+      match;
+      match = aliasDestructuringRegex.exec(aliasScope)
+    ) {
+      const offset = scanStart + match.index;
+      if (!isOriginalAliasActiveAt(offset)) {
+        continue;
+      }
+      pushViolation({
+        offset,
+        name: "daemon test route aggregate alias destructuring",
+        text: match[0].trim().replace(/\s+/gu, " "),
+      });
+    }
+  }
+
+  const destructuredAggregateRegex = new RegExp(
+    String.raw`\blet\s+(?:mut\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonRouteHandles\s*\{[\s\S]*?\}\s*=\s*(?:\{\s*)?${routeHandlesAggregateExpression}(?:\s*\})?\s*;`,
+    "gsu",
+  );
+  for (
+    let match = destructuredAggregateRegex.exec(masked);
+    match;
+    match = destructuredAggregateRegex.exec(masked)
+  ) {
+    pushViolation({
+      offset: match.index,
+      name: "daemon test route aggregate destructuring",
+      text: match[0].trim().replace(/\s+/gu, " "),
+    });
+  }
+
+  return violations;
+}
+
 function isAllowedDaemonHandleConstruction({ filePath, line }) {
   return APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.some(
     (entry) => entry.path === filePath && entry.regex.test(line),
@@ -18186,6 +18374,17 @@ function scanRepo() {
     }
   }
 
+  for (const filePath of daemonFiles) {
+    const relativePath = repoRelative(filePath);
+    const contents = fs.readFileSync(filePath, "utf8");
+    violations.push(
+      ...scanDaemonTestRouteHandlesAggregateRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+    );
+  }
+
   for (const filePath of daemonTestSurfaceRustFiles()) {
     const relativePath = repoRelative(filePath);
     const contents = fs.readFileSync(filePath, "utf8");
@@ -18787,6 +18986,7 @@ module.exports = {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,

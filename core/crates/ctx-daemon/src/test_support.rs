@@ -39,8 +39,6 @@ use crate::daemon::{
     self, route_handles_from_state, workspace_attachments_runtime_from_state, AppRuntimeFlags,
     DaemonHandle, DaemonRouteHandles, DaemonShutdownSignal, DaemonState,
 };
-#[cfg(test)]
-use crate::daemon::{WorkspacePrimaryBranchHandle, WorkspacePrimaryBranchRefreshEffect};
 
 mod cache_rehydration;
 pub use cache_rehydration::{
@@ -48,6 +46,7 @@ pub use cache_rehydration::{
 };
 pub mod provider_scenarios;
 pub mod replay_projection;
+mod route_handles;
 pub mod subagent_mcp;
 
 #[derive(Clone)]
@@ -638,91 +637,6 @@ impl TestDaemon {
 
     pub fn route_handles(&self) -> DaemonRouteHandles {
         route_handles_from_state(&self.state)
-    }
-
-    pub fn provider_accounts_handle_for_test(&self) -> crate::daemon::ProviderAccountsHandle {
-        route_handles_from_state(&self.state).provider_accounts
-    }
-
-    pub fn task_session_listing_handle_for_test(&self) -> crate::daemon::TaskSessionListingHandle {
-        route_handles_from_state(&self.state).task_session_listing
-    }
-
-    pub fn task_read_state_handle_for_test(&self) -> crate::daemon::TaskReadStateHandle {
-        route_handles_from_state(&self.state).task_read_state
-    }
-
-    pub fn task_title_handle_for_test(&self) -> crate::daemon::TaskTitleHandle {
-        route_handles_from_state(&self.state).task_title
-    }
-
-    pub fn task_lifecycle_handle_for_test(&self) -> crate::daemon::TaskLifecycleHandle {
-        route_handles_from_state(&self.state).task_lifecycle
-    }
-
-    pub fn session_title_model_mode_handle_for_test(
-        &self,
-    ) -> crate::daemon::SessionTitleModelModeHandle {
-        route_handles_from_state(&self.state).session_title_model_mode
-    }
-
-    pub fn session_vcs_handle_for_test(&self) -> crate::daemon::SessionVcsHandle {
-        route_handles_from_state(&self.state).session_vcs
-    }
-
-    pub fn session_subagent_read_handle_for_test(
-        &self,
-    ) -> crate::daemon::SessionSubagentReadHandle {
-        route_handles_from_state(&self.state).session_subagent_read
-    }
-
-    pub fn session_subagent_mcp_read_handle_for_test(
-        &self,
-    ) -> crate::daemon::SessionSubagentMcpReadHandle {
-        route_handles_from_state(&self.state).session_subagent_mcp_read
-    }
-
-    pub fn session_subagent_mcp_control_handle_for_test(
-        &self,
-    ) -> crate::daemon::SessionSubagentMcpControlHandle {
-        route_handles_from_state(&self.state).session_subagent_mcp_control
-    }
-
-    pub fn workspace_stream_handle_for_test(&self) -> crate::daemon::WorkspaceStreamHandle {
-        route_handles_from_state(&self.state).workspace_stream
-    }
-
-    pub fn provider_harness_config_handle_for_test(
-        &self,
-    ) -> crate::daemon::ProviderHarnessConfigHandle {
-        route_handles_from_state(&self.state).provider_harness_config
-    }
-
-    pub fn provider_install_handle_for_test(&self) -> crate::daemon::ProviderInstallHandle {
-        route_handles_from_state(&self.state).provider_install
-    }
-
-    pub fn settings_handle_for_test(&self) -> crate::daemon::SettingsHandle {
-        route_handles_from_state(&self.state).settings
-    }
-
-    pub fn update_drain_handle_for_test(&self) -> crate::daemon::UpdateDrainHandle {
-        route_handles_from_state(&self.state).update_drain
-    }
-
-    pub fn org_policy_handle_for_test(&self) -> crate::daemon::OrgPolicyHandle {
-        route_handles_from_state(&self.state).org_policy
-    }
-
-    #[cfg(test)]
-    pub(crate) fn workspace_primary_branch_with_refresh_effect_for_test(
-        &self,
-        refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
-    ) -> WorkspacePrimaryBranchHandle {
-        daemon::workspace_primary_branch_with_refresh_effect_from_state(
-            &self.state,
-            refresh_vcs_snapshot,
-        )
     }
 
     pub fn shutdown_signal(&self) -> DaemonShutdownSignal {
@@ -2080,8 +1994,7 @@ impl TestDaemon {
         &self,
         workspace_id: WorkspaceId,
     ) -> std::result::Result<(), daemon::workspaces::WorkspaceHydrationError> {
-        self.route_handles()
-            .workspace_stream
+        self.workspace_stream_handle_for_test()
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
     }

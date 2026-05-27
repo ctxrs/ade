@@ -52,8 +52,7 @@ async fn task_session_listing_store_lookup_failure_is_internal_not_not_found() {
         .expect("make workspace store unavailable");
 
     let error = daemon
-        .route_handles()
-        .task_session_listing
+        .task_session_listing_handle_for_test()
         .list_task_sessions_for_route(TaskRouteParams::new(task.id.0.to_string()))
         .await
         .expect_err("store lookup failure should not become a 404");

@@ -158,8 +158,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
 
         let error = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_checked(overlay(WorkspaceId::new(), OrgId::new()))
             .await
             .expect_err("missing enrollment should fail before workspace lookup");
@@ -175,15 +174,13 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let org_id = OrgId::new();
         daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
 
         let error = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_checked(overlay(WorkspaceId::new(), org_id))
             .await
             .expect_err("missing workspace should fail");
@@ -199,8 +196,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let org_id = OrgId::new();
         daemon
-            .route_handles()
-            .org_policy
+            .org_policy_handle_for_test()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
@@ -219,8 +215,7 @@ mod tests {
             .expect("create workspace");
 
         let stored = daemon
-            .route_handles()
-            .workspace_org_policy
+            .workspace_org_policy_handle_for_test()
             .upsert_workspace_policy_overlay_checked(overlay(workspace.id, org_id))
             .await
             .expect("upsert overlay");

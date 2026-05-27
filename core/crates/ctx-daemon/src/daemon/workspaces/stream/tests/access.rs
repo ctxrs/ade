@@ -18,16 +18,14 @@ async fn workspace_stream_access_rejects_missing_workspace() {
     let workspace_id = WorkspaceId(uuid::Uuid::new_v4());
 
     let active_error = daemon
-        .route_handles()
-        .workspace_stream
+        .workspace_stream_handle_for_test()
         .require_workspace_active_stream_access(workspace_id)
         .await
         .expect_err("missing workspace should reject active stream access");
     assert!(matches!(active_error, WorkspaceStreamAccessError::NotFound));
 
     let vcs_error = daemon
-        .route_handles()
-        .workspace_vcs_stream
+        .workspace_vcs_stream_handle_for_test()
         .require_workspace_vcs_stream_access(workspace_id)
         .await
         .expect_err("missing workspace should reject VCS stream access");
@@ -45,8 +43,7 @@ async fn workspace_stream_route_admission_rejects_invalid_workspace_id() {
     .expect("test daemon");
 
     let active_error = daemon
-        .route_handles()
-        .workspace_stream
+        .workspace_stream_handle_for_test()
         .admit_workspace_active_stream_for_route(WorkspaceStreamRouteParams::new("not-a-workspace"))
         .await
         .expect_err("invalid workspace id should reject active stream route admission");
@@ -57,8 +54,7 @@ async fn workspace_stream_route_admission_rejects_invalid_workspace_id() {
     assert_eq!(active_error.message(), "invalid workspace id");
 
     let vcs_error = daemon
-        .route_handles()
-        .workspace_vcs_stream
+        .workspace_vcs_stream_handle_for_test()
         .admit_workspace_vcs_stream_for_route(WorkspaceStreamRouteParams::new("not-a-workspace"))
         .await
         .expect_err("invalid workspace id should reject VCS stream route admission");
@@ -90,21 +86,18 @@ async fn workspace_stream_access_allows_existing_workspace() {
         .expect("create workspace");
 
     daemon
-        .route_handles()
-        .workspace_stream
+        .workspace_stream_handle_for_test()
         .require_workspace_active_stream_access(workspace.id)
         .await
         .expect("existing workspace should allow active stream access");
     daemon
-        .route_handles()
-        .workspace_vcs_stream
+        .workspace_vcs_stream_handle_for_test()
         .require_workspace_vcs_stream_access(workspace.id)
         .await
         .expect("existing workspace should allow VCS stream access");
 
     let active_admission = daemon
-        .route_handles()
-        .workspace_stream
+        .workspace_stream_handle_for_test()
         .admit_workspace_active_stream_for_route(WorkspaceStreamRouteParams::new(
             workspace.id.0.to_string(),
         ))
@@ -113,8 +106,7 @@ async fn workspace_stream_access_allows_existing_workspace() {
     assert_eq!(active_admission.workspace_id(), workspace.id);
 
     let vcs_admission = daemon
-        .route_handles()
-        .workspace_vcs_stream
+        .workspace_vcs_stream_handle_for_test()
         .admit_workspace_vcs_stream_for_route(WorkspaceStreamRouteParams::new(
             workspace.id.0.to_string(),
         ))

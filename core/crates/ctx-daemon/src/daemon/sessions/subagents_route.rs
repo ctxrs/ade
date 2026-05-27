@@ -393,8 +393,7 @@ mod tests {
             .await?;
 
         let response = daemon
-            .route_handles()
-            .session_subagent_read
+            .session_subagent_read_handle_for_test()
             .list_session_subagents_for_route(SessionRouteParams::new(parent.id.0.to_string()))
             .await
             .map_err(|error| anyhow!(error.message().to_string()))?;
@@ -416,8 +415,7 @@ mod tests {
         seed_invocation(&store, "inv-b", parent.id, Some(turn_b)).await?;
 
         let all = daemon
-            .route_handles()
-            .session_subagent_read
+            .session_subagent_read_handle_for_test()
             .list_session_subagent_invocations_for_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 SessionSubagentInvocationsRouteQuery::default(),
@@ -436,8 +434,7 @@ mod tests {
         let filtered_query: SessionSubagentInvocationsRouteQuery =
             serde_json::from_value(json!({ "turn_id": turn_a.0.to_string() }))?;
         let filtered = daemon
-            .route_handles()
-            .session_subagent_read
+            .session_subagent_read_handle_for_test()
             .list_session_subagent_invocations_for_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 filtered_query,
@@ -475,8 +472,7 @@ mod tests {
         seed_invocation(&store, "foreign-invocation", foreign_parent.id, None).await?;
 
         let owned = daemon
-            .route_handles()
-            .session_subagent_read
+            .session_subagent_read_handle_for_test()
             .get_session_subagent_invocation_for_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 "owned-invocation".to_string(),
@@ -486,8 +482,7 @@ mod tests {
         assert_eq!(serde_json::to_value(owned)?["id"], "owned-invocation");
 
         let mismatch = daemon
-            .route_handles()
-            .session_subagent_read
+            .session_subagent_read_handle_for_test()
             .get_session_subagent_invocation_for_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 "foreign-invocation".to_string(),
@@ -507,8 +502,7 @@ mod tests {
             .await?;
 
         let response = daemon
-            .route_handles()
-            .session_subagent_mcp_read
+            .session_subagent_mcp_read_handle_for_test()
             .list_agents_for_mcp_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 Some(scoped_context_for(&parent)),
@@ -530,8 +524,7 @@ mod tests {
         foreign_auth.session_id = SessionId::new();
 
         let error = daemon
-            .route_handles()
-            .session_subagent_mcp_read
+            .session_subagent_mcp_read_handle_for_test()
             .list_agents_for_mcp_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 Some(foreign_auth),
@@ -558,8 +551,7 @@ mod tests {
         }))?;
 
         let response = daemon
-            .route_handles()
-            .session_subagent_mcp_read
+            .session_subagent_mcp_read_handle_for_test()
             .wait_agent_for_mcp_route(
                 SessionRouteParams::new(parent.id.0.to_string()),
                 Some(scoped_context_for(&parent)),

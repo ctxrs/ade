@@ -197,8 +197,8 @@ mod tests {
         .expect("daemon");
         (
             temp,
-            daemon.route_handles().session_control,
-            daemon.route_handles().session_file_completions,
+            daemon.session_control_handle_for_test(),
+            daemon.session_file_completions_handle_for_test(),
         )
     }
 

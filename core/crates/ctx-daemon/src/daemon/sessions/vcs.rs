@@ -297,7 +297,7 @@ mod tests {
             .seed_cache_rehydration_session_for_test(true, true)
             .await
             .expect("fixture");
-        let handle = daemon.route_handles().session_vcs;
+        let handle = daemon.session_vcs_handle_for_test();
 
         let loaded = handle
             .load_session_vcs_parts(fixture.session.id)
@@ -343,8 +343,7 @@ mod tests {
             .expect("archive subagent"));
 
         let loaded = daemon
-            .route_handles()
-            .session_vcs
+            .session_vcs_handle_for_test()
             .load_session_vcs_parts(fixture.subagent.id)
             .await
             .expect("archived subagent should not be internal");
@@ -364,8 +363,7 @@ mod tests {
             .expect("make workspace store unopenable");
 
         let error = daemon
-            .route_handles()
-            .session_vcs
+            .session_vcs_handle_for_test()
             .load_session_vcs_parts(fixture.session.id)
             .await
             .expect_err("unavailable store should stay internal");
@@ -382,7 +380,7 @@ mod tests {
             .seed_cache_rehydration_primary_and_subagent_for_test()
             .await
             .expect("fixture");
-        let handle = daemon.route_handles().session_vcs;
+        let handle = daemon.session_vcs_handle_for_test();
         let summary = git_summary();
 
         handle
@@ -455,8 +453,7 @@ mod tests {
             .await;
 
         let mismatch = daemon
-            .route_handles()
-            .session_vcs
+            .session_vcs_handle_for_test()
             .session_vcs_diff_summary_mismatch(
                 &fixture.worktree,
                 "base",
@@ -476,8 +473,8 @@ mod tests {
     #[tokio::test]
     async fn session_vcs_compat_counter_effect_records_metric() {
         let (_temp, daemon) = seeded_daemon().await;
-        let handle = daemon.route_handles().session_vcs;
-        let before = daemon.route_handles().telemetry.perf_telemetry().stats();
+        let handle = daemon.session_vcs_handle_for_test();
+        let before = daemon.telemetry_handle_for_test().perf_telemetry().stats();
 
         handle
             .emit_compat_payload_reject_counter("sessions.diff", "no_target_branch")
@@ -489,7 +486,7 @@ mod tests {
             .emit_compat_payload_reject_counter("sessions.diff_apply", "no_target_branch")
             .await;
 
-        let after = daemon.route_handles().telemetry.perf_telemetry().stats();
+        let after = daemon.telemetry_handle_for_test().perf_telemetry().stats();
         assert!(after.total_samples >= before.total_samples + 3);
     }
 }

@@ -145,7 +145,7 @@ async fn primary_branch_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_primary_branch;
+    let handle = daemon.workspace_primary_branch_handle_for_test();
     let error = handle
         .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
@@ -162,7 +162,7 @@ async fn primary_branch_route_maps_missing_store_to_not_found() {
             .await
             .expect("test daemon");
     let workspace_id = WorkspaceId::new();
-    let handle = daemon.route_handles().workspace_primary_branch;
+    let handle = daemon.workspace_primary_branch_handle_for_test();
     let error = handle
         .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(
             workspace_id.0.to_string(),
@@ -181,7 +181,7 @@ async fn primary_branch_route_maps_unset_config_to_not_found() {
             .await
             .expect("test daemon");
     let workspace = create_route_contract_workspace_with_store(&daemon, "unset-primary").await;
-    let handle = daemon.route_handles().workspace_primary_branch;
+    let handle = daemon.workspace_primary_branch_handle_for_test();
     let error = handle
         .workspace_primary_branch_for_route_params(WorkspaceRouteParams::new(
             workspace.id.0.to_string(),
@@ -255,7 +255,7 @@ async fn registry_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_registry;
+    let handle = daemon.workspace_registry_handle_for_test();
     let error = handle
         .get_workspace_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
@@ -271,7 +271,7 @@ async fn registry_route_maps_missing_workspace_to_not_found() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_registry;
+    let handle = daemon.workspace_registry_handle_for_test();
     let error = handle
         .get_workspace_for_route_params(WorkspaceRouteParams::new(uuid::Uuid::new_v4().to_string()))
         .await
@@ -287,7 +287,7 @@ async fn delete_workspace_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_deletion;
+    let handle = daemon.workspace_deletion_handle_for_test();
     let error = handle
         .delete_workspace_for_route(WorkspaceRouteParams::new("not-a-workspace"))
         .await
@@ -303,7 +303,7 @@ async fn delete_workspace_route_maps_missing_workspace_to_not_found() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_deletion;
+    let handle = daemon.workspace_deletion_handle_for_test();
     let error = handle
         .delete_workspace_for_route(WorkspaceRouteParams::new(uuid::Uuid::new_v4().to_string()))
         .await
@@ -330,8 +330,7 @@ async fn delete_workspace_route_removes_workspace_indexes_and_db_dir() {
     std::fs::create_dir_all(&workspace_db_dir).expect("create workspace db dir");
 
     daemon
-        .route_handles()
-        .workspace_deletion
+        .workspace_deletion_handle_for_test()
         .delete_workspace_for_route(WorkspaceRouteParams::new(workspace.id.0.to_string()))
         .await
         .expect("delete workspace");
@@ -367,8 +366,7 @@ async fn delete_workspace_route_continues_when_workspace_store_is_unavailable() 
     daemon.stores().begin_workspace_delete(workspace.id).await;
 
     daemon
-        .route_handles()
-        .workspace_deletion
+        .workspace_deletion_handle_for_test()
         .delete_workspace_for_route(WorkspaceRouteParams::new(workspace.id.0.to_string()))
         .await
         .expect("delete workspace with blocked store");
@@ -396,7 +394,7 @@ async fn delete_workspace_route_finishes_delete_barrier_after_post_begin_failure
             .await
             .expect("test daemon");
     let workspace = create_route_contract_workspace_with_store(&daemon, "delete-failure").await;
-    let handle = daemon.route_handles().workspace_deletion;
+    let handle = daemon.workspace_deletion_handle_for_test();
     handle.fail_next_delete_after_begin_for_test();
 
     let error = handle
@@ -559,7 +557,7 @@ async fn worktree_routes_reject_invalid_worktree_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_worktree;
+    let handle = daemon.workspace_worktree_handle_for_test();
 
     let get_error = handle
         .get_worktree_for_route_params(WorktreeRouteParams::new("not-a-worktree"))
@@ -583,7 +581,7 @@ async fn worktree_routes_map_missing_worktree_to_not_found() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_worktree;
+    let handle = daemon.workspace_worktree_handle_for_test();
     let missing = WorktreeId::new().0.to_string();
 
     let get_error = handle
@@ -623,7 +621,7 @@ async fn worktree_bootstrap_logs_route_rejects_missing_blank_and_outside_paths()
         Some(outside_path.to_string_lossy().to_string()),
     )
     .await;
-    let handle = daemon.route_handles().workspace_worktree;
+    let handle = daemon.workspace_worktree_handle_for_test();
 
     for worktree in [missing_path, blank_path, outside_path] {
         let error = handle
@@ -643,7 +641,7 @@ async fn harness_container_routes_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_harness_container;
+    let handle = daemon.workspace_harness_container_handle_for_test();
 
     let status_error = handle
         .workspace_harness_container_status_for_route_params(WorkspaceRouteParams::new(
@@ -673,7 +671,7 @@ async fn harness_container_routes_map_missing_workspace_to_not_found() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_harness_container;
+    let handle = daemon.workspace_harness_container_handle_for_test();
     let missing = WorkspaceId::new().0.to_string();
 
     let status_error = handle
@@ -705,7 +703,7 @@ async fn harness_container_routes_are_hermetic_without_running_container() {
             .await
             .expect("test daemon");
     let workspace = create_route_contract_workspace_with_store(&daemon, "no-container").await;
-    let handle = daemon.route_handles().workspace_harness_container;
+    let handle = daemon.workspace_harness_container_handle_for_test();
     let params = WorkspaceRouteParams::new(workspace.id.0.to_string());
 
     let status = handle
@@ -734,7 +732,7 @@ async fn ensure_harness_container_preserves_settings_error_mapping() {
         .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{ not json")
         .await
         .expect("seed invalid runtime settings");
-    let handle = daemon.route_handles().workspace_harness_container;
+    let handle = daemon.workspace_harness_container_handle_for_test();
 
     let error = handle
         .ensure_workspace_harness_container_for_route(WorkspaceRouteParams::new(
@@ -800,7 +798,7 @@ async fn attachment_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_attachments;
+    let handle = daemon.workspace_attachments_handle_for_test();
     let error = handle
         .create_and_sync_workspace_attachment_for_route_params(
             WorkspaceRouteParams::new("not-a-workspace"),
@@ -826,7 +824,7 @@ async fn attachment_routes_treat_deleting_workspace_as_not_found() {
             .expect("test daemon");
     let workspace = create_route_contract_workspace(&daemon, "deleting-attachments").await;
     daemon.stores().begin_workspace_delete(workspace.id).await;
-    let handle = daemon.route_handles().workspace_attachments;
+    let handle = daemon.workspace_attachments_handle_for_test();
     let params = || WorkspaceRouteParams::new(workspace.id.0.to_string());
 
     let list_error = handle
@@ -871,7 +869,7 @@ async fn merge_queue_config_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_merge_queue_config;
+    let handle = daemon.workspace_merge_queue_config_handle_for_test();
     let error = handle
         .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
@@ -889,7 +887,7 @@ async fn merge_queue_config_routes_treat_deleting_workspace_as_not_found() {
             .expect("test daemon");
     let workspace = create_route_contract_workspace(&daemon, "deleting-merge-queue-config").await;
     daemon.stores().begin_workspace_delete(workspace.id).await;
-    let handle = daemon.route_handles().workspace_merge_queue_config;
+    let handle = daemon.workspace_merge_queue_config_handle_for_test();
 
     let get_error = handle
         .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(
@@ -931,7 +929,7 @@ async fn merge_queue_config_routes_map_unavailable_workspace_store_to_internal()
         .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
         .await
         .expect("block workspace store");
-    let handle = daemon.route_handles().workspace_merge_queue_config;
+    let handle = daemon.workspace_merge_queue_config_handle_for_test();
 
     let get_error = handle
         .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new(
@@ -967,7 +965,7 @@ async fn merge_queue_config_disable_transition_cancels_queued_entries() {
             .expect("test daemon");
     let workspace =
         create_route_contract_workspace_with_store(&daemon, "disable-merge-queue").await;
-    let handle = daemon.route_handles().workspace_merge_queue_config;
+    let handle = daemon.workspace_merge_queue_config_handle_for_test();
     handle
         .update_workspace_merge_queue_config_for_route_params(
             WorkspaceRouteParams::new(workspace.id.0.to_string()),
@@ -1026,7 +1024,7 @@ async fn merge_queue_config_unchanged_disabled_state_does_not_cancel_queued_entr
         .seed_workspace_merge_queue_queued_entry_for_test(workspace.id, "queued-while-disabled")
         .await
         .expect("seed queued entry");
-    let handle = daemon.route_handles().workspace_merge_queue_config;
+    let handle = daemon.workspace_merge_queue_config_handle_for_test();
 
     handle
         .update_workspace_merge_queue_config_for_route_params(
@@ -1061,7 +1059,7 @@ async fn worktree_bootstrap_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_prompt_bootstrap_config;
+    let handle = daemon.workspace_prompt_bootstrap_config_handle_for_test();
     let error = handle
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
         .await
@@ -1077,7 +1075,7 @@ async fn prompt_config_route_params_reject_invalid_workspace_id() {
         TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
             .await
             .expect("test daemon");
-    let handle = daemon.route_handles().workspace_prompt_bootstrap_config;
+    let handle = daemon.workspace_prompt_bootstrap_config_handle_for_test();
     let error = handle
         .agent_system_prompt_config_for_route(WorkspacePromptConfigRouteParams::new(
             "not-a-workspace",
@@ -1097,7 +1095,7 @@ async fn prompt_bootstrap_config_routes_treat_deleting_workspace_as_not_found() 
             .expect("test daemon");
     let workspace = create_route_contract_workspace(&daemon, "deleting-prompt-bootstrap").await;
     daemon.stores().begin_workspace_delete(workspace.id).await;
-    let handle = daemon.route_handles().workspace_prompt_bootstrap_config;
+    let handle = daemon.workspace_prompt_bootstrap_config_handle_for_test();
 
     let bootstrap_error = handle
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(
@@ -1131,7 +1129,7 @@ async fn prompt_bootstrap_config_routes_map_unavailable_workspace_store_to_inter
         .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
         .await
         .expect("block workspace store");
-    let handle = daemon.route_handles().workspace_prompt_bootstrap_config;
+    let handle = daemon.workspace_prompt_bootstrap_config_handle_for_test();
 
     let bootstrap_error = handle
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(
@@ -1162,7 +1160,7 @@ async fn prompt_bootstrap_config_routes_preserve_malformed_runtime_settings_stat
         .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{ not json")
         .await
         .expect("seed invalid runtime settings");
-    let handle = daemon.route_handles().workspace_prompt_bootstrap_config;
+    let handle = daemon.workspace_prompt_bootstrap_config_handle_for_test();
 
     let bootstrap_get_error = handle
         .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new(

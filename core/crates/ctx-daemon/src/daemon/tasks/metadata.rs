@@ -171,8 +171,7 @@ mod tests {
         let (_temp, daemon, task) = seeded_task_fixture().await;
         let recorded = Arc::new(RecordedEffects::default());
         let handle = daemon
-            .route_handles()
-            .task_read_state
+            .task_read_state_handle_for_test()
             .with_effects_for_test(recording_effects(Arc::clone(&recorded)));
 
         let updated = handle
@@ -208,8 +207,7 @@ mod tests {
             }
         });
         let handle = daemon
-            .route_handles()
-            .task_title
+            .task_title_handle_for_test()
             .with_effects_and_close_for_test(
                 recording_effects(Arc::clone(&recorded)),
                 close_web_sessions_for_task,
@@ -243,8 +241,7 @@ mod tests {
                 Box::pin(async move { Err(anyhow!("close failed")) }) as TaskMetadataFuture<_>
             });
         let handle = daemon
-            .route_handles()
-            .task_title
+            .task_title_handle_for_test()
             .with_effects_and_close_for_test(
                 recording_effects(Arc::clone(&recorded)),
                 close_web_sessions_for_task,

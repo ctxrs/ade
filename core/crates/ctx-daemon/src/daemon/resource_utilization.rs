@@ -203,8 +203,7 @@ mod tests {
                 .await
                 .expect("test daemon");
         let error = daemon
-            .route_handles()
-            .resource_utilization
+            .resource_utilization_handle_for_test()
             .workspace_resource_utilization_snapshot_for_route(resource_query("not-a-workspace"))
             .await
             .unwrap_err();
@@ -220,7 +219,7 @@ mod tests {
             TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
                 .await
                 .expect("test daemon");
-        let handle = daemon.route_handles().resource_utilization;
+        let handle = daemon.resource_utilization_handle_for_test();
         let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
             &handle,
             resource_query(WorkspaceId::new().0),
@@ -247,7 +246,7 @@ mod tests {
         daemon
             .cache_rehydration_begin_workspace_delete_for_test(workspace.id)
             .await;
-        let handle = daemon.route_handles().resource_utilization;
+        let handle = daemon.resource_utilization_handle_for_test();
         let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
             &handle,
             resource_query(workspace.id.0),
@@ -278,7 +277,7 @@ mod tests {
             .workspace_active_snapshot_make_store_unopenable_for_test(workspace.id)
             .await
             .expect("make workspace store unavailable");
-        let handle = daemon.route_handles().resource_utilization;
+        let handle = daemon.resource_utilization_handle_for_test();
         let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
             &handle,
             resource_query(workspace.id.0),

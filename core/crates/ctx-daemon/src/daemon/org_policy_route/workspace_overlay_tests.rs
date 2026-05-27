@@ -76,8 +76,7 @@ async fn workspace_overlay_route_missing_enrollment_wins_before_unavailable_work
         .expect("block workspace store");
 
     let error = match daemon
-        .route_handles()
-        .workspace_org_policy
+        .workspace_org_policy_handle_for_test()
         .upsert_workspace_policy_overlay_for_route(
             OrgPolicyWorkspaceRouteParams::new(workspace.id.0.to_string()),
             UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(workspace.id, OrgId::new())),
@@ -97,8 +96,7 @@ async fn workspace_overlay_route_put_deleting_workspace_returns_not_found() {
     let (_temp, daemon) = test_daemon().await;
     let org_id = OrgId::new();
     daemon
-        .route_handles()
-        .org_policy
+        .org_policy_handle_for_test()
         .upsert_daemon_enrollment_unchecked(enrollment(org_id))
         .await
         .expect("seed enrollment");
@@ -106,8 +104,7 @@ async fn workspace_overlay_route_put_deleting_workspace_returns_not_found() {
     daemon.stores().begin_workspace_delete(workspace.id).await;
 
     let error = match daemon
-        .route_handles()
-        .workspace_org_policy
+        .workspace_org_policy_handle_for_test()
         .upsert_workspace_policy_overlay_for_route(
             OrgPolicyWorkspaceRouteParams::new(workspace.id.0.to_string()),
             UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(workspace.id, org_id)),
@@ -133,8 +130,7 @@ async fn workspace_overlay_route_get_unavailable_workspace_store_returns_interna
         .expect("block workspace store");
 
     let error = match daemon
-        .route_handles()
-        .workspace_org_policy
+        .workspace_org_policy_handle_for_test()
         .get_workspace_policy_overlay_for_route(OrgPolicyWorkspaceRouteParams::new(
             workspace.id.0.to_string(),
         ))
