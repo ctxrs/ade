@@ -16,7 +16,7 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
         "provider_restart" => "Provider restart requested after sustained high memory usage.",
         _ => "Provider restart notice.",
     };
-    let session_ids = state.running_session_ids().await;
+    let session_ids = state.sessions.list_running_sessions().await;
     for session_id in session_ids {
         let store = match state.store_for_session(session_id).await {
             Ok(store) => store,
@@ -51,7 +51,7 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await
         {
-            Ok(event) => state.publish_event(event).await,
+            Ok(event) => state.session_publication.publish_event(event).await,
             Err(err) => tracing::warn!(
                 provider_id = %event.sample.provider_id,
                 session_id = %session_id.0,
@@ -69,7 +69,7 @@ async fn insert_system_message(
 ) -> Option<MessageId> {
     let now = Utc::now();
     let message_id = MessageId::new();
-    let order_seq_state = state.session_order_seq_state(store, session.id).await;
+    let order_seq_state = state.sessions.get_order_seq_state(store, session.id).await;
     let order_seq = {
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)

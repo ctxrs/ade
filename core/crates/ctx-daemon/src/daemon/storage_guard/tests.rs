@@ -85,7 +85,10 @@ async fn dispatches_storage_emergency_interrupts_to_running_sessions() {
             ctx_session_runtime::runtime::TimedEntry::new(tx),
         );
     }
-    state.set_running(session_id, true).await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, true)
+        .await;
 
     let interrupted = dispatch_storage_emergency_interrupt(&state, session_id).await;
     assert!(interrupted);

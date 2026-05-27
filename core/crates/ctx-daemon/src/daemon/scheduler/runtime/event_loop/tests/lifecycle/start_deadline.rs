@@ -26,7 +26,8 @@ async fn start_deadline_failure_finalizes_starting_turn_as_failed() {
 
     fixture
         .state
-        .session_scheduler_worker_host()
+        .session_scheduler_worker_host
+        .worker_host()
         .fail_starting_turn(
             fixture.session_id,
             RunningTurn {

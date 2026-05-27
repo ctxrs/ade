@@ -21,7 +21,10 @@ async fn event_loop_exits_without_persisting_when_host_owner_is_gone() {
     let (events_done_tx, events_done_rx) = oneshot::channel();
     let (start_progress_tx, _start_progress_rx) =
         tokio::sync::watch::channel(TurnStartProgress::Pending);
-    let host_weak = state.session_scheduler_worker_host().event_loop_host_weak();
+    let host_weak = state
+        .session_scheduler_worker_host
+        .worker_host()
+        .event_loop_host_weak();
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
         host_weak,
         store: store.clone(),

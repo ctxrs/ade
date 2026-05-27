@@ -59,7 +59,7 @@ async fn notify_sessions(
     state: &Arc<DaemonState>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
-    let session_ids = state.running_session_ids().await;
+    let session_ids = state.sessions.list_running_sessions().await;
     for session_id in session_ids {
         let store = match state.store_for_session(session_id).await {
             Ok(store) => store,
@@ -94,7 +94,7 @@ async fn notify_sessions(
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await
         {
-            Ok(event) => state.publish_event(event).await,
+            Ok(event) => state.session_publication.publish_event(event).await,
             Err(err) => tracing::warn!(
                 provider_id = %session.provider_id,
                 session_id = %session_id.0,

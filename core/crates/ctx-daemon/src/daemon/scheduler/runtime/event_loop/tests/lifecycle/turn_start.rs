@@ -12,7 +12,8 @@ async fn turn_started_event_promotes_starting_turn_to_running() {
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
         host_weak: fixture
             .state
-            .session_scheduler_worker_host()
+            .session_scheduler_worker_host
+            .worker_host()
             .event_loop_host_weak(),
         store: fixture.store.clone(),
         session_id: fixture.session_id,
@@ -77,7 +78,8 @@ async fn event_loop_ignores_non_terminal_turn_finished_status() {
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
         host_weak: fixture
             .state
-            .session_scheduler_worker_host()
+            .session_scheduler_worker_host
+            .worker_host()
             .event_loop_host_weak(),
         store: fixture.store.clone(),
         session_id: fixture.session_id,

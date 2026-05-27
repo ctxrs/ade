@@ -109,7 +109,7 @@ mod tests {
     ) {
         let store = state.store_for_session(session_id).await.unwrap();
         let session = store.get_session(session_id).await.unwrap().unwrap();
-        state.cleanup_session(session.id).await;
+        state.task_session_cleanup.cleanup_session(session.id).await;
         state
             .core
             .stores

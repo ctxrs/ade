@@ -26,7 +26,7 @@ impl SchedulerPersistenceHost for std::sync::Arc<DaemonState> {
     }
 
     async fn publish_event(&self, event: SessionEvent) {
-        DaemonState::publish_event(self, event).await;
+        self.session_publication.publish_event(event).await;
     }
 }
 

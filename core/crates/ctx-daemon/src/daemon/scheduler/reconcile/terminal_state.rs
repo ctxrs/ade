@@ -28,11 +28,13 @@ impl TerminalStateReconcileHost for Arc<DaemonState> {
     }
 
     async fn publish_event(&self, event: SessionEvent) {
-        DaemonState::publish_event(self, event).await;
+        self.session_publication.publish_event(event).await;
     }
 
     async fn set_running(&self, session_id: SessionId, running: bool) {
-        DaemonState::set_running(self.as_ref(), session_id, running).await;
+        self.task_session_cleanup
+            .set_running(session_id, running)
+            .await;
     }
 }
 

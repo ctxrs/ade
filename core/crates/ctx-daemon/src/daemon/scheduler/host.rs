@@ -63,6 +63,7 @@ pub(in crate::daemon) struct SessionSchedulerWorkerHost {
     turn_runtime: Arc<TurnRuntimeHost>,
 }
 
+#[derive(Clone)]
 pub(in crate::daemon) struct SessionSchedulerWorkerHostParts {
     pub(in crate::daemon) session_stores: SessionStoreLookup,
     pub(in crate::daemon) session_runtime: Arc<SessionRuntime>,

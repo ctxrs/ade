@@ -68,7 +68,7 @@ async fn dispatch_storage_emergency_interrupts(
     state: &Arc<DaemonState>,
     snapshot: &StorageGuardStatus,
 ) {
-    let running_sessions = state.running_session_ids().await;
+    let running_sessions = state.sessions.list_running_sessions().await;
     let mut interrupted = 0usize;
     for session_id in running_sessions {
         if dispatch_storage_emergency_interrupt(state, session_id).await {
@@ -88,7 +88,7 @@ pub(super) async fn dispatch_storage_emergency_interrupt(
     state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> bool {
-    let Some(tx) = state.session_scheduler_sender(session_id).await else {
+    let Some(tx) = state.sessions.scheduler_sender(session_id).await else {
         return false;
     };
     tx.send(SchedulerCommand::StorageEmergency).await.is_ok()

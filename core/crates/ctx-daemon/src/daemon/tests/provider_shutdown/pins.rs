@@ -16,10 +16,22 @@ async fn running_state_updates_provider_worker_pin_once_per_transition() {
     ));
     let session_id = ctx_core::ids::SessionId(uuid::Uuid::new_v4());
 
-    state.set_running(session_id, true).await;
-    state.set_running(session_id, true).await;
-    state.set_running(session_id, false).await;
-    state.set_running(session_id, false).await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, true)
+        .await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, true)
+        .await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, false)
+        .await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, false)
+        .await;
 
     assert_eq!(
         adapter.pin_calls(),
@@ -46,10 +58,10 @@ async fn attachment_state_updates_provider_worker_pin_once_per_connection_lifecy
     ));
     let session_id = ctx_core::ids::SessionId(uuid::Uuid::new_v4());
 
-    state.attach_session(session_id).await;
-    state.attach_session(session_id).await;
-    state.detach_session(session_id).await;
-    state.detach_session(session_id).await;
+    state.task_session_cleanup.attach_session(session_id).await;
+    state.task_session_cleanup.attach_session(session_id).await;
+    state.task_session_cleanup.detach_session(session_id).await;
+    state.task_session_cleanup.detach_session(session_id).await;
 
     assert_eq!(
         adapter.pin_calls(),
@@ -76,10 +88,16 @@ async fn running_and_attachment_leases_share_one_provider_pin_state() {
     ));
     let session_id = ctx_core::ids::SessionId(uuid::Uuid::new_v4());
 
-    state.set_running(session_id, true).await;
-    state.attach_session(session_id).await;
-    state.set_running(session_id, false).await;
-    state.detach_session(session_id).await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, true)
+        .await;
+    state.task_session_cleanup.attach_session(session_id).await;
+    state
+        .task_session_cleanup
+        .set_running(session_id, false)
+        .await;
+    state.task_session_cleanup.detach_session(session_id).await;
 
     assert_eq!(
         adapter.pin_calls(),

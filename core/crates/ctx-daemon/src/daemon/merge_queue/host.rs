@@ -233,7 +233,7 @@ impl MergeQueueHost for DaemonState {
         let notice = store
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await?;
-        state.publish_event(notice).await;
+        state.session_publication.publish_event(notice).await;
         Ok(())
     }
 

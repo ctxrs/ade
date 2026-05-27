@@ -84,7 +84,7 @@ pub(super) async fn block_workspace_store_for_session(
     state: &Arc<DaemonState>,
     session: &Session,
 ) {
-    state.cleanup_session(session.id).await;
+    state.task_session_cleanup.cleanup_session(session.id).await;
     state
         .core
         .stores

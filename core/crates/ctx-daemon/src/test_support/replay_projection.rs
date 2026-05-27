@@ -389,7 +389,7 @@ impl TestDaemon {
     }
 
     async fn publish_replay_projection_event_for_test(&self, event: SessionEvent) {
-        self.state.publish_event(event).await;
+        self.state.session_publication.publish_event(event).await;
     }
 
     async fn refresh_replay_projection_for_test(
@@ -397,7 +397,10 @@ impl TestDaemon {
         workspace_id: WorkspaceId,
         session_id: SessionId,
     ) -> anyhow::Result<()> {
-        self.state.refresh_session_head_cache(session_id).await;
+        self.state
+            .task_session_cleanup
+            .refresh_session_head_cache(session_id)
+            .await;
         self.state
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await

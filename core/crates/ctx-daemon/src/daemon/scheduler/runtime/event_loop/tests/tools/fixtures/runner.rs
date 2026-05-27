@@ -12,7 +12,8 @@ impl ToolEventLoopFixture {
         let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
             host_weak: self
                 .state
-                .session_scheduler_worker_host()
+                .session_scheduler_worker_host
+                .worker_host()
                 .event_loop_host_weak(),
             store: self.store.clone(),
             session_id: self.session_id,

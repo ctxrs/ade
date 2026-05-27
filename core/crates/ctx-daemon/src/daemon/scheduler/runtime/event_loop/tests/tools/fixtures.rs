@@ -37,7 +37,12 @@ impl ToolEventLoopFixture {
             "http://localhost".to_string(),
             None,
         );
-        app_state.core.tool_output_spool_enabled = spool_enabled;
+        app_state
+            .session_scheduler_worker_host
+            .configure_tool_output_spool_for_test(
+                spool_enabled,
+                app_state.core.tool_output_spool_dir.clone(),
+            );
         if spool_enabled {
             std::fs::create_dir_all(&app_state.core.tool_output_spool_dir)
                 .expect("tool output spool dir");

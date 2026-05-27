@@ -121,14 +121,10 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/scheduler/terminal/finalize.rs",
   "core/crates/ctx-daemon/src/daemon/serve/background.rs",
   "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog/loader.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/pinning.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/runtime/head_cache.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/runtime/publication.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
   "core/crates/ctx-daemon/src/daemon/settings.rs",
@@ -167,7 +163,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
 ]);
 const daemonStateBoundaryAllowedAppStatePaths = new Set([
-  "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
 ]);

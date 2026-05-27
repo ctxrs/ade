@@ -515,7 +515,7 @@ impl DaemonHandle {
             session_stores: self.session_store_lookup(),
             session_runtime: Arc::clone(&self.state.sessions),
             scheduler_spawner: SessionMessageSchedulerSpawner::new(Arc::downgrade(
-                &self.state.session_scheduler_worker_host(),
+                &self.state.session_scheduler_worker_host.worker_host(),
             )),
             perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
             provider_launch: self.provider_workspace_launch_runtime(),
@@ -565,7 +565,7 @@ impl DaemonHandle {
             self.state.core.data_root.clone(),
             self.session_title_model_mode(),
             SessionMessageSchedulerSpawner::new(Arc::downgrade(
-                &self.state.session_scheduler_worker_host(),
+                &self.state.session_scheduler_worker_host.worker_host(),
             )),
         )
     }
@@ -661,7 +661,7 @@ impl DaemonHandle {
         });
         let session_stores = self.session_store_lookup();
         let scheduler_spawner = SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(
-            &self.state.session_scheduler_worker_host(),
+            &self.state.session_scheduler_worker_host.worker_host(),
         ));
         let publish_host = SessionSubagentMcpControlPublicationHost::new(
             session_stores.clone(),
@@ -1094,7 +1094,7 @@ impl DaemonHandle {
             self.session_publication_effects(),
             Arc::clone(&self.state.sessions),
             SessionMessageSchedulerSpawner::new(Arc::downgrade(
-                &self.state.session_scheduler_worker_host(),
+                &self.state.session_scheduler_worker_host.worker_host(),
             )),
             self.session_title_model_mode(),
             self.task_publication_host(),

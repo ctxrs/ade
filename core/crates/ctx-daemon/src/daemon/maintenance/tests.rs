@@ -257,7 +257,10 @@ async fn shutdown_route_interrupts_running_scheduler_sessions() {
             let _ = seen_tx.send(interrupted).await;
         })
         .await;
-    state.set_running(session.id, true).await;
+    state
+        .task_session_cleanup
+        .set_running(session.id, true)
+        .await;
 
     let result = handle
         .daemon_shutdown()
@@ -281,7 +284,10 @@ async fn shutdown_route_interrupts_running_scheduler_sessions() {
 async fn shutdown_route_tolerates_running_sessions_without_scheduler_sender() {
     let (data_dir, state) = test_state_with_shutdown_token(Some("secret".to_string())).await;
     let session = insert_session(&state, data_dir.path()).await.1;
-    state.set_running(session.id, true).await;
+    state
+        .task_session_cleanup
+        .set_running(session.id, true)
+        .await;
     let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).daemon_shutdown();
 
     let result = handle

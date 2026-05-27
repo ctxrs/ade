@@ -23,7 +23,7 @@ use super::task_route_handles::{
 use super::{session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup};
 
 #[derive(Clone)]
-pub(in crate::daemon) struct SessionPublicationEffects {
+pub(crate) struct SessionPublicationEffects {
     session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
     host: RouteSessionPublicationHost,
 }
@@ -40,7 +40,7 @@ impl SessionPublicationEffects {
         }
     }
 
-    pub(in crate::daemon) async fn publish_event(&self, event: SessionEvent) {
+    pub(crate) async fn publish_event(&self, event: SessionEvent) {
         self.session_runtime
             .publish_event_with_host(&self.host, event)
             .await;
@@ -366,7 +366,7 @@ impl SessionTaskDeltaRefreshHost for TaskPublicationHost {
 }
 
 #[derive(Clone)]
-pub(in crate::daemon) struct TaskSessionCleanupHost {
+pub(crate) struct TaskSessionCleanupHost {
     global_store: Store,
     session_runtime: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
     providers: Arc<ProviderRuntime>,
@@ -391,7 +391,27 @@ impl TaskSessionCleanupHost {
         }
     }
 
-    pub(in crate::daemon) async fn cleanup_session(&self, session_id: SessionId) {
+    pub(crate) async fn set_running(&self, session_id: SessionId, running: bool) {
+        self.session_runtime
+            .set_running_with_host(self, session_id, running)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn attach_session(&self, session_id: SessionId) {
+        self.session_runtime
+            .attach_session_with_host(self, session_id)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn detach_session(&self, session_id: SessionId) {
+        self.session_runtime
+            .detach_session_with_host(self, session_id)
+            .await;
+    }
+
+    pub(crate) async fn cleanup_session(&self, session_id: SessionId) {
         self.session_runtime
             .cleanup_session_with_host(self, session_id)
             .await;
@@ -401,7 +421,7 @@ impl TaskSessionCleanupHost {
         self.active_snapshot.remove_session(session_id).await;
     }
 
-    pub(in crate::daemon) async fn refresh_session_head_cache(&self, session_id: SessionId) {
+    pub(crate) async fn refresh_session_head_cache(&self, session_id: SessionId) {
         self.session_runtime
             .refresh_session_head_cache_with_host(self, session_id)
             .await;

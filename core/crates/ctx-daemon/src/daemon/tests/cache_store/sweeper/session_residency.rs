@@ -65,7 +65,10 @@ async fn sweeper_eviction_keeps_active_entries() {
         .sessions
         .subscribe_session_event_head(session.id)
         .await;
-    let _ = state.ensure_scheduler(session.clone()).await;
+    let _ = state
+        .session_scheduler_worker_host
+        .ensure_scheduler(&state.sessions, session.clone())
+        .await;
 
     let now = Instant::now();
     {

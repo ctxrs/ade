@@ -4,9 +4,12 @@ use crate::daemon::state::{DaemonState, WorkspaceRuntime};
 
 impl WorkspaceRuntime {
     pub async fn cleanup_workspace(&self, state: &DaemonState, workspace_id: WorkspaceId) {
-        let session_ids = state.cached_session_ids_for_workspace(workspace_id).await;
+        let session_ids = state
+            .sessions
+            .cached_session_ids_for_workspace(workspace_id)
+            .await;
         for session_id in session_ids {
-            state.cleanup_session(session_id).await;
+            state.task_session_cleanup.cleanup_session(session_id).await;
         }
         {
             let mut cache = self.workspace_active_snapshot_cache.lock().await;

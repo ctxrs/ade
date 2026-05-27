@@ -75,7 +75,7 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         )
         .await?;
     for event in persisted {
-        state.publish_event(event).await;
+        state.session_publication.publish_event(event).await;
     }
     Ok(())
 }

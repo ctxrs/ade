@@ -79,7 +79,10 @@ async fn opening_workspace_does_not_evict_active_workspace_store() {
         )
         .await
         .unwrap();
-    let _ = state.ensure_scheduler(session_a).await;
+    let _ = state
+        .session_scheduler_worker_host
+        .ensure_scheduler(&state.sessions, session_a)
+        .await;
 
     let _ = state.store_for_workspace(workspace_b.id).await.unwrap();
     assert_eq!(stores.stats().await.workspace_store_count, 2);

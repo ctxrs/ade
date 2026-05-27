@@ -12,8 +12,9 @@ use ctx_worktree_vcs_service::{
     GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
     WorktreeVcsSnapshotCacheEntry,
 };
-use std::sync::OnceLock;
 
+use crate::daemon::sessions::SessionSchedulerWorkerHostFactory;
+use crate::daemon::task_session_effects::{SessionPublicationEffects, TaskSessionCleanupHost};
 use crate::daemon::workspaces::attachments::WorkspaceAttachmentMaterializationRuntime;
 
 pub(crate) type WorkspaceFileCompletionsCache =
@@ -28,7 +29,6 @@ pub(crate) type WorkspaceActiveHeadsCache =
 pub struct CoreState {
     pub(crate) data_root: PathBuf,
     pub(crate) storage_guard: Arc<StorageGuardRuntime>,
-    pub(crate) tool_output_spool_enabled: bool,
     pub(crate) tool_output_spool_dir: PathBuf,
     pub(crate) stores: StoreManager,
     pub(crate) daemon_url: String,
@@ -100,8 +100,9 @@ pub struct DaemonState {
     pub(crate) telemetry: TelemetryRuntime,
     pub(crate) transport: TransportRuntime,
     pub(crate) execution: ExecutionRuntime,
-    pub(in crate::daemon) scheduler_worker_host:
-        OnceLock<Arc<crate::daemon::scheduler::SessionSchedulerWorkerHost>>,
+    pub(crate) session_publication: SessionPublicationEffects,
+    pub(crate) task_session_cleanup: TaskSessionCleanupHost,
+    pub(in crate::daemon) session_scheduler_worker_host: SessionSchedulerWorkerHostFactory,
 }
 
 pub enum StoreLookup {

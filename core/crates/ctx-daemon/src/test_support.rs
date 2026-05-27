@@ -671,7 +671,10 @@ impl TestDaemon {
     }
 
     pub async fn set_session_running(&self, session_id: SessionId, running: bool) {
-        self.state.set_running(session_id, running).await;
+        self.state
+            .task_session_cleanup
+            .set_running(session_id, running)
+            .await;
     }
 
     pub async fn cache_worktree_vcs_snapshot_for_test(&self, snapshot: WorktreeVcsSnapshot) {
@@ -679,7 +682,7 @@ impl TestDaemon {
     }
 
     pub async fn is_session_running(&self, session_id: SessionId) -> bool {
-        self.state.is_session_running(session_id).await
+        self.state.sessions.is_running(session_id).await
     }
 
     pub async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
@@ -706,7 +709,10 @@ impl TestDaemon {
     }
 
     pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<tokio::sync::Mutex<()>> {
-        self.state.task_session_creation_lock(task_id).await
+        self.state
+            .sessions
+            .task_session_creation_lock(task_id)
+            .await
     }
 
     pub async fn seed_task_default_workspace_for_test(
@@ -952,7 +958,11 @@ impl TestDaemon {
         &self,
         task_id: TaskId,
     ) -> TaskSessionCreationLockGuardForTest {
-        let lock = self.state.task_session_creation_lock(task_id).await;
+        let lock = self
+            .state
+            .sessions
+            .task_session_creation_lock(task_id)
+            .await;
         let guard = lock.clone().lock_owned().await;
         TaskSessionCreationLockGuardForTest {
             _lock: lock,
@@ -2878,7 +2888,10 @@ impl TestDaemon {
             .map_err(|err| anyhow::anyhow!("refresh active session head projection: {err}"))?;
 
         self.state.emit_workspace_task_upsert(task_id).await?;
-        self.state.refresh_session_head_cache(session_id).await;
+        self.state
+            .task_session_cleanup
+            .refresh_session_head_cache(session_id)
+            .await;
 
         let head_snapshot = store
             .get_session_head_snapshot(session_id, session_head_limit, include_events)
@@ -2981,7 +2994,7 @@ impl TestDaemon {
         event: SessionEvent,
         settle_for: Duration,
     ) -> anyhow::Result<i64> {
-        self.state.publish_event(event).await;
+        self.state.session_publication.publish_event(event).await;
         tokio::time::sleep(settle_for).await;
         let active_heads = self
             .state
@@ -3157,7 +3170,10 @@ impl TestDaemon {
     }
 
     pub async fn cache_rehydration_cleanup_session_for_test(&self, session_id: SessionId) {
-        self.state.cleanup_session(session_id).await;
+        self.state
+            .task_session_cleanup
+            .cleanup_session(session_id)
+            .await;
     }
 
     pub async fn cache_rehydration_cleanup_workspace_for_test(&self, workspace_id: WorkspaceId) {
@@ -3275,7 +3291,10 @@ impl TestDaemon {
             .await?
             .append_session_event(session.id, run_id, turn_id, event_type, payload_json)
             .await?;
-        self.state.publish_event(event.clone()).await;
+        self.state
+            .session_publication
+            .publish_event(event.clone())
+            .await;
         Ok(event)
     }
 

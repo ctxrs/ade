@@ -57,9 +57,9 @@ pub async fn delete_queued_session_message(
         )
         .await
         .map_err(|_| SessionSchedulerCommandError::StoreUnavailable)?;
-    state.publish_event(removed).await;
+    state.session_publication.publish_event(removed).await;
 
-    if let Some(tx) = state.session_scheduler_sender(msg.session_id).await {
+    if let Some(tx) = state.sessions.scheduler_sender(msg.session_id).await {
         let _ = tx.send(SchedulerCommand::RemoveQueued(message_id)).await;
     }
     Ok(())
@@ -72,7 +72,10 @@ pub async fn enqueue_user_message_for_scheduler(
     message: Message,
     run_id_header: Option<String>,
 ) {
-    let tx = state.ensure_scheduler(session.clone()).await;
+    let tx = state
+        .session_scheduler_worker_host
+        .ensure_scheduler(&state.sessions, session.clone())
+        .await;
     let queued = QueuedMessage {
         message: message.clone(),
         enqueued_at: Instant::now(),

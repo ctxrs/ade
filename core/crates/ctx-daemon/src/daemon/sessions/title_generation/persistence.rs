@@ -20,7 +20,7 @@ pub async fn apply_session_title_update(
     }
 
     if let Ok(Some(updated_session)) = store.get_session(session.id).await {
-        state.remember_session_meta(&updated_session).await;
+        state.sessions.remember_session_meta(&updated_session).await;
     }
 
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
@@ -60,7 +60,7 @@ pub async fn apply_session_title_update(
         )
         .await;
     if let Ok(event) = notice {
-        state.publish_event(event).await;
+        state.session_publication.publish_event(event).await;
     }
 
     Ok(())
