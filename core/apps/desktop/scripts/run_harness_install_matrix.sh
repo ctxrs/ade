@@ -8,6 +8,7 @@ DAEMON_BIN="${CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN:-${CTX_DAEMON_BIN:-}}"
 APP_PATH="${CTX_HARNESS_INSTALL_MATRIX_APP:-${CTX_DESKTOP_APP:-}}"
 BUNDLE_DIR="${CTX_HARNESS_INSTALL_MATRIX_BUNDLE_DIR:-${CTX_BUNDLE_DIR:-}}"
 TIMEOUT_SECONDS="${CTX_HARNESS_INSTALL_MATRIX_TIMEOUT_SECONDS:-900}"
+RELEASE_PLAN_PATH="${CTX_HARNESS_INSTALL_MATRIX_RELEASE_PLAN:-}"
 
 usage() {
   cat <<'USAGE'
@@ -51,6 +52,10 @@ FAIL_FAST=0
 ARTIFACTS_DIR="${CTX_HARNESS_INSTALL_MATRIX_ARTIFACTS_DIR:-}"
 declare -a REQUESTED_PROVIDERS=()
 declare -a REQUESTED_CELLS=()
+
+source_sha() {
+  git -C "${ROOT}" rev-parse HEAD
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -134,6 +139,22 @@ case "${TARGET}" in
     exit 1
     ;;
 esac
+
+if [[ -n "${RELEASE_PLAN_PATH}" ]]; then
+  if [[ ! -f "${RELEASE_PLAN_PATH}" ]]; then
+    echo "error: resolved release plan not found: ${RELEASE_PLAN_PATH}" >&2
+    exit 1
+  fi
+  node - "${RELEASE_PLAN_PATH}" "$(source_sha)" <<'NODE'
+const fs = require("node:fs");
+const [releasePlanPath, expectedSourceCommit] = process.argv.slice(2);
+const plan = JSON.parse(fs.readFileSync(releasePlanPath, "utf8"));
+if (String(plan.source_commit || "").trim() !== expectedSourceCommit) {
+  console.error(`error: resolved release plan source_commit mismatch: expected ${expectedSourceCommit}, got ${plan.source_commit || "<missing>"}`);
+  process.exit(1);
+}
+NODE
+fi
 
 if [[ ! -f "${FIXTURE}" ]]; then
   echo "error: harness install matrix fixture not found: ${FIXTURE}" >&2
@@ -324,6 +345,7 @@ write_evidence() {
   PLATFORM="${PLATFORM}" \
   TARGET="${TARGET}" \
   ARTIFACTS_DIR="${ARTIFACTS_DIR}" \
+  RELEASE_PLAN_PATH="${RELEASE_PLAN_PATH}" \
   DRY_RUN="${DRY_RUN}" \
   FAILURES="${failures}" \
   ROOT="${ROOT}" \
@@ -332,6 +354,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const childProcess = require("node:child_process");
+const { buildReleasePlanEvidenceDigest } = require(`${process.env.ROOT}/core/scripts/lib/release_evidence_validation.cjs`);
 
 const readFile = (filePath) => fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
 const sha256File = (filePath) => crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -351,6 +374,14 @@ const statusCounts = results.reduce((acc, row) => {
   acc[row.status] = (acc[row.status] || 0) + 1;
   return acc;
 }, {});
+const releasePlanPath = String(process.env.RELEASE_PLAN_PATH || "").trim();
+const releasePlan = releasePlanPath
+  ? JSON.parse(fs.readFileSync(releasePlanPath, "utf8"))
+  : null;
+if (releasePlan && String(releasePlan.source_commit || "").trim() !== sourceSha) {
+  throw new Error(`resolved release plan source_commit mismatch: expected ${sourceSha}, got ${releasePlan.source_commit || "<missing>"}`);
+}
+const releasePlanDigest = releasePlan ? buildReleasePlanEvidenceDigest(releasePlan) : "";
 const payload = {
   schema_version: 1,
   kind: "ctx.harness_install_matrix_evidence.v1",
@@ -374,6 +405,8 @@ const payload = {
     machine: os.machine ? os.machine() : "",
   },
   artifacts_dir: process.env.ARTIFACTS_DIR,
+  release_plan_digest: releasePlanDigest || undefined,
+  release_plan_id: releasePlanDigest ? `release-plan-sha256:${releasePlanDigest}` : undefined,
   selected_cells: JSON.parse(process.env.SELECTED_JSON),
   result_counts: statusCounts,
   failed_cells: results.filter((row) => row.status === "failed").map((row) => row.id),

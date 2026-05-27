@@ -60,6 +60,50 @@ const writeFixture = (tmpDir) => {
   return fixturePath;
 };
 
+const writeReleasePlan = (tmpDir) => {
+  const sourceCommit = childProcess.execFileSync("git", ["-C", repoRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const releasePlanPath = path.join(tmpDir, "resolved_release_plan.json");
+  fs.writeFileSync(releasePlanPath, `${JSON.stringify({
+    schema_version: 1,
+    generated_at: "2026-05-26T00:00:00.000Z",
+    kind: "resolved_release_plan",
+    source_commit: sourceCommit,
+    release_version: "1.2.3",
+    channel: "stable",
+    storage_channel: "stable",
+    release_scope: "auto",
+    provider_manifest: {
+      digest_sha256: "b".repeat(64),
+      id: "provider-manifest-stable",
+      required_provider_ids: ["codex"],
+      source_commit: sourceCommit,
+      url: "https://example.invalid/provider-manifest.json",
+    },
+    inventory: {
+      provider_artifact_policy: "required",
+      required_provider_ids: ["codex"],
+      missing_provider_ids: [],
+      empty_target_provider_ids: [],
+      required_targets: [{
+        provider_id: "codex",
+        target_key: "linux-x64",
+        url: "https://example.invalid/codex.tar.zst",
+        sha256: "a".repeat(64),
+      }],
+    },
+  }, null, 2)}\n`, "utf8");
+  return releasePlanPath;
+};
+
+const writeMismatchedReleasePlan = (tmpDir) => {
+  const releasePlanPath = writeReleasePlan(tmpDir);
+  const plan = JSON.parse(fs.readFileSync(releasePlanPath, "utf8"));
+  plan.source_commit = "f".repeat(40);
+  plan.provider_manifest.source_commit = "f".repeat(40);
+  fs.writeFileSync(releasePlanPath, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
+  return releasePlanPath;
+};
+
 const cell = (lanes, installTarget) => ({
   support: "supported",
   lanes,
@@ -236,6 +280,50 @@ test("run_harness_install_matrix continues through failures and reports all sele
   assert.equal(evidence.selection.platform, "linux");
   assert.deepEqual(evidence.failed_cells, ["gemini.linux.host"]);
   assert.ok(evidence.host.arch);
+});
+
+test("run_harness_install_matrix binds evidence to resolved release plan identity", () => {
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-harness-install-matrix-"));
+  const fixturePath = writeFixture(tmpDir);
+  const smokePath = writeSmokeScript(tmpDir);
+  const releasePlanPath = writeReleasePlan(tmpDir);
+  const artifactsDir = path.join(tmpDir, "artifacts");
+  const result = runScript({
+    fixturePath,
+    smokePath,
+    artifactsDir,
+    extraArgs: ["--lane", "release", "--platform", "linux", "--target", "host", "--provider", "codex", "--dry-run"],
+    extraEnv: {
+      CTX_HARNESS_INSTALL_MATRIX_RELEASE_PLAN: releasePlanPath,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const evidence = JSON.parse(fs.readFileSync(path.join(artifactsDir, "harness-install-evidence.json"), "utf8"));
+  assert.match(evidence.release_plan_digest, /^[a-f0-9]{64}$/u);
+  assert.equal(evidence.release_plan_id, `release-plan-sha256:${evidence.release_plan_digest}`);
+});
+
+test("run_harness_install_matrix rejects release plan source mismatch before running cells", () => {
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-harness-install-matrix-"));
+  const fixturePath = writeFixture(tmpDir);
+  const smokePath = writeSmokeScript(tmpDir);
+  const releasePlanPath = writeMismatchedReleasePlan(tmpDir);
+  const smokeArgs = path.join(tmpDir, "smoke-args.log");
+  const result = runScript({
+    fixturePath,
+    smokePath,
+    artifactsDir: path.join(tmpDir, "artifacts"),
+    extraArgs: ["--lane", "release", "--platform", "linux", "--target", "host"],
+    extraEnv: {
+      CTX_HARNESS_INSTALL_MATRIX_RELEASE_PLAN: releasePlanPath,
+      CTX_TEST_SMOKE_ARGS: smokeArgs,
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /resolved release plan source_commit mismatch/);
+  assert.equal(fs.existsSync(smokeArgs), false);
 });
 
 test("run_harness_install_matrix fail-fast stops after the first failing cell", () => {
