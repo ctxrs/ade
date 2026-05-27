@@ -195,6 +195,7 @@ const {
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
   scanDeletedBroadDomainMacroSourceRatchet,
+  scanDaemonStateBoundaryRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
@@ -695,6 +696,126 @@ test("deleted broad domain handle ratchet scans daemon test support surfaces", (
 
 test("deleted broad domain macro source ratchet scans source roots only", () => {
   assert.deepEqual(scanDeletedBroadDomainMacroSourceRatchet(), []);
+});
+
+test("daemon state boundary ratchet rejects new broad production seams", () => {
+  const violations = scanDaemonStateBoundaryRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/new_runtime_glue.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::{DaemonHandle, DaemonState};
+
+      pub async fn run(handle: DaemonHandle, state: &Arc<DaemonState>) {
+        let _ = (handle, state);
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("daemon state boundary adds broad daemon state seam"));
+});
+
+test("daemon state boundary ratchet allows current broad baseline files", () => {
+  const baselineFixtures = [
+    "core/crates/ctx-daemon/src/daemon/handle.rs",
+    "core/crates/ctx-daemon/src/daemon/state.rs",
+    "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
+  ];
+
+  for (const filePath of baselineFixtures) {
+    assert.deepEqual(
+      scanDaemonStateBoundaryRatchet({
+        filePath,
+        contents: `
+          use crate::daemon::DaemonState;
+          impl DaemonState {
+            pub fn current_baseline_fixture(&self) {}
+          }
+        `,
+      }),
+      [],
+    );
+  }
+});
+
+test("daemon state boundary ratchet rejects new app_state modules", () => {
+  for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/providers/app_state.rs",
+    "core/crates/ctx-daemon/src/daemon/workspaces/app_state/new.rs",
+  ]) {
+    const violations = scanDaemonStateBoundaryRatchet({
+      filePath,
+      contents: "pub struct NewAppState;",
+    }).map((violation) => violation.name);
+
+    assert(violations.includes("daemon state boundary adds new app_state module"));
+  }
+});
+
+test("daemon state boundary ratchet rejects capability structs with broad state", () => {
+  const violations = scanDaemonStateBoundaryRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/scheduler/request_fixture.rs",
+    contents: `
+      use std::sync::{Arc, Weak};
+      use crate::daemon::{DaemonHandle, DaemonState};
+
+      pub struct ProviderTurnSpawnRequest<'a> {
+        state: &'a Arc<DaemonState>,
+      }
+
+      pub struct SubagentSpawnHost {
+        daemon: DaemonHandle,
+      }
+
+      pub struct TaskWorktreeHostParts {
+        daemon_state: Arc<DaemonState>,
+        state_weak: Weak<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes(
+      "daemon state boundary stores broad daemon state in capability struct",
+    ),
+  );
+});
+
+test("daemon state boundary ratchet rejects new DaemonState impls", () => {
+  const violations = scanDaemonStateBoundaryRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/new_host.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+
+      impl DaemonState {
+        pub fn leaked_method(&self) {}
+      }
+
+      impl WorkspaceLaunchHost for DaemonState {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("daemon state boundary adds broad DaemonState impl"));
+  assert(violations.includes("daemon state boundary adds broad DaemonState host impl"));
+});
+
+test("daemon state boundary ratchet allows daemon test support broad state", () => {
+  assert.deepEqual(
+    scanDaemonStateBoundaryRatchet({
+      filePath: "core/crates/ctx-daemon/src/test_support.rs",
+      contents: `
+        use std::sync::Arc;
+        use crate::daemon::{DaemonHandle, DaemonState};
+
+        pub struct TestHarness {
+          state: Arc<DaemonState>,
+          handle: DaemonHandle,
+        }
+      `,
+    }),
+    [],
+  );
 });
 
 test("route state aggregate ratchet rejects broad route aggregate extraction", () => {

@@ -64,6 +64,113 @@ const DAEMON_ROUTE_HANDLES_ALLOWED_PATHS = new Set([
   "core/crates/ctx-http/tests/common/mod.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
 ]);
+const daemonStateBoundaryBroadPathBaseline = new Set([
+  "core/crates/ctx-daemon/src/daemon.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/collect.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/sandbox.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
+  "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
+  "core/crates/ctx-daemon/src/daemon/execution_effective/execution_effective_test/mod.rs",
+  "core/crates/ctx-daemon/src/daemon/execution_setup.rs",
+  "core/crates/ctx-daemon/src/daemon/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
+  "core/crates/ctx-daemon/src/daemon/maintenance.rs",
+  "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
+  "core/crates/ctx-daemon/src/daemon/managed_installs_host.rs",
+  "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
+  "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/sessions.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/workspaces.rs",
+  "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
+  "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
+  "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
+  "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_guard.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_guard/events.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_guard/snapshot.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_launch_host/install.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_launch_host/probe.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_restart.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_runtime.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/harness_config.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/launch_config.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/options/effective_preference.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/options_cache.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/restarts.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/runtime_probe.rs",
+  "core/crates/ctx-daemon/src/daemon/providers/status.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs",
+  "core/crates/ctx-daemon/src/daemon/runtime.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/persistence.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/provider_exit.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/terminal_state.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/terminal/finalize.rs",
+  "core/crates/ctx-daemon/src/daemon/serve/background.rs",
+  "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/model_catalog.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/model_catalog/loader.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/pinning.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/runtime/head_cache.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/runtime/publication.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+  "core/crates/ctx-daemon/src/daemon/settings.rs",
+  "core/crates/ctx-daemon/src/daemon/state.rs",
+  "core/crates/ctx-daemon/src/daemon/state/builder.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/sessions.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/stores.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/workspaces.rs",
+  "core/crates/ctx-daemon/src/daemon/state/installs/lifecycle.rs",
+  "core/crates/ctx-daemon/src/daemon/state/installs/lifecycle/finish.rs",
+  "core/crates/ctx-daemon/src/daemon/state/installs/mirrors.rs",
+  "core/crates/ctx-daemon/src/daemon/state/installs/progress.rs",
+  "core/crates/ctx-daemon/src/daemon/state/installs/queries.rs",
+  "core/crates/ctx-daemon/src/daemon/state/metrics.rs",
+  "core/crates/ctx-daemon/src/daemon/state/store_lookup.rs",
+  "core/crates/ctx-daemon/src/daemon/state/types.rs",
+  "core/crates/ctx-daemon/src/daemon/state/worktree_data_plane.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs",
+  "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
+  "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/hydration.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/cleanup.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/runtime/task_events.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks/host.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
+]);
+const daemonStateBoundaryAllowedAppStatePaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/app_state.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/app_state.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/app_state/worktree_vcs.rs",
+]);
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
   "core/crates/ctx-http/src/api/tasks/",
@@ -16876,6 +16983,130 @@ function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
   return violations;
 }
 
+function daemonStateBoundaryLineForIndex(contents, index) {
+  return contents.slice(0, index).split(/\r?\n/u).length;
+}
+
+function isDaemonStateBoundaryAppStatePath(filePath) {
+  const normalized = filePath.split(path.sep).join("/");
+  return normalized.endsWith("/app_state.rs") || normalized.includes("/app_state/");
+}
+
+function scanDaemonStateBoundaryRatchet({
+  filePath,
+  contents,
+  broadPathBaseline = daemonStateBoundaryBroadPathBaseline,
+}) {
+  if (
+    !filePath.startsWith("core/crates/ctx-daemon/src/daemon/")
+    && filePath !== "core/crates/ctx-daemon/src/daemon.rs"
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const pushMatch = ({ index, name, text }) => {
+    const line = daemonStateBoundaryLineForIndex(contents, index);
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text.trim(),
+    });
+  };
+
+  if (
+    isDaemonStateBoundaryAppStatePath(filePath)
+    && !daemonStateBoundaryAllowedAppStatePaths.has(filePath)
+  ) {
+    violations.push({
+      filePath,
+      line: 1,
+      name: "daemon state boundary adds new app_state module",
+      text: "new app_state modules must not be added; delete the existing app_state seams instead",
+    });
+  }
+
+  if (isTestRustPath(filePath) || broadPathBaseline.has(filePath)) {
+    return violations;
+  }
+
+  const broadStateRegex =
+    /(?:\b(?:std::sync::)?(?:Arc|Weak)\s*<\s*(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*::)*DaemonState\s*>)|(?:&\s*(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*::)*DaemonState\b)|\b(?:DaemonState|DaemonHandle)\b/gu;
+  for (
+    let broad = broadStateRegex.exec(contents);
+    broad;
+    broad = broadStateRegex.exec(contents)
+  ) {
+    pushMatch({
+      index: broad.index,
+      name: "daemon state boundary adds broad daemon state seam",
+      text: broad[0],
+    });
+  }
+
+  const daemonStateImplRegex =
+    /\bimpl(?:\s*<[^>{]+>)?\s+(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*::)*DaemonState\s*\{/gu;
+  for (
+    let daemonStateImpl = daemonStateImplRegex.exec(contents);
+    daemonStateImpl;
+    daemonStateImpl = daemonStateImplRegex.exec(contents)
+  ) {
+    pushMatch({
+      index: daemonStateImpl.index,
+      name: "daemon state boundary adds broad DaemonState impl",
+      text: daemonStateImpl[0],
+    });
+  }
+
+  const daemonStateHostImplRegex =
+    /\bimpl(?:\s*<[^>{]+>)?\s+(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*Host\s+for\s+(?:(?:std::sync::)?Arc\s*<\s*)?(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*::)*DaemonState\s*>?/gu;
+  for (
+    let hostImpl = daemonStateHostImplRegex.exec(contents);
+    hostImpl;
+    hostImpl = daemonStateHostImplRegex.exec(contents)
+  ) {
+    pushMatch({
+      index: hostImpl.index,
+      name: "daemon state boundary adds broad DaemonState host impl",
+      text: hostImpl[0],
+    });
+  }
+
+  const capabilityStructRegex =
+    /\b(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*(?:HandleParts|HandleEffects|Handle|HostParts|Host|Effects|Request|Context))(?:\s*<[^>{]+>)?\s*\{/gu;
+  for (
+    let structMatch = capabilityStructRegex.exec(contents);
+    structMatch;
+    structMatch = capabilityStructRegex.exec(contents)
+  ) {
+    const openBrace = contents.indexOf("{", structMatch.index);
+    if (openBrace < 0) {
+      continue;
+    }
+    const closeBrace = rustMatchingBraceIndex(contents, openBrace);
+    if (closeBrace < 0) {
+      continue;
+    }
+    const blockText = contents.slice(structMatch.index, closeBrace + 1);
+    broadStateRegex.lastIndex = 0;
+    for (
+      let broad = broadStateRegex.exec(blockText);
+      broad;
+      broad = broadStateRegex.exec(blockText)
+    ) {
+      pushMatch({
+        index: structMatch.index + broad.index,
+        name: "daemon state boundary stores broad daemon state in capability struct",
+        text: broad[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -17403,6 +17634,10 @@ function scanRepo() {
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
       }),
       ...scanRouteCapabilityCutoverRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanDaemonStateBoundaryRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -18270,6 +18505,7 @@ module.exports = {
   scanDaemonHandleConstructionRatchet,
   scanDeletedBroadDomainHandleRatchet,
   scanDeletedBroadDomainMacroSourceRatchet,
+  scanDaemonStateBoundaryRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
   scanMaintenanceRouteHandleDefinitionFiles,
