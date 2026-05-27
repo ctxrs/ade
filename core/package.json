@@ -317,6 +317,7 @@
     "sdlc:verify-metrics:report:json": "node scripts/sdlc_verify_metrics_report.cjs --json",
     "release:proof:status": "node scripts/release_power_sdlc_status.cjs",
     "sdlc:status": "node scripts/sdlc_status.cjs",
+    "sdlc:ledger:collect": "node scripts/sdlc_collect_buildkite_ledgers.cjs",
     "sdlc:ledger:parity": "node scripts/sdlc_ledger_parity.cjs",
     "sdlc:branch-protection": "node scripts/verify_branch_protection.cjs",
     "sdlc:ledger:append": "node scripts/release_evidence_ledger_append.cjs",
