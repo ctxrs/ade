@@ -1,22 +1,22 @@
 use super::*;
 
-impl RouteBuilder {
+impl session_deps::SessionRouteDeps {
     pub fn title_generation_local(&self) -> TitleGenerationLocalHandle {
         TitleGenerationLocalHandle::new(
-            self.state.core.data_root.clone(),
+            self.data_root.clone(),
             TitleGenerationLocalInstallEffect::new(
-                self.state.core.data_root.clone(),
-                Arc::clone(&self.state.providers),
-                self.state.telemetry.ops_events.clone(),
+                self.data_root.clone(),
+                Arc::clone(&self.providers),
+                self.ops_events.clone(),
             ),
         )
     }
     pub fn demo_seed_transcript(&self) -> DemoSeedTranscriptHandle {
         DemoSeedTranscriptHandle::new(
             self.session_store_lookup(),
-            self.protected_workspace_store_lookup(),
-            Arc::clone(&self.state.sessions),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            self.workspace_store_lookup(),
+            Arc::clone(&self.sessions),
+            Arc::clone(&self.active_snapshot),
         )
     }
     pub(super) fn session_control_with_provider_routes(
@@ -25,57 +25,53 @@ impl RouteBuilder {
     ) -> SessionControlHandle {
         SessionControlHandle::new(SessionControlHandleParts {
             session_stores: self.session_store_lookup(),
-            session_runtime: Arc::clone(&self.state.sessions),
+            session_runtime: Arc::clone(&self.sessions),
             scheduler_spawner: SessionMessageSchedulerSpawner::new(Arc::downgrade(
-                &self.state.session_scheduler_worker_host.worker_host(),
+                &self.scheduler_worker_host,
             )),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            perf_telemetry: self.perf_telemetry.clone(),
             provider_launch: provider_routes.provider_workspace_launch_runtime(),
             session_publication: self.session_publication_effects(),
-            ask_user_question: Arc::clone(&self.state.core.ask_user_question),
-            provider_unknown_events: self.state.telemetry.provider_unknown_events.clone(),
+            ask_user_question: Arc::clone(&self.ask_user_question),
+            provider_unknown_events: self.provider_unknown_events.clone(),
         })
     }
     pub fn session_file_completions(&self) -> SessionFileCompletionsHandle {
         SessionFileCompletionsHandle::new(SessionFileCompletionsHandleParts {
-            global_store: self.state.global_store().clone(),
+            global_store: self.global_store.clone(),
             session_stores: self.session_store_lookup(),
-            workspace_stores: self.protected_workspace_store_lookup(),
-            worktree_file_completions_cache: Arc::clone(
-                &self.state.workspaces.file_completions_cache,
-            ),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            harness: Arc::clone(&self.state.execution.harness),
+            workspace_stores: self.workspace_store_lookup(),
+            worktree_file_completions_cache: Arc::clone(&self.worktree_file_completions_cache),
+            perf_telemetry: self.perf_telemetry.clone(),
+            data_root: self.data_root.clone(),
+            daemon_url: self.daemon_url.clone(),
+            harness: Arc::clone(&self.harness),
         })
     }
     pub fn session_title_model_mode(&self) -> SessionTitleModelModeHandle {
         SessionTitleModelModeHandle::new(SessionTitleModelModeHandleParts {
-            global_store: self.state.global_store().clone(),
+            global_store: self.global_store.clone(),
             session_stores: self.session_store_lookup(),
-            workspace_stores: self.protected_workspace_store_lookup(),
-            session_runtime: Arc::clone(&self.state.sessions),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            provider_runtime: Arc::clone(&self.state.providers),
-            ops_events: self.state.telemetry.ops_events.clone(),
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            auth_token: self.state.core.auth_token.clone(),
-            harness: Arc::clone(&self.state.execution.harness),
+            workspace_stores: self.workspace_store_lookup(),
+            session_runtime: Arc::clone(&self.sessions),
+            active_snapshot: Arc::clone(&self.active_snapshot),
+            provider_runtime: Arc::clone(&self.providers),
+            ops_events: self.ops_events.clone(),
+            data_root: self.data_root.clone(),
+            daemon_url: self.daemon_url.clone(),
+            auth_token: self.auth_token.clone(),
+            harness: Arc::clone(&self.harness),
         })
     }
     pub fn session_message_command(&self) -> SessionMessageCommandHandle {
         SessionMessageCommandHandle::new(
-            self.state.global_store().clone(),
+            self.global_store.clone(),
             self.session_store_lookup(),
-            Arc::clone(&self.state.sessions),
-            Arc::clone(&self.state.core.update_drain),
-            self.state.core.data_root.clone(),
+            Arc::clone(&self.sessions),
+            Arc::clone(&self.update_drain),
+            self.data_root.clone(),
             self.session_title_model_mode(),
-            SessionMessageSchedulerSpawner::new(Arc::downgrade(
-                &self.state.session_scheduler_worker_host.worker_host(),
-            )),
+            SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.scheduler_worker_host)),
         )
     }
     pub fn session_subagent_read(&self) -> SessionSubagentReadHandle {
@@ -83,7 +79,7 @@ impl RouteBuilder {
     }
     pub fn session_subagent_mcp_read(&self) -> SessionSubagentMcpReadHandle {
         let provider_inactivity_timeout = Arc::new({
-            let sessions = Arc::clone(&self.state.sessions);
+            let sessions = Arc::clone(&self.sessions);
             move || {
                 let sessions = Arc::clone(&sessions);
                 Box::pin(async move { sessions.provider_inactivity_timeout().await })
@@ -91,7 +87,7 @@ impl RouteBuilder {
             }
         });
         let emit_legacy_context_window_key_reject = Arc::new({
-            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+            let perf_telemetry = self.perf_telemetry.clone();
             move |legacy_key: String| {
                 let perf_telemetry = perf_telemetry.clone();
                 Box::pin(async move {
@@ -131,7 +127,7 @@ impl RouteBuilder {
         provider_routes: &provider_deps::ProviderRouteDeps,
     ) -> SessionSubagentMcpControlHandle {
         let provider_inactivity_timeout = Arc::new({
-            let sessions = Arc::clone(&self.state.sessions);
+            let sessions = Arc::clone(&self.sessions);
             move || {
                 let sessions = Arc::clone(&sessions);
                 Box::pin(async move { sessions.provider_inactivity_timeout().await })
@@ -139,7 +135,7 @@ impl RouteBuilder {
             }
         });
         let emit_legacy_context_window_key_reject = Arc::new({
-            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+            let perf_telemetry = self.perf_telemetry.clone();
             move |legacy_key: String| {
                 let perf_telemetry = perf_telemetry.clone();
                 Box::pin(async move {
@@ -170,56 +166,56 @@ impl RouteBuilder {
         });
         let session_stores = self.session_store_lookup();
         let scheduler_spawner = SessionSubagentMcpControlSchedulerSpawner::new(Arc::downgrade(
-            &self.state.session_scheduler_worker_host.worker_host(),
+            &self.scheduler_worker_host,
         ));
         let publish_host = SessionSubagentMcpControlPublicationHost::new(
             session_stores.clone(),
-            self.protected_workspace_store_lookup(),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            self.workspace_store_lookup(),
+            Arc::clone(&self.active_snapshot),
         );
         let child_run_host = SubagentChildRunHost::new(
             self.weak_session_store_lookup(),
-            SessionEventHeadSubscriber::new(Arc::downgrade(&self.state.sessions)),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            SessionEventHeadSubscriber::new(Arc::downgrade(&self.sessions)),
+            Arc::clone(&self.active_snapshot),
         );
         let worktree_host = self.task_worktree_host();
         let spawn_host = Arc::new(SubagentSpawnHost::new(SubagentSpawnHostParts {
             session_stores: session_stores.clone(),
-            session_runtime: Arc::clone(&self.state.sessions),
+            session_runtime: Arc::clone(&self.sessions),
             scheduler_spawner: scheduler_spawner.clone(),
             publish_host: publish_host.clone(),
             child_run_host,
             session_vcs: self.session_vcs(),
             worktrees: worktree_host,
             provider_launch: provider_routes.provider_workspace_launch_runtime(),
-            global_store: self.state.global_store().clone(),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            data_root: self.state.core.data_root.clone(),
+            global_store: self.global_store.clone(),
+            perf_telemetry: self.perf_telemetry.clone(),
+            data_root: self.data_root.clone(),
         }));
         let archive_worktree_cleanup = Arc::new(
             crate::daemon::sessions::subagents::SubagentArchiveWorktreeCleanupHost::new(
-                self.state.core.data_root.clone(),
-                self.state.global_store().clone(),
+                self.data_root.clone(),
+                self.global_store.clone(),
                 crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost::new(
-                    self.state.core.data_root.clone(),
-                    self.state.core.daemon_url.clone(),
-                    self.state.global_store().clone(),
-                    self.protected_workspace_store_lookup(),
-                    Arc::clone(&self.state.execution.harness),
+                    self.data_root.clone(),
+                    self.daemon_url.clone(),
+                    self.global_store.clone(),
+                    self.workspace_store_lookup(),
+                    Arc::clone(&self.harness),
                 ),
             ),
         );
         SessionSubagentMcpControlHandle::new(SessionSubagentMcpControlHandleParts {
             session_stores,
-            session_runtime: Arc::clone(&self.state.sessions),
+            session_runtime: Arc::clone(&self.sessions),
             scheduler_spawner,
             publish_host,
             lifecycle_host: SessionSubagentMcpControlLifecycleHost::new(
-                self.state.global_store().clone(),
-                Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-                Arc::clone(&self.state.providers),
+                self.global_store.clone(),
+                Arc::clone(&self.active_snapshot),
+                Arc::clone(&self.providers),
             ),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            active_snapshot: Arc::clone(&self.active_snapshot),
             spawn_host,
             archive_worktree_cleanup,
             provider_inactivity_timeout,
@@ -228,51 +224,12 @@ impl RouteBuilder {
     }
     pub fn session_read_models(&self) -> SessionReadModelsHandle {
         SessionReadModelsHandle::new(
-            self.state.global_store().clone(),
+            self.global_store.clone(),
             self.session_store_lookup(),
-            self.state.core.stores.clone(),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            self.state.core.tool_output_spool_dir.clone(),
-            self.state.telemetry.perf_telemetry.clone(),
-        )
-    }
-    pub(super) fn session_store_lookup(&self) -> SessionStoreLookup {
-        SessionStoreLookup::new(
-            self.state.global_store().clone(),
-            self.protected_workspace_store_lookup(),
-        )
-    }
-    pub(super) fn task_publication_host(
-        &self,
-    ) -> Arc<crate::daemon::task_session_effects::TaskPublicationHost> {
-        Arc::clone(&self.state.task_publication)
-    }
-    pub(super) fn task_session_cleanup_host(
-        &self,
-    ) -> crate::daemon::task_session_effects::TaskSessionCleanupHost {
-        crate::daemon::task_session_effects::TaskSessionCleanupHost::new(
-            self.state.global_store().clone(),
-            Arc::clone(&self.state.sessions),
-            Arc::clone(&self.state.providers),
-            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            self.protected_workspace_store_lookup(),
-        )
-    }
-    pub(super) fn session_publication_effects(
-        &self,
-    ) -> crate::daemon::task_session_effects::SessionPublicationEffects {
-        crate::daemon::task_session_effects::SessionPublicationEffects::new(
-            Arc::clone(&self.state.sessions),
-            self.session_store_lookup(),
-            self.task_publication_host(),
-        )
-    }
-    fn weak_session_store_lookup(&self) -> WeakSessionStoreLookup {
-        WeakSessionStoreLookup::new(
-            self.state.global_store().clone(),
-            self.state.core.stores.clone(),
-            Arc::downgrade(&self.state.sessions),
-            Arc::clone(&self.state.transport.merge_queue),
+            self.stores.clone(),
+            Arc::clone(&self.active_snapshot),
+            self.tool_output_spool_dir.clone(),
+            self.perf_telemetry.clone(),
         )
     }
     fn session_artifact_effects(&self) -> Arc<SessionArtifactEffects> {
@@ -282,13 +239,13 @@ impl RouteBuilder {
     pub fn session_artifacts(&self) -> SessionArtifactsHandle {
         SessionArtifactsHandle::new(
             self.session_store_lookup(),
-            self.state.core.tool_output_spool_dir.clone(),
+            self.tool_output_spool_dir.clone(),
             self.session_artifact_effects(),
         )
     }
     fn session_vcs_effects(&self) -> Arc<SessionVcsEffects> {
-        let vcs_runtime = self.worktree_vcs_runtime_host();
-        let vcs_execution = self.worktree_vcs_execution_host();
+        let vcs_runtime = self.worktree_vcs_runtime.clone();
+        let vcs_execution = self.worktree_vcs_execution.clone();
         let worktree_has_vcs_repo = Arc::new({
             let vcs_execution = vcs_execution.clone();
             move |worktree: Worktree| {
@@ -401,7 +358,7 @@ impl RouteBuilder {
             }
         });
         let emit_compat_payload_reject_counter = Arc::new({
-            let perf_telemetry = self.state.telemetry.perf_telemetry.clone();
+            let perf_telemetry = self.perf_telemetry.clone();
             move |surface: &'static str, issue: &'static str| {
                 let perf_telemetry = perf_telemetry.clone();
                 Box::pin(async move {

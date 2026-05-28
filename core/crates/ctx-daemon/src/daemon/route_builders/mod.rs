@@ -90,15 +90,16 @@ mod core;
 mod execution;
 mod maintenance;
 mod provider_deps;
+mod session_deps;
 mod sessions;
 mod tasks;
+#[cfg(any(test, feature = "test-support"))]
+mod test_helpers;
 mod transport;
 mod workspace;
 
-#[cfg(test)]
-use super::workspace_route_handles::WorkspacePrimaryBranchRefreshEffect;
-#[cfg(test)]
-use super::workspace_stream_route_handles::WorkspaceVcsStreamRefreshEffect;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use test_helpers::*;
 
 #[derive(Clone)]
 pub(crate) struct RouteBuilder {
@@ -108,9 +109,11 @@ pub(crate) struct RouteBuilder {
 pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
     let handle = RouteBuilder::new(Arc::clone(state));
     let provider_routes = handle.provider_route_deps();
-    let session_title_model_mode = handle.session_title_model_mode();
-    let task_session_admission = handle.task_session_admission_with_provider_routes(
+    let session_routes = handle.session_route_deps();
+    let session_title_model_mode = session_routes.session_title_model_mode();
+    let task_session_admission = handle.task_session_admission_with_route_deps(
         &provider_routes,
+        &session_routes,
         session_title_model_mode.clone(),
     );
     DaemonRouteHandles {
@@ -144,26 +147,27 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
         mobile_secure_proxy: handle.mobile_secure_proxy(),
         resource_utilization: handle.resource_utilization(),
         run_archive: handle.run_archive(),
-        session_artifacts: handle.session_artifacts(),
-        session_control: handle.session_control_with_provider_routes(&provider_routes),
-        session_file_completions: handle.session_file_completions(),
-        session_message_command: handle.session_message_command(),
-        session_read_models: handle.session_read_models(),
-        session_subagent_mcp_read: handle.session_subagent_mcp_read(),
-        session_subagent_mcp_control: handle
+        session_artifacts: session_routes.session_artifacts(),
+        session_control: session_routes.session_control_with_provider_routes(&provider_routes),
+        session_file_completions: session_routes.session_file_completions(),
+        session_message_command: session_routes.session_message_command(),
+        session_read_models: session_routes.session_read_models(),
+        session_subagent_mcp_read: session_routes.session_subagent_mcp_read(),
+        session_subagent_mcp_control: session_routes
             .session_subagent_mcp_control_with_provider_routes(&provider_routes),
-        session_subagent_read: handle.session_subagent_read(),
+        session_subagent_read: session_routes.session_subagent_read(),
         session_title_model_mode,
-        session_vcs: handle.session_vcs(),
-        demo_seed_transcript: handle.demo_seed_transcript(),
-        title_generation_local: handle.title_generation_local(),
-        task_creation: handle.task_creation_with_session_admission(task_session_admission.clone()),
-        task_lifecycle: handle.task_lifecycle(),
+        session_vcs: session_routes.session_vcs(),
+        demo_seed_transcript: session_routes.demo_seed_transcript(),
+        title_generation_local: session_routes.title_generation_local(),
+        task_creation: handle
+            .task_creation_with_session_admission(task_session_admission.clone(), &session_routes),
+        task_lifecycle: handle.task_lifecycle_with_session_routes(&session_routes),
         task_listing: handle.task_listing(),
-        task_read_state: handle.task_read_state(),
+        task_read_state: handle.task_read_state_with_session_routes(&session_routes),
         task_session_admission,
         task_session_listing: handle.task_session_listing(),
-        task_title: handle.task_title(),
+        task_title: handle.task_title_with_session_routes(&session_routes),
         workspace_deletion: handle.workspace_deletion(),
         workspace_active: handle.workspace_active(),
         workspace_stream: handle.workspace_stream(),
@@ -184,33 +188,8 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
         execution_launch: handle.execution_launch(),
         linux_sandbox_runtime: handle.linux_sandbox_runtime(),
         update_drain: handle.update_drain(),
-        daemon_shutdown: handle.daemon_shutdown(),
+        daemon_shutdown: handle.daemon_shutdown_with_session_routes(&session_routes),
     }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn workspace_attachments_runtime_from_state(
-    state: &Arc<DaemonState>,
-) -> Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime> {
-    RouteBuilder::new(Arc::clone(state)).workspace_attachments_runtime()
-}
-
-#[cfg(test)]
-pub(crate) fn workspace_primary_branch_with_refresh_effect_from_state(
-    state: &Arc<DaemonState>,
-    refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
-) -> WorkspacePrimaryBranchHandle {
-    RouteBuilder::new(Arc::clone(state))
-        .workspace_primary_branch_with_refresh_effect(refresh_vcs_snapshot)
-}
-
-#[cfg(test)]
-pub(crate) fn workspace_vcs_stream_with_refresh_effect_from_state(
-    state: &Arc<DaemonState>,
-    refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
-) -> WorkspaceVcsStreamHandle {
-    RouteBuilder::new(Arc::clone(state))
-        .workspace_vcs_stream_with_refresh_effect(refresh_worktree_vcs)
 }
 
 impl RouteBuilder {
@@ -237,5 +216,45 @@ impl RouteBuilder {
             Arc::clone(&self.state.sessions),
             Arc::clone(&self.state.transport.merge_queue),
         )
+    }
+
+    fn session_route_deps(&self) -> session_deps::SessionRouteDeps {
+        let workspace_stores = self.protected_workspace_store_lookup();
+        let session_stores =
+            SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
+        let weak_session_stores = WeakSessionStoreLookup::new(
+            self.state.global_store().clone(),
+            self.state.core.stores.clone(),
+            Arc::downgrade(&self.state.sessions),
+            Arc::clone(&self.state.transport.merge_queue),
+        );
+        session_deps::SessionRouteDeps::new(session_deps::SessionRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            tool_output_spool_dir: self.state.core.tool_output_spool_dir.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            auth_token: self.state.core.auth_token.clone(),
+            global_store: self.state.global_store().clone(),
+            stores: self.state.core.stores.clone(),
+            workspace_stores,
+            session_stores,
+            weak_session_stores,
+            sessions: Arc::clone(&self.state.sessions),
+            scheduler_worker_host: self.state.session_scheduler_worker_host.worker_host(),
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            worktree_file_completions_cache: Arc::clone(
+                &self.state.workspaces.file_completions_cache,
+            ),
+            providers: Arc::clone(&self.state.providers),
+            ops_events: self.state.telemetry.ops_events.clone(),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            provider_unknown_events: self.state.telemetry.provider_unknown_events.clone(),
+            ask_user_question: Arc::clone(&self.state.core.ask_user_question),
+            update_drain: Arc::clone(&self.state.core.update_drain),
+            harness: Arc::clone(&self.state.execution.harness),
+            task_publication: Arc::clone(&self.state.task_publication),
+            task_worktree_host: self.task_worktree_host(),
+            worktree_vcs_runtime: self.worktree_vcs_runtime_host(),
+            worktree_vcs_execution: self.worktree_vcs_execution_host(),
+        })
     }
 }

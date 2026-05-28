@@ -198,6 +198,7 @@ const {
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
+  scanSessionRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
@@ -877,6 +878,58 @@ test("provider route builder state assembly ratchet rejects child provider deps 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     ["provider route child builder reconstructs provider deps"],
+  );
+});
+
+test("session route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanSessionRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn session_message_command(&self) -> SessionMessageCommandHandle {
+          SessionMessageCommandHandle::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.sessions),
+            self.state.core.data_root.clone(),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "session route builder uses broad daemon state",
+      "session route builder reads broad route-builder state",
+      "session route builder reads broad route-builder state",
+      "session route builder reads broad route-builder state",
+    ],
+  );
+});
+
+test("session route builder state assembly ratchet ignores other route builders", () => {
+  assert.deepEqual(
+    scanSessionRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+      contents: "let _ = self.state.core.data_root.clone();",
+    }),
+    [],
+  );
+});
+
+test("session route builder state assembly ratchet rejects child session deps rebuilds", () => {
+  const violations = scanSessionRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "let session_routes = self.session_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["session route child builder reconstructs session deps"],
   );
 });
 

@@ -58,13 +58,16 @@ impl RouteBuilder {
             Arc::clone(&self.state.core.update_drain),
         )
     }
-    pub fn daemon_shutdown(&self) -> DaemonShutdownHandle {
+    pub(super) fn daemon_shutdown_with_session_routes(
+        &self,
+        session_routes: &session_deps::SessionRouteDeps,
+    ) -> DaemonShutdownHandle {
         let shutdown_host = DaemonShutdownHost::new(DaemonShutdownHostParts {
             global_store: self.state.global_store().clone(),
             stores: self.state.core.stores.clone(),
-            session_stores: self.session_store_lookup(),
+            session_stores: session_routes.session_store_lookup(),
             session_lifecycle: Arc::clone(&self.state.sessions),
-            session_publication: self.session_publication_effects(),
+            session_publication: session_routes.session_publication_effects(),
             provider_lifecycle: Arc::clone(&self.state.providers),
             update_drain: Arc::clone(&self.state.core.update_drain),
             substrate_lifecycle: Arc::clone(&self.state.execution.harness),

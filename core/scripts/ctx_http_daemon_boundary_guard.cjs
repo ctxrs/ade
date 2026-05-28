@@ -17410,6 +17410,11 @@ const providerRouteBuilderAssemblyPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
 ]);
 
+const sessionRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/session_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
+]);
+
 function scanProviderRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -17442,6 +17447,59 @@ function scanProviderRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
     },
     {
       name: "provider route builder reads broad route-builder state",
+      regex: /\bself\s*\.\s*state\s*\./gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanSessionRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    filePath !== daemonRouteBuildersRelativePath
+  ) {
+    const childSessionDepsRegex = /\bsession_route_deps\s*\(/gu;
+    for (
+      let match = childSessionDepsRegex.exec(contents);
+      match;
+      match = childSessionDepsRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "session route child builder reconstructs session deps",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  if (!sessionRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "session route builder uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "session route builder reads broad route-builder state",
       regex: /\bself\s*\.\s*state\s*\./gu,
     },
   ];
@@ -18130,6 +18188,10 @@ function scanRepo() {
         contents,
       }),
       ...scanProviderRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionRouteBuilderStateAssemblyRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19011,6 +19073,7 @@ module.exports = {
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
+  scanSessionRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,

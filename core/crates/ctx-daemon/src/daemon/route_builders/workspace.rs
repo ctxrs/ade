@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(test)]
+use crate::daemon::workspace_route_handles::WorkspacePrimaryBranchRefreshEffect;
+#[cfg(test)]
+use crate::daemon::workspace_stream_route_handles::WorkspaceVcsStreamRefreshEffect;
+
 impl RouteBuilder {
     pub fn workspace_registry(&self) -> WorkspaceRegistryHandle {
         WorkspaceRegistryHandle::new(
