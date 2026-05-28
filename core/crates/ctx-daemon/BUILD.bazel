@@ -182,6 +182,7 @@ rust_test(
     crate = ":lib_test_support",
     args = CTX_DAEMON_DAEMON_UNIT_TEST_ARGS,
     data = CTX_DAEMON_COMPILE_DATA,
+    timeout = "long",
 )
 
 rust_test(

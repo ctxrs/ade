@@ -31,8 +31,9 @@ const {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
-  checkManagedInstallsAppStateAlias,
+  checkAppStateAliases,
   checkRatchetedFileCaps,
+  checkRatchetedSplitModuleShape,
   countLines,
   evaluateDecompositionBoundaries,
   isPackageShapeBoundaryCrate,
@@ -164,6 +165,28 @@ test("session route handle split module has a line-cap ratchet", () => {
   assert.equal(violations[0].lineCount, capped.limit + 1);
 });
 
+test("session route handle child modules have line-cap ratchets", () => {
+  const rootDir = makeRoot();
+  const childPaths = [
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/artifacts.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/file_completions.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/message_commands.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/read_models.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/subagents.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/title_model_mode.rs",
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/vcs.rs",
+  ];
+  for (const childPath of childPaths) {
+    const capped = RATCHETED_FILE_LIMITS.find((entry) => entry.path === childPath);
+    assert.ok(capped, `expected ${childPath} to have a line cap`);
+    writeFile(rootDir, childPath, lines(capped.limit + 1));
+  }
+
+  const violations = checkRatchetedFileCaps(rootDir);
+
+  assert.deepEqual(violations.map((entry) => entry.path), childPaths);
+});
+
 test("workspace stream route handle split module has a line-cap ratchet", () => {
   const rootDir = makeRoot();
   const capped = RATCHETED_FILE_LIMITS.find((entry) =>
@@ -218,6 +241,88 @@ test("mobile route handle split module has a line-cap ratchet", () => {
 
   assert.deepEqual(violations.map((entry) => entry.path), [capped.path]);
   assert.equal(violations[0].lineCount, capped.limit + 1);
+});
+
+test("daemon test-support split modules have line-cap ratchets", () => {
+  const rootDir = makeRoot();
+  const testSupportPaths = [
+    "core/crates/ctx-daemon/src/test_support.rs",
+    "core/crates/ctx-daemon/src/test_support/cache_rehydration.rs",
+    "core/crates/ctx-daemon/src/test_support/ctx_ui_sized_head.rs",
+    "core/crates/ctx-daemon/src/test_support/merge_queue.rs",
+    "core/crates/ctx-daemon/src/test_support/mobile.rs",
+    "core/crates/ctx-daemon/src/test_support/providers.rs",
+    "core/crates/ctx-daemon/src/test_support/provider_scenarios.rs",
+    "core/crates/ctx-daemon/src/test_support/replay_projection.rs",
+    "core/crates/ctx-daemon/src/test_support/route_handles.rs",
+    "core/crates/ctx-daemon/src/test_support/runtime_environment.rs",
+    "core/crates/ctx-daemon/src/test_support/sandbox_cli.rs",
+    "core/crates/ctx-daemon/src/test_support/session_artifacts.rs",
+    "core/crates/ctx-daemon/src/test_support/session_events.rs",
+    "core/crates/ctx-daemon/src/test_support/session_heads.rs",
+    "core/crates/ctx-daemon/src/test_support/session_lifecycle.rs",
+    "core/crates/ctx-daemon/src/test_support/subagent_mcp.rs",
+    "core/crates/ctx-daemon/src/test_support/tasks.rs",
+    "core/crates/ctx-daemon/src/test_support/workspace_active.rs",
+  ];
+  for (const testSupportPath of testSupportPaths) {
+    const capped = RATCHETED_FILE_LIMITS.find((entry) => entry.path === testSupportPath);
+    assert.ok(capped, `expected ${testSupportPath} to have a line cap`);
+    writeFile(rootDir, testSupportPath, lines(capped.limit + 1));
+  }
+
+  const violations = checkRatchetedFileCaps(rootDir);
+
+  assert.deepEqual(violations.map((entry) => entry.path), testSupportPaths);
+});
+
+test("ratcheted split directories reject uncapped Rust files", () => {
+  const rootDir = makeRoot();
+  const uncappedPaths = [
+    "core/crates/ctx-daemon/src/daemon/session_route_handles/new_escape_hatch.rs",
+    "core/crates/ctx-daemon/src/test_support/new_escape_hatch.rs",
+  ];
+  for (const uncappedPath of uncappedPaths) {
+    writeFile(rootDir, uncappedPath, "pub struct EscapeHatch;\n");
+  }
+
+  const violations = checkRatchetedSplitModuleShape(rootDir);
+
+  assert.deepEqual(violations.map((entry) => entry.kind), [
+    "missing_file_cap",
+    "missing_file_cap",
+  ]);
+  assert.deepEqual(violations.map((entry) => entry.path), uncappedPaths);
+});
+
+test("ratcheted split directories reject broad super glob imports", () => {
+  const rootDir = makeRoot();
+  const topLevelCapped = RATCHETED_FILE_LIMITS.find((entry) =>
+    entry.path === "core/crates/ctx-daemon/src/test_support/session_events.rs"
+  );
+  const nestedCapped = RATCHETED_FILE_LIMITS.find((entry) =>
+    entry.path === "core/crates/ctx-daemon/src/daemon/session_route_handles/vcs.rs"
+  );
+  assert.ok(topLevelCapped, "expected session_events.rs to have a line cap");
+  assert.ok(nestedCapped, "expected vcs.rs to have a line cap");
+  writeFile(rootDir, topLevelCapped.path, "use super::*;\n\npub fn helper() {}\n");
+  writeFile(
+    rootDir,
+    nestedCapped.path,
+    "use std::sync::Arc;\n\nuse super::*;\n\npub fn helper() {}\n"
+  );
+
+  const violations = checkRatchetedSplitModuleShape(rootDir);
+
+  assert.deepEqual(violations.map((entry) => entry.kind), [
+    "split_module_glob_import",
+    "split_module_glob_import",
+  ]);
+  assert.deepEqual(violations.map((entry) => entry.path), [
+    nestedCapped.path,
+    topLevelCapped.path,
+  ]);
+  assert.deepEqual(violations.map((entry) => entry.line), [3, 1]);
 });
 
 test("merge queue route handle split module has a line-cap ratchet", () => {
@@ -996,12 +1101,26 @@ test("managed installs AppState alias cannot be reintroduced", () => {
     pub fn install(state: &AppState) {}
   `);
 
-  const violations = checkManagedInstallsAppStateAlias(rootDir);
+  const violations = checkAppStateAliases(rootDir);
 
   assert.equal(violations.length, 2);
   assert(
-    violations.every((violation) => violation.kind === "managed_installs_app_state_alias"),
+    violations.every((violation) => violation.kind === "app_state_alias"),
   );
+});
+
+test("provider runtime AppState alias cannot be reintroduced", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-provider-runtime/src/lib.rs", `
+    pub trait ProviderRuntimeHost {}
+    pub type AppState = dyn ProviderRuntimeHost;
+    pub fn runtime(state: &AppState) {}
+  `);
+
+  const violations = checkAppStateAliases(rootDir);
+
+  assert.equal(violations.length, 2);
+  assert(violations.every((violation) => violation.kind === "app_state_alias"));
 });
 
 test("full evaluator aggregates all static decomposition violations", () => {

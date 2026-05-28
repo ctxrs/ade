@@ -60,7 +60,35 @@ const RATCHETED_FILE_LIMITS = [
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/session_route_handles.rs",
-    limit: 2200,
+    limit: 140,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/artifacts.rs",
+    limit: 120,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/file_completions.rs",
+    limit: 120,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/message_commands.rs",
+    limit: 220,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/read_models.rs",
+    limit: 90,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/subagents.rs",
+    limit: 420,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/title_model_mode.rs",
+    limit: 500,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/session_route_handles/vcs.rs",
+    limit: 270,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/workspace_stream_route_handles.rs",
@@ -166,6 +194,83 @@ const RATCHETED_FILE_LIMITS = [
     path: "core/crates/ctx-daemon/src/daemon/mobile_access.rs",
     limit: 120,
   },
+  {
+    path: "core/crates/ctx-daemon/src/test_support.rs",
+    limit: 600,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/cache_rehydration.rs",
+    limit: 380,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/ctx_ui_sized_head.rs",
+    limit: 420,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/merge_queue.rs",
+    limit: 260,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/mobile.rs",
+    limit: 260,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/providers.rs",
+    limit: 650,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/provider_scenarios.rs",
+    limit: 220,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/replay_projection.rs",
+    limit: 470,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/route_handles.rs",
+    limit: 260,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/runtime_environment.rs",
+    limit: 160,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/sandbox_cli.rs",
+    limit: 80,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/session_artifacts.rs",
+    limit: 220,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/session_events.rs",
+    limit: 520,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/session_heads.rs",
+    limit: 650,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/session_lifecycle.rs",
+    limit: 550,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/subagent_mcp.rs",
+    limit: 620,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/tasks.rs",
+    limit: 700,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/test_support/workspace_active.rs",
+    limit: 550,
+  },
+];
+
+const RATCHETED_SPLIT_DIRECTORIES = [
+  "core/crates/ctx-daemon/src/daemon/session_route_handles",
+  "core/crates/ctx-daemon/src/test_support",
 ];
 
 const SERVICE_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
@@ -319,7 +424,18 @@ const DAEMON_HANDLE_STORE_LOOKUP_SYMBOLS = [
   "is_transient_store_open_error",
   "scoped_mcp_session_store_error",
 ];
-const MANAGED_INSTALLS_SRC_ROOT = "core/crates/ctx-managed-installs/src";
+const APP_STATE_ALIAS_DENYLIST_SRC_ROOTS = [
+  {
+    message:
+      "ctx-managed-installs must not use the AppState name; use ManagedInstallHostObject or a narrower host trait.",
+    root: "core/crates/ctx-managed-installs/src",
+  },
+  {
+    message:
+      "ctx-provider-runtime must not use the AppState name; use ProviderRuntimeHostObject or a narrower host trait.",
+    root: "core/crates/ctx-provider-runtime/src",
+  },
+];
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -593,6 +709,37 @@ const checkRatchetedFileCaps = (rootDir) => {
   return violations;
 };
 
+const checkRatchetedSplitModuleShape = (rootDir) => {
+  const violations = [];
+  const cappedPaths = new Set(RATCHETED_FILE_LIMITS.map((entry) => entry.path));
+  for (const relativeDir of RATCHETED_SPLIT_DIRECTORIES) {
+    const absoluteDir = path.join(rootDir, relativeDir);
+    for (const absolutePath of walkFiles(absoluteDir).filter((entry) => entry.endsWith(".rs"))) {
+      const relativePath = toPosix(path.relative(rootDir, absolutePath));
+      if (!cappedPaths.has(relativePath)) {
+        violations.push({
+          kind: "missing_file_cap",
+          path: relativePath,
+          message: `${relativePath} is under a ratcheted split directory but has no explicit line cap.`,
+        });
+      }
+      const raw = fs.readFileSync(absolutePath, "utf8");
+      const broadImportMatch = raw.match(/(^|\n)[ \t]*use\s+super::\*\s*;/u);
+      if (broadImportMatch) {
+        const importStart = broadImportMatch.index + broadImportMatch[1].length;
+        const line = raw.slice(0, importStart).split("\n").length;
+        violations.push({
+          kind: "split_module_glob_import",
+          line,
+          path: relativePath,
+          message: `${relativePath} must declare narrow imports instead of using super::* from a split-module facade.`,
+        });
+      }
+    }
+  }
+  return violations;
+};
+
 const checkCargoDependencyDirection = (rootDir) => {
   const violations = [];
   for (const manifestPath of listCargoManifests(rootDir)) {
@@ -757,24 +904,26 @@ const checkHeadProjectionPurity = (rootDir) => {
   return violations;
 };
 
-const checkManagedInstallsAppStateAlias = (rootDir) => {
-  const srcRoot = path.join(rootDir, MANAGED_INSTALLS_SRC_ROOT);
+const checkAppStateAliases = (rootDir) => {
   const violations = [];
-  for (const absolutePath of walkFiles(srcRoot).filter((entry) => entry.endsWith(".rs"))) {
-    const relativePath = toPosix(path.relative(rootDir, absolutePath));
-    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
-    const appStatePattern = /\bAppState\b/gu;
-    for (
-      let match = appStatePattern.exec(contents);
-      match;
-      match = appStatePattern.exec(contents)
-    ) {
-      violations.push({
-        kind: "managed_installs_app_state_alias",
-        line: lineForOffset(contents, match.index),
-        path: relativePath,
-        message: "ctx-managed-installs must not use the AppState name; use ManagedInstallHostObject or a narrower host trait.",
-      });
+  for (const denylistRoot of APP_STATE_ALIAS_DENYLIST_SRC_ROOTS) {
+    const srcRoot = path.join(rootDir, denylistRoot.root);
+    for (const absolutePath of walkFiles(srcRoot).filter((entry) => entry.endsWith(".rs"))) {
+      const relativePath = toPosix(path.relative(rootDir, absolutePath));
+      const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+      const appStatePattern = /\bAppState\b/gu;
+      for (
+        let match = appStatePattern.exec(contents);
+        match;
+        match = appStatePattern.exec(contents)
+      ) {
+        violations.push({
+          kind: "app_state_alias",
+          line: lineForOffset(contents, match.index),
+          path: relativePath,
+          message: denylistRoot.message,
+        });
+      }
     }
   }
   return violations;
@@ -895,9 +1044,10 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
     ...checkRatchetedFileCaps(rootDir),
+    ...checkRatchetedSplitModuleShape(rootDir),
     ...checkCargoDependencyDirection(rootDir),
     ...checkHeadProjectionPurity(rootDir),
-    ...checkManagedInstallsAppStateAlias(rootDir),
+    ...checkAppStateAliases(rootDir),
     ...checkCtxHttpCliOnlyServiceUsage(rootDir),
     ...checkDaemonRootRouteFacades(rootDir),
     ...checkDaemonHandleStoreLookupOwnership(rootDir),
@@ -963,8 +1113,9 @@ module.exports = {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkHeadProjectionPurity,
-  checkManagedInstallsAppStateAlias,
+  checkAppStateAliases,
   checkRatchetedFileCaps,
+  checkRatchetedSplitModuleShape,
   countLines,
   evaluateDecompositionBoundaries,
   isPackageShapeBoundaryCrate,

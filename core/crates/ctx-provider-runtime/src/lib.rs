@@ -88,7 +88,7 @@ pub trait ProviderRuntimeHost: Send + Sync + 'static {
     }
 }
 
-pub type AppState = dyn ProviderRuntimeHost;
+pub type ProviderRuntimeHostObject = dyn ProviderRuntimeHost;
 
 pub struct CachedProviderOptions {
     pub cached_at: Instant,
