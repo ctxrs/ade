@@ -20,8 +20,7 @@ use crate::daemon::state::{
 use crate::daemon::task_session_effects::{
     SessionPublicationEffects, TaskPublicationHost, TaskSessionCleanupHost,
 };
-
-use super::TaskWorktreeHost;
+use crate::daemon::workspaces::TaskWorktreeHost;
 
 pub(super) struct SessionRouteDepsParts {
     pub(super) data_root: PathBuf,

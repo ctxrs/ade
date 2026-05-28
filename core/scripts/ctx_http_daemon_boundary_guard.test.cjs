@@ -199,6 +199,7 @@ const {
   scanDaemonStateBucketAccessRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
+  scanWorkspaceRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
@@ -881,6 +882,16 @@ test("provider route builder state assembly ratchet rejects child provider deps 
   );
 });
 
+test("provider route builder state assembly ratchet allows composition helper", () => {
+  assert.deepEqual(
+    scanProviderRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      contents: "fn provider_route_deps(&self) {}",
+    }),
+    [],
+  );
+});
+
 test("session route builder state assembly ratchet rejects broad state reads", () => {
   const violations = scanSessionRouteBuilderStateAssemblyRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
@@ -931,6 +942,93 @@ test("session route builder state assembly ratchet rejects child session deps re
     violations.map((violation) => violation.name),
     ["session route child builder reconstructs session deps"],
   );
+});
+
+test("session route builder state assembly ratchet allows composition helper", () => {
+  assert.deepEqual(
+    scanSessionRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      contents: "fn session_route_deps(&self) {}",
+    }),
+    [],
+  );
+});
+
+test("workspace route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanWorkspaceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn workspace_active(&self) -> WorkspaceActiveHandle {
+          WorkspaceActiveHandle::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace route builder uses broad daemon state",
+      "workspace route builder accesses broad route-builder state",
+      "workspace route builder accesses broad route-builder state",
+    ],
+  );
+});
+
+test("workspace route builder state assembly ratchet rejects cloning broad state", () => {
+  const violations = scanWorkspaceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+    contents: "let state = Arc::clone(&self.state);",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["workspace route builder accesses broad route-builder state"],
+  );
+});
+
+test("workspace route builder state assembly ratchet ignores other route builders", () => {
+  assert.deepEqual(
+    scanWorkspaceRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+      contents: "let _ = self.state.core.data_root.clone();",
+    }),
+    [],
+  );
+});
+
+test("workspace route builder state assembly ratchet rejects child workspace deps rebuilds", () => {
+  const violations = scanWorkspaceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "let workspace_routes = self.workspace_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["workspace route child builder reconstructs workspace deps"],
+  );
+});
+
+test("workspace route builder state assembly ratchet allows composition and test helpers", () => {
+  for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
+  ]) {
+    assert.deepEqual(
+      scanWorkspaceRouteBuilderStateAssemblyRatchet({
+        filePath,
+        contents: "let workspace_routes = self.workspace_route_deps();",
+      }),
+      [],
+    );
+  }
 });
 
 test("daemon state boundary ratchet rejects new app_state modules", () => {

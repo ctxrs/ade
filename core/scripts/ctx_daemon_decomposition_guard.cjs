@@ -151,6 +151,10 @@ const RATCHETED_FILE_LIMITS = [
     limit: 470,
   },
   {
+    path: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    limit: 140,
+  },
+  {
     path: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
     limit: 190,
   },
@@ -165,6 +169,10 @@ const RATCHETED_FILE_LIMITS = [
   {
     path: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
     limit: 390,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/route_builders/workspace_deps.rs",
+    limit: 190,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",

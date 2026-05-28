@@ -1,30 +1,6 @@
 use super::*;
 
 impl RouteBuilder {
-    pub(super) fn task_worktree_host(&self) -> Arc<TaskWorktreeHost> {
-        let workspace_stores = self.protected_workspace_store_lookup();
-        let attachments = self.workspace_attachments_runtime();
-        let vcs_hooks = Arc::new(
-            crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost::new(
-                self.state.core.data_root.clone(),
-                self.state.core.daemon_url.clone(),
-                self.state.global_store().clone(),
-                workspace_stores.clone(),
-                Arc::clone(&self.state.execution.harness),
-            ),
-        );
-        Arc::new(TaskWorktreeHost::new(TaskWorktreeHostParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            global_store: self.state.global_store().clone(),
-            workspace_stores,
-            harness: Arc::clone(&self.state.execution.harness),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            bootstrap_gates: Arc::clone(&self.state.workspaces.worktree_bootstrap_gates),
-            attachments,
-            vcs_hooks,
-        }))
-    }
     fn task_lifecycle_effects(
         &self,
         session_routes: &session_deps::SessionRouteDeps,
@@ -41,7 +17,7 @@ impl RouteBuilder {
         TaskLifecycleHandle::new(
             self.state.global_store().clone(),
             session_routes.workspace_store_lookup(),
-            self.task_worktree_host(),
+            session_routes.task_worktree_host(),
             self.task_lifecycle_effects(session_routes),
         )
     }
@@ -158,7 +134,7 @@ impl RouteBuilder {
             Arc::clone(&self.state.sessions),
             Arc::clone(&self.state.providers),
             self.task_session_admission_provider_status(),
-            self.task_worktree_host(),
+            session_routes.task_worktree_host(),
             self.task_session_admission_effects_with_title_mode(
                 session_routes,
                 session_title_model_mode,

@@ -371,10 +371,12 @@ test("route builder split modules have line-cap ratchets", () => {
     "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/session_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/transport.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/workspace_deps.rs",
   ];
   for (const cappedPath of cappedPaths) {
     const capped = RATCHETED_FILE_LIMITS.find((entry) => entry.path === cappedPath);
