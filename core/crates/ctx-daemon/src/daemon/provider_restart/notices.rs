@@ -6,9 +6,12 @@ use ctx_core::models::{Message, MessageDelivery, MessageRole, Session, SessionEv
 use ctx_provider_runtime::provider_restart::ProviderRestartEvent;
 use serde_json::json;
 
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 
-pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRestartEvent) {
+pub(super) async fn notify_sessions(
+    host: &Arc<ProviderLifecycleBackgroundHost>,
+    event: &ProviderRestartEvent,
+) {
     let message_text = match event.kind {
         "provider_restart_warning" => {
             "Provider memory is high; restart scheduled if it stays elevated."
@@ -16,9 +19,9 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
         "provider_restart" => "Provider restart requested after sustained high memory usage.",
         _ => "Provider restart notice.",
     };
-    let session_ids = state.sessions.list_running_sessions().await;
+    let session_ids = host.sessions().list_running_sessions().await;
     for session_id in session_ids {
-        let store = match state.store_for_session(session_id).await {
+        let store = match host.store_for_session(session_id).await {
             Ok(store) => store,
             Err(_) => continue,
         };
@@ -30,7 +33,7 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
             continue;
         }
 
-        let message_id = insert_system_message(state, &store, &session, message_text).await;
+        let message_id = insert_system_message(host, &store, &session, message_text).await;
         let payload = json!({
             "provider": event.sample.provider_id,
             "kind": event.kind,
@@ -51,7 +54,7 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await
         {
-            Ok(event) => state.session_publication.publish_event(event).await,
+            Ok(event) => host.publish_event(event).await,
             Err(err) => tracing::warn!(
                 provider_id = %event.sample.provider_id,
                 session_id = %session_id.0,
@@ -62,14 +65,14 @@ pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRe
 }
 
 async fn insert_system_message(
-    state: &DaemonState,
+    host: &ProviderLifecycleBackgroundHost,
     store: &ctx_store::Store,
     session: &Session,
     content: &str,
 ) -> Option<MessageId> {
     let now = Utc::now();
     let message_id = MessageId::new();
-    let order_seq_state = state.sessions.get_order_seq_state(store, session.id).await;
+    let order_seq_state = host.sessions().get_order_seq_state(store, session.id).await;
     let order_seq = {
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)

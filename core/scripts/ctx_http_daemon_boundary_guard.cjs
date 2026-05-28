@@ -82,7 +82,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
   "core/crates/ctx-daemon/src/daemon/maintenance.rs",
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
-  "core/crates/ctx-daemon/src/daemon/managed_installs_host.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
   "core/crates/ctx-daemon/src/daemon/memleak_debug.rs",
@@ -95,23 +94,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_guard.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_guard/events.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_guard/snapshot.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_launch_host/install.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_launch_host/probe.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_restart.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs",
-  "core/crates/ctx-daemon/src/daemon/provider_runtime.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/harness_config.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/launch_config.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/options/effective_preference.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/options_cache.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/restarts.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/runtime_probe.rs",
-  "core/crates/ctx-daemon/src/daemon/providers/status.rs",
   "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs",
@@ -199,23 +181,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|transport|state.transport
 2 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|transport|state.transport
-1 core/crates/ctx-daemon/src/daemon/provider_guard.rs|providers|state.providers
-1 core/crates/ctx-daemon/src/daemon/provider_guard.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|session_publication|state.session_publication
-1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|sessions|state.sessions
-1 core/crates/ctx-daemon/src/daemon/provider_guard/events.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/provider_guard/snapshot.rs|core|state.core
-3 core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs|core|state.core
-2 core/crates/ctx-daemon/src/daemon/provider_launch_host/probe/runtime.rs|execution|state.execution
-1 core/crates/ctx-daemon/src/daemon/provider_restart.rs|providers|state.providers
-1 core/crates/ctx-daemon/src/daemon/provider_restart.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs|session_publication|state.session_publication
-2 core/crates/ctx-daemon/src/daemon/provider_restart/notices.rs|sessions|state.sessions
-1 core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/providers/diagnostics.rs|providers|state.providers
-2 core/crates/ctx-daemon/src/daemon/providers/harness_config.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/providers/options_cache.rs|providers|state.providers
-1 core/crates/ctx-daemon/src/daemon/providers/restarts.rs|providers|state.providers
 1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|providers|state.providers
 4 core/crates/ctx-daemon/src/daemon/resource_governance.rs|telemetry|state.telemetry
 1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|transport|state.transport

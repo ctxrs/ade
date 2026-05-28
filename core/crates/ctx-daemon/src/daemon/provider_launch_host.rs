@@ -1,2 +1,1 @@
-mod install;
 mod probe;

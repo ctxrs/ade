@@ -3,6 +3,9 @@ mod runtime_parts;
 mod startup;
 
 use super::*;
+use crate::daemon::provider_capability_hosts::{
+    ProviderLifecycleBackgroundHost, ProviderLifecycleBackgroundHostParts,
+};
 use crate::daemon::scheduler::SessionSchedulerWorkerHostParts;
 use crate::daemon::sessions::SessionSchedulerWorkerHostFactory;
 use crate::daemon::task_session_effects::{
@@ -104,6 +107,18 @@ impl DaemonState {
             session_stores.clone(),
             Arc::clone(&task_publication),
         );
+        let provider_lifecycle_background = Arc::new(ProviderLifecycleBackgroundHost::new(
+            ProviderLifecycleBackgroundHostParts {
+                data_root: data_root.clone(),
+                providers: Arc::clone(&providers),
+                resource_sampler: Arc::clone(&telemetry.resource_sampler),
+                sessions: Arc::clone(&sessions),
+                session_stores: session_stores.clone(),
+                session_publication: session_publication.clone(),
+                perf_telemetry: telemetry.perf_telemetry.clone(),
+                shutdown_tx: runtime_parts.shutdown_tx.clone(),
+            },
+        ));
         let task_session_cleanup = TaskSessionCleanupHost::new(
             stores.global().clone(),
             Arc::clone(&sessions),
@@ -164,6 +179,7 @@ impl DaemonState {
             transport,
             execution,
             session_publication,
+            provider_lifecycle_background,
             task_publication,
             task_session_cleanup,
             session_scheduler_worker_host,

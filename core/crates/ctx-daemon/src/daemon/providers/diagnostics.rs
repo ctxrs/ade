@@ -1,23 +1,14 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::ProviderStatus;
 
-use crate::daemon::DaemonState;
-
 #[derive(Debug)]
 pub struct ProviderDiagnosticsSnapshot {
     pub providers: Vec<ProviderStatus>,
     pub managed_installs: serde_json::Value,
-}
-
-pub async fn provider_diagnostics_snapshot(
-    state: &Arc<DaemonState>,
-) -> ProviderDiagnosticsSnapshot {
-    provider_diagnostics_snapshot_for_runtime(&state.core.data_root, &state.providers).await
 }
 
 pub(in crate::daemon) async fn provider_diagnostics_snapshot_for_runtime(

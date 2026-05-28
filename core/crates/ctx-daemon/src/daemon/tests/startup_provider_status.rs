@@ -15,7 +15,11 @@ async fn startup_provider_status_refresh_runs_in_background() {
         None,
     ));
 
-    spawn_startup_provider_status_refresh(state.clone());
+    spawn_startup_provider_status_refresh(ProviderStatusHandle::new(
+        temp.path().to_path_buf(),
+        Arc::clone(&state.providers),
+        state.telemetry.ops_events.clone(),
+    ));
 
     tokio::time::timeout(Duration::from_secs(1), async {
         while !adapter.inspect_started.load(Ordering::SeqCst) {

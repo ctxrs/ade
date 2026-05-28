@@ -24,39 +24,6 @@ pub async fn public_settings_for_response(
     public
 }
 
-pub async fn apply_settings_side_effects(state: &DaemonState, settings: &Settings) {
-    let mut telemetry_cfg = TelemetryConfig::default();
-    if let Some(telemetry) = settings.telemetry.as_ref() {
-        telemetry_cfg.enabled = telemetry.enabled;
-        if !telemetry.endpoint.trim().is_empty() {
-            telemetry_cfg.endpoint = telemetry.endpoint.clone();
-        }
-    }
-    state.telemetry.telemetry.update_config(telemetry_cfg).await;
-    let perf_enabled = settings
-        .telemetry
-        .as_ref()
-        .map(|t| t.enabled)
-        .unwrap_or(true);
-    state
-        .telemetry
-        .perf_telemetry
-        .update_remote_enabled(perf_enabled)
-        .await;
-    if let Err(err) = resource_governance::apply_settings(state, settings).await {
-        tracing::warn!("failed to apply resource governance settings: {err:#}");
-    }
-    if let Err(err) = provider_guard::apply_settings(state, settings).await {
-        tracing::warn!("failed to apply provider guard settings: {err:#}");
-    }
-    if let Err(err) = provider_restart::apply_settings(state, settings).await {
-        tracing::warn!("failed to apply provider restart settings: {err:#}");
-    }
-    if let Err(err) = tool_cgroup::apply_settings(state, settings).await {
-        tracing::warn!("failed to apply tool cgroup settings: {err:#}");
-    }
-}
-
 impl SettingsHandle {
     pub async fn settings_snapshot_for_response(
         &self,

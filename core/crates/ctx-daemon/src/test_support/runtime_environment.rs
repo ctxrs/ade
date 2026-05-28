@@ -42,15 +42,29 @@ impl TestDaemon {
         &self,
         settings: &Settings,
     ) -> anyhow::Result<()> {
-        daemon::provider_guard::apply_settings(self.state.as_ref(), settings).await?;
-        daemon::provider_restart::apply_settings(self.state.as_ref(), settings).await?;
+        daemon::provider_guard::apply_settings_parts(
+            self.state.providers.as_ref(),
+            self.state.telemetry.resource_sampler.as_ref(),
+            settings,
+        )
+        .await?;
+        daemon::provider_restart::apply_settings_parts(
+            self.state.providers.as_ref(),
+            self.state.telemetry.resource_sampler.as_ref(),
+            settings,
+        )
+        .await?;
         Ok(())
     }
 
     pub fn spawn_provider_monitoring_for_test(&self) {
         daemon::resource_telemetry::spawn_resource_telemetry(Arc::clone(&self.state));
-        daemon::provider_guard::spawn_provider_guard(Arc::clone(&self.state));
-        daemon::provider_restart::spawn_provider_restart(Arc::clone(&self.state));
+        daemon::provider_guard::spawn_provider_guard(Arc::clone(
+            &self.state.provider_lifecycle_background,
+        ));
+        daemon::provider_restart::spawn_provider_restart(Arc::clone(
+            &self.state.provider_lifecycle_background,
+        ));
     }
 
     pub async fn prepare_workspace_harness_for_test(

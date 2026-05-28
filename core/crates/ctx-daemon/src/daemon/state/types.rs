@@ -13,6 +13,7 @@ use ctx_worktree_vcs_service::{
     WorktreeVcsSnapshotCacheEntry,
 };
 
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 use crate::daemon::sessions::SessionSchedulerWorkerHostFactory;
 use crate::daemon::task_session_effects::{
     SessionPublicationEffects, TaskPublicationHost, TaskSessionCleanupHost,
@@ -103,6 +104,7 @@ pub struct DaemonState {
     pub(crate) transport: TransportRuntime,
     pub(crate) execution: ExecutionRuntime,
     pub(crate) session_publication: SessionPublicationEffects,
+    pub(crate) provider_lifecycle_background: Arc<ProviderLifecycleBackgroundHost>,
     pub(crate) task_publication: Arc<TaskPublicationHost>,
     pub(crate) task_session_cleanup: TaskSessionCleanupHost,
     pub(in crate::daemon) session_scheduler_worker_host: SessionSchedulerWorkerHostFactory,

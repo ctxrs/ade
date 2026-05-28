@@ -27,7 +27,8 @@ impl TestDaemon {
     }
 
     pub async fn refresh_provider_statuses(&self) -> anyhow::Result<()> {
-        ctx_managed_installs::refresh_provider_statuses(self.state.as_ref()).await
+        ctx_managed_installs::refresh_provider_statuses(&self.provider_status_handle_for_test())
+            .await
     }
 
     pub async fn upsert_provider_status(&self, provider_id: String, status: ProviderStatus) {
@@ -359,8 +360,9 @@ impl TestDaemon {
         provider_id: String,
         target: InstallTarget,
     ) -> anyhow::Result<()> {
-        let state: Arc<ctx_managed_installs::ManagedInstallHostObject> = self.state.clone();
-        ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
+        let host: Arc<ctx_managed_installs::ManagedInstallHostObject> =
+            Arc::new(self.provider_install_handle_for_test());
+        ctx_managed_installs::install_provider_with_progress(host, install_id, provider_id, target)
             .await
     }
 
@@ -370,8 +372,9 @@ impl TestDaemon {
         provider_id: String,
         target: InstallTarget,
     ) -> anyhow::Result<()> {
-        let state: Arc<ctx_managed_installs::ManagedInstallHostObject> = self.state.clone();
-        ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
+        let host: Arc<ctx_managed_installs::ManagedInstallHostObject> =
+            Arc::new(self.provider_install_handle_for_test());
+        ctx_managed_installs::install_provider_with_progress(host, install_id, provider_id, target)
             .await
     }
 
@@ -379,10 +382,9 @@ impl TestDaemon {
         &self,
         install_id: InstallId,
     ) -> anyhow::Result<()> {
-        let state: Arc<
-            dyn ctx_managed_installs::title_generation::TitleGenerationLocalInstallHost,
-        > = self.state.clone();
-        ctx_managed_installs::install_title_generation_local_with_progress(state, install_id).await
+        let host: Arc<dyn ctx_managed_installs::title_generation::TitleGenerationLocalInstallHost> =
+            Arc::new(self.provider_install_handle_for_test());
+        ctx_managed_installs::install_title_generation_local_with_progress(host, install_id).await
     }
 
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {

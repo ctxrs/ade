@@ -4,14 +4,14 @@ use ctx_provider_runtime::CachedProviderOptions;
 #[tokio::test]
 async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (state, workspace) = test_state_with_workspace(temp.path(), 4310).await;
-    save_sandbox_execution_mode(&state).await;
+    let fixture = test_model_catalog_fixture(temp.path(), 4310).await;
+    save_sandbox_execution_mode(&fixture).await;
 
-    state
-        .providers
+    fixture
+        .providers()
         .with_provider_options_cache(|cache| {
             cache.insert(
-                format!("{}/container/codex", workspace.id.0),
+                format!("{}/container/codex", fixture.workspace().id.0),
                 CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
                     value: serde_json::json!({
@@ -33,7 +33,7 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         })
         .await;
 
-    let catalog = load_provider_model_catalog(&state, &workspace, "codex")
+    let catalog = load_provider_model_catalog(fixture.host(), fixture.workspace(), "codex")
         .await
         .expect("load catalog")
         .expect("catalog");
@@ -46,10 +46,10 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
 #[tokio::test]
 async fn load_provider_model_catalog_falls_back_to_pinned_gemini_catalog() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (state, workspace) = test_state_with_workspace(temp.path(), 4311).await;
-    seed_ready_gemini_status(&state).await;
+    let fixture = test_model_catalog_fixture(temp.path(), 4311).await;
+    seed_ready_gemini_status(&fixture).await;
 
-    let catalog = load_provider_model_catalog(&state, &workspace, "gemini")
+    let catalog = load_provider_model_catalog(fixture.host(), fixture.workspace(), "gemini")
         .await
         .expect("load catalog")
         .expect("catalog");

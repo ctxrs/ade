@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_http_auth::daemon as daemon_auth;
-use ctx_observability::telemetry::TelemetryConfig;
 use ctx_store::{Store, StoreManager, StoreManagerConfig};
 use directories::BaseDirs;
 use tokio::net::TcpListener;
@@ -93,42 +92,19 @@ pub async fn bootstrap_daemon_runtime(
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
-    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
-    let mut telemetry_cfg = TelemetryConfig::default();
-    if let Some(telemetry) = settings.telemetry.as_ref() {
-        telemetry_cfg.enabled = telemetry.enabled;
-        if !telemetry.endpoint.trim().is_empty() {
-            telemetry_cfg.endpoint = telemetry.endpoint.clone();
-        }
-    }
-    state.telemetry.telemetry.update_config(telemetry_cfg).await;
-    let perf_enabled = settings
-        .telemetry
-        .as_ref()
-        .map(|t| t.enabled)
-        .unwrap_or(true);
-    state
-        .telemetry
-        .perf_telemetry
-        .update_remote_enabled(perf_enabled)
-        .await;
-    if let Err(err) = resource_governance::apply_settings(&state, &settings).await {
-        tracing::warn!("failed to apply resource governance settings: {err:#}");
-    }
-    if let Err(err) = provider_guard::apply_settings(&state, &settings).await {
-        tracing::warn!("failed to apply provider guard settings: {err:#}");
-    }
-    if let Err(err) = provider_restart::apply_settings(&state, &settings).await {
-        tracing::warn!("failed to apply provider restart settings: {err:#}");
-    }
-
-    if let Err(err) = tool_cgroup::apply_settings(&state, &settings).await {
-        tracing::warn!("failed to apply tool cgroup settings: {err:#}");
-    }
-
     let route_handles = route_handles_from_state(&state);
+    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
+    route_handles
+        .settings
+        .apply_settings_side_effects(&settings)
+        .await;
     let shutdown_signal = DaemonShutdownSignal::new(state.core.shutdown_tx.clone());
-    background::spawn_daemon_background_services(state, requested_binds);
+    background::spawn_daemon_background_services(
+        state,
+        requested_binds,
+        route_handles.provider_status.clone(),
+        route_handles.provider_usage.clone(),
+    );
     Ok(DaemonRuntime {
         _daemon_lock: daemon_lock,
         route_handles,

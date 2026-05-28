@@ -12,26 +12,9 @@ use ctx_worktree_data_plane::{
     workspace_data_plane, WorktreeDataPlaneHost,
 };
 
-use crate::daemon::DaemonState;
-
 use self::helpers::{probe_cwd_for_workspace_runtime, runtime_data_root, synthetic_probe_worktree};
 
 mod helpers;
-
-pub(super) async fn prepare_workspace_probe_runtime(
-    state: &DaemonState,
-    workspace: &Workspace,
-) -> Result<PreparedWorkspaceProbeRuntime, String> {
-    prepare_workspace_probe_runtime_parts(
-        state,
-        state.global_store(),
-        &state.core.data_root,
-        &state.core.daemon_url,
-        &state.execution.harness,
-        workspace,
-    )
-    .await
-}
 
 pub(in crate::daemon) async fn prepare_workspace_probe_runtime_parts<H>(
     data_plane_host: &H,
@@ -103,22 +86,6 @@ where
         runtime_data_root,
         env_overrides: runtime_plan.env_overrides,
     })
-}
-
-pub(super) async fn prepare_worktree_probe_runtime(
-    state: &DaemonState,
-    workspace: &Workspace,
-    worktree: &Worktree,
-) -> Result<PreparedWorkspaceProbeRuntime, String> {
-    prepare_worktree_probe_runtime_parts(
-        state,
-        state.global_store(),
-        &state.core.daemon_url,
-        &state.execution.harness,
-        workspace,
-        worktree,
-    )
-    .await
 }
 
 pub(in crate::daemon) async fn prepare_worktree_probe_runtime_parts<H>(

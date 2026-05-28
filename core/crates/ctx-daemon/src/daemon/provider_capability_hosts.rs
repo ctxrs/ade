@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use ctx_core::ids::SessionId;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
+use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
 };
@@ -15,13 +17,93 @@ use ctx_provider_runtime::{
     ProviderRuntime, ProviderRuntimeHost,
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
-use tokio::sync::broadcast;
+use ctx_resource_utilization::ResourceSampler;
+use ctx_session_runtime::runtime::SessionRuntime;
+use ctx_store::Store;
+use tokio::sync::{broadcast, Mutex};
 
+use super::task_session_effects::SessionPublicationEffects;
 use super::{
-    ProviderAdminHandle, ProviderBootstrapHandle, ProviderInstallHandle, ProviderStatusHandle,
-    ProviderUsageHandle, ProviderWorkspaceLaunchRuntime,
+    scheduler::SchedulerCommand, ProviderAdminHandle, ProviderBootstrapHandle,
+    ProviderInstallHandle, ProviderStatusHandle, ProviderUsageHandle,
+    ProviderWorkspaceLaunchRuntime, SessionStoreLookup,
 };
 use crate::daemon::web_sessions::WebSessionWorkerRuntimeHost;
+
+#[derive(Clone)]
+pub(crate) struct ProviderLifecycleBackgroundHost {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    data_root: std::path::PathBuf,
+    providers: Arc<ProviderRuntime>,
+    resource_sampler: Arc<Mutex<ResourceSampler>>,
+    sessions: Arc<SessionRuntime<SchedulerCommand>>,
+    session_stores: SessionStoreLookup,
+    session_publication: SessionPublicationEffects,
+    perf_telemetry: PerfTelemetry,
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+pub(in crate::daemon) struct ProviderLifecycleBackgroundHostParts {
+    pub(in crate::daemon) data_root: std::path::PathBuf,
+    pub(in crate::daemon) providers: Arc<ProviderRuntime>,
+    pub(in crate::daemon) resource_sampler: Arc<Mutex<ResourceSampler>>,
+    pub(in crate::daemon) sessions: Arc<SessionRuntime<SchedulerCommand>>,
+    pub(in crate::daemon) session_stores: SessionStoreLookup,
+    pub(in crate::daemon) session_publication: SessionPublicationEffects,
+    pub(in crate::daemon) perf_telemetry: PerfTelemetry,
+    pub(in crate::daemon) shutdown_tx: broadcast::Sender<()>,
+}
+
+impl ProviderLifecycleBackgroundHost {
+    pub(in crate::daemon) fn new(parts: ProviderLifecycleBackgroundHostParts) -> Self {
+        Self {
+            data_root: parts.data_root,
+            providers: parts.providers,
+            resource_sampler: parts.resource_sampler,
+            sessions: parts.sessions,
+            session_stores: parts.session_stores,
+            session_publication: parts.session_publication,
+            perf_telemetry: parts.perf_telemetry,
+            shutdown_tx: parts.shutdown_tx,
+        }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn resource_sampler(&self) -> &Mutex<ResourceSampler> {
+        self.resource_sampler.as_ref()
+    }
+
+    pub(in crate::daemon) fn sessions(&self) -> &SessionRuntime<SchedulerCommand> {
+        self.sessions.as_ref()
+    }
+
+    pub(in crate::daemon) async fn store_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store> {
+        self.session_stores.store_for_session(session_id).await
+    }
+
+    pub(in crate::daemon) async fn publish_event(&self, event: ctx_core::models::SessionEvent) {
+        self.session_publication.publish_event(event).await;
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
+    }
+
+    pub(in crate::daemon) fn shutdown_tx(&self) -> &broadcast::Sender<()> {
+        &self.shutdown_tx
+    }
+}
 
 pub(in crate::daemon) fn current_ctx_version_for_provider_runtime() -> Option<String> {
     match ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION")) {

@@ -282,6 +282,19 @@ impl SessionStoreLookup {
         }
     }
 
+    pub(in crate::daemon) async fn store_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Store> {
+        match self.lookup_session_store(session_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace missing for session {}", session_id.0)
+            }
+            StoreLookup::Unavailable(error) => Err(error),
+        }
+    }
+
     pub(in crate::daemon) async fn existing_session_store(
         &self,
         session_id: SessionId,

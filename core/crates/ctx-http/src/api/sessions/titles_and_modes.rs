@@ -18,7 +18,7 @@ pub(crate) use model::set_session_model;
 pub(crate) use title::generate_session_title;
 
 #[cfg(test)]
-use ctx_daemon::daemon::SessionTitleModelModeHandle;
+use crate::test_support::TestDaemonFixture;
 
 type ApiErr = (StatusCode, Json<ApiErrorResp>);
 
@@ -61,17 +61,13 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
-    async fn sessions_handle() -> SessionTitleModelModeHandle {
-        crate::test_support::TestDaemonFixture::new("http://127.0.0.1:0")
-            .await
-            .daemon()
-            .session_title_model_mode_handle_for_test()
-    }
-
     #[tokio::test]
     async fn title_route_errors_are_json_api_errors() {
+        let fixture = TestDaemonFixture::new("http://127.0.0.1:0").await;
+        let sessions = fixture.daemon().session_title_model_mode_handle_for_test();
+
         let err = generate_session_title(
-            State(sessions_handle().await),
+            State(sessions.clone()),
             Path("not-a-session".to_string()),
             Json(route_request::<GenerateSessionTitleRouteRequest>(json!({}))),
         )
@@ -82,7 +78,7 @@ mod tests {
         assert_eq!(err.1 .0.error, "invalid session id");
 
         let err = generate_session_title(
-            State(sessions_handle().await),
+            State(sessions),
             Path(SessionId::new().0.to_string()),
             Json(route_request::<GenerateSessionTitleRouteRequest>(json!({}))),
         )
@@ -95,8 +91,11 @@ mod tests {
 
     #[tokio::test]
     async fn model_route_errors_are_json_api_errors() {
+        let fixture = TestDaemonFixture::new("http://127.0.0.1:0").await;
+        let sessions = fixture.daemon().session_title_model_mode_handle_for_test();
+
         let err = set_session_model(
-            State(sessions_handle().await),
+            State(sessions),
             Path("not-a-session".to_string()),
             Json(route_request::<SetSessionModelRouteRequest>(json!({
                 "model_id": "fake-model"
@@ -111,8 +110,11 @@ mod tests {
 
     #[tokio::test]
     async fn mode_route_errors_are_bare_status_codes() {
+        let fixture = TestDaemonFixture::new("http://127.0.0.1:0").await;
+        let sessions = fixture.daemon().session_title_model_mode_handle_for_test();
+
         let err = set_session_mode(
-            State(sessions_handle().await),
+            State(sessions.clone()),
             Path("not-a-session".to_string()),
             Json(route_request::<SetSessionModeRouteRequest>(json!({
                 "mode_id": "plan"
@@ -124,7 +126,7 @@ mod tests {
         assert_eq!(err, StatusCode::BAD_REQUEST);
 
         let err = set_session_mode(
-            State(sessions_handle().await),
+            State(sessions),
             Path(SessionId::new().0.to_string()),
             Json(route_request::<SetSessionModeRouteRequest>(json!({
                 "mode_id": "plan"

@@ -161,6 +161,10 @@ impl TestDaemon {
         route_handles_from_state(&self.state).provider_harness_config
     }
 
+    pub fn provider_status_handle_for_test(&self) -> crate::daemon::ProviderStatusHandle {
+        route_handles_from_state(&self.state).provider_status
+    }
+
     pub fn provider_install_handle_for_test(&self) -> crate::daemon::ProviderInstallHandle {
         route_handles_from_state(&self.state).provider_install
     }

@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::ProviderRestartMode;
-
-use crate::daemon::DaemonState;
 
 pub(in crate::daemon::providers) async fn invalidate_provider_runtime_state_for_runtime(
     providers: &ProviderRuntime,
@@ -11,14 +7,6 @@ pub(in crate::daemon::providers) async fn invalidate_provider_runtime_state_for_
 ) {
     ctx_provider_runtime::provider_cache::invalidate_provider_probe_caches(providers, provider_id)
         .await;
-}
-
-pub async fn restart_provider_for_auth_change(
-    state: &Arc<DaemonState>,
-    provider_id: &str,
-    reason: &str,
-) -> anyhow::Result<()> {
-    restart_provider_for_auth_change_with_runtime(&state.providers, provider_id, reason).await
 }
 
 pub(crate) async fn restart_provider_for_auth_change_with_runtime(

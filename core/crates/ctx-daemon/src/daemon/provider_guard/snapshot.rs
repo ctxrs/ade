@@ -1,13 +1,13 @@
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 
 pub(super) async fn capture_guard_snapshot(
-    state: &DaemonState,
+    state: &ProviderLifecycleBackgroundHost,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     #[cfg(target_os = "linux")]
     {
         let timestamp_ms = unix_ms_now();
-        let dir = state.core.data_root.join("logs").join("providers");
+        let dir = state.data_root().join("logs").join("providers");
         let path = dir.join(format!(
             "provider-guard-{}-{}-{}-{}.log",
             event.sample.label, event.sample.pid, event.stage, timestamp_ms

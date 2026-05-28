@@ -27,17 +27,6 @@ pub(in crate::daemon) trait ModelCatalogHost:
 }
 
 #[async_trait]
-impl ModelCatalogHost for DaemonState {
-    fn global_store(&self) -> &Store {
-        DaemonState::global_store(self)
-    }
-
-    async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
-        DaemonState::store_for_workspace(self, workspace_id).await
-    }
-}
-
-#[async_trait]
 impl ModelCatalogHost for crate::daemon::SessionTitleModelModeHandle {
     fn global_store(&self) -> &Store {
         self.global_store()
@@ -141,31 +130,25 @@ async fn load_provider_model_catalog_for_install_target(
 }
 
 #[cfg(test)]
-pub async fn load_provider_model_catalog(
-    state: &std::sync::Arc<DaemonState>,
+pub(in crate::daemon) async fn load_provider_model_catalog(
+    host: &impl ModelCatalogHost,
     workspace: &Workspace,
     provider_id: &str,
 ) -> Result<Option<ModelCatalog>, String> {
-    let store = ModelCatalogHost::store_for_workspace(state.as_ref(), workspace.id)
+    let store = ModelCatalogHost::store_for_workspace(host, workspace.id)
         .await
         .map_err(|err| {
             format!("workspace execution settings unavailable for provider options: {err:#}")
         })?;
     let effective = ctx_settings_service::effective_install_target(
-        ModelCatalogHost::global_store(state.as_ref()),
+        ModelCatalogHost::global_store(host),
         &store,
     )
     .await
     .map_err(|err| {
         format!("workspace execution settings unavailable for provider options: {err:#}")
     })?;
-    load_provider_model_catalog_for_install_target(
-        state.as_ref(),
-        workspace,
-        provider_id,
-        effective,
-    )
-    .await
+    load_provider_model_catalog_for_install_target(host, workspace, provider_id, effective).await
 }
 
 pub(in crate::daemon) async fn load_provider_model_catalog_for_execution_environment(

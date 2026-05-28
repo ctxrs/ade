@@ -4,23 +4,23 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::snapshot::capture_guard_snapshot;
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 use ctx_core::models::SessionEventType;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 pub(super) async fn handle_provider_guard_event(
-    state: &Arc<DaemonState>,
+    host: &Arc<ProviderLifecycleBackgroundHost>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
-    log_guard_event(state, event).await;
+    log_guard_event(host, event).await;
     if event.stage == "max" || event.stage == "kill" {
-        capture_guard_snapshot(state, event).await;
+        capture_guard_snapshot(host, event).await;
     }
-    notify_sessions(state, event).await;
+    notify_sessions(host, event).await;
 }
 
 async fn log_guard_event(
-    state: &DaemonState,
+    host: &ProviderLifecycleBackgroundHost,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     let mem_mb = bytes_to_mb(event.sample.memory_bytes);
@@ -37,9 +37,7 @@ async fn log_guard_event(
     let mut labels = HashMap::new();
     labels.insert("provider_id".to_string(), event.sample.label.clone());
     labels.insert("event".to_string(), event.stage.to_string());
-    state
-        .telemetry
-        .perf_telemetry
+    host.perf_telemetry()
         .record_metric(
             PerfMetric {
                 name: "ctx.provider.guard.events".to_string(),
@@ -56,12 +54,12 @@ async fn log_guard_event(
 }
 
 async fn notify_sessions(
-    state: &Arc<DaemonState>,
+    host: &Arc<ProviderLifecycleBackgroundHost>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
-    let session_ids = state.sessions.list_running_sessions().await;
+    let session_ids = host.sessions().list_running_sessions().await;
     for session_id in session_ids {
-        let store = match state.store_for_session(session_id).await {
+        let store = match host.store_for_session(session_id).await {
             Ok(store) => store,
             Err(_) => continue,
         };
@@ -94,7 +92,7 @@ async fn notify_sessions(
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await
         {
-            Ok(event) => state.session_publication.publish_event(event).await,
+            Ok(event) => host.publish_event(event).await,
             Err(err) => tracing::warn!(
                 provider_id = %session.provider_id,
                 session_id = %session_id.0,
