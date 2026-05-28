@@ -197,6 +197,7 @@ const {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanProviderRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,
@@ -825,6 +826,58 @@ test("daemon state bucket access ratchet allows private state graph internals", 
       [],
     );
   }
+});
+
+test("provider route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanProviderRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn provider_status(&self) -> ProviderStatusHandle {
+          ProviderStatusHandle::new(
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.providers),
+            self.state.telemetry.ops_events.clone(),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider route builder uses broad daemon state",
+      "provider route builder reads broad route-builder state",
+      "provider route builder reads broad route-builder state",
+      "provider route builder reads broad route-builder state",
+    ],
+  );
+});
+
+test("provider route builder state assembly ratchet ignores other route builders", () => {
+  assert.deepEqual(
+    scanProviderRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+      contents: "let _ = self.state.core.data_root.clone();",
+    }),
+    [],
+  );
+});
+
+test("provider route builder state assembly ratchet rejects child provider deps rebuilds", () => {
+  const violations = scanProviderRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "let provider_routes = self.provider_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["provider route child builder reconstructs provider deps"],
+  );
 });
 
 test("daemon state boundary ratchet rejects new app_state modules", () => {

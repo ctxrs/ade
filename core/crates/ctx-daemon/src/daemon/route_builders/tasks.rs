@@ -86,14 +86,17 @@ impl RouteBuilder {
             close_web_sessions_for_task,
         )
     }
-    fn task_session_admission_effects(&self) -> Arc<TaskAdmissionSessionEffects> {
+    fn task_session_admission_effects_with_title_mode(
+        &self,
+        session_title_model_mode: SessionTitleModelModeHandle,
+    ) -> Arc<TaskAdmissionSessionEffects> {
         crate::daemon::task_session_effects::task_admission_session_effects(
             self.session_publication_effects(),
             Arc::clone(&self.state.sessions),
             SessionMessageSchedulerSpawner::new(Arc::downgrade(
                 &self.state.session_scheduler_worker_host.worker_host(),
             )),
-            self.session_title_model_mode(),
+            session_title_model_mode,
             self.task_publication_host(),
         )
     }
@@ -104,8 +107,11 @@ impl RouteBuilder {
             self.state.telemetry.ops_events.clone(),
         )
     }
-    fn task_session_admission_model_catalog_loader(&self) -> TaskAdmissionModelCatalogLoader {
-        let launch = self.provider_workspace_launch_runtime();
+    fn task_session_admission_model_catalog_loader_with_provider_routes(
+        &self,
+        provider_routes: &provider_deps::ProviderRouteDeps,
+    ) -> TaskAdmissionModelCatalogLoader {
+        let launch = provider_routes.provider_workspace_launch_runtime();
         Arc::new(
             move |workspace: Workspace,
                   provider_id: String,
@@ -123,7 +129,11 @@ impl RouteBuilder {
             },
         )
     }
-    pub fn task_session_admission(&self) -> TaskSessionAdmissionHandle {
+    pub(super) fn task_session_admission_with_provider_routes(
+        &self,
+        provider_routes: &provider_deps::ProviderRouteDeps,
+        session_title_model_mode: SessionTitleModelModeHandle,
+    ) -> TaskSessionAdmissionHandle {
         TaskSessionAdmissionHandle::new(
             self.state.global_store().clone(),
             ProtectedWorkspaceStoreLookup::new(
@@ -135,14 +145,17 @@ impl RouteBuilder {
             Arc::clone(&self.state.providers),
             self.task_session_admission_provider_status(),
             self.task_worktree_host(),
-            self.task_session_admission_effects(),
-            self.task_session_admission_model_catalog_loader(),
+            self.task_session_admission_effects_with_title_mode(session_title_model_mode),
+            self.task_session_admission_model_catalog_loader_with_provider_routes(provider_routes),
             self.state.telemetry.telemetry.clone(),
             self.state.telemetry.ops_events.clone(),
             self.state.telemetry.perf_telemetry.clone(),
         )
     }
-    pub fn task_creation(&self) -> TaskCreationHandle {
+    pub(super) fn task_creation_with_session_admission(
+        &self,
+        task_session_admission: TaskSessionAdmissionHandle,
+    ) -> TaskCreationHandle {
         TaskCreationHandle::new(
             self.state.global_store().clone(),
             ProtectedWorkspaceStoreLookup::new(
@@ -150,7 +163,7 @@ impl RouteBuilder {
                 Arc::clone(&self.state.sessions),
                 Arc::clone(&self.state.transport.merge_queue),
             ),
-            self.task_session_admission(),
+            task_session_admission,
             self.task_lifecycle(),
         )
     }

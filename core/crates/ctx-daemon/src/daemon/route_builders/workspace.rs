@@ -135,8 +135,13 @@ impl RouteBuilder {
             self.state.core.data_root.clone(),
         )
     }
-    pub fn workspace_provider_model_preferences(&self) -> WorkspaceProviderModelPreferenceHandle {
-        WorkspaceProviderModelPreferenceHandle::new(self.provider_workspace_launch_runtime())
+    pub(super) fn workspace_provider_model_preferences_with_provider_routes(
+        &self,
+        provider_routes: &provider_deps::ProviderRouteDeps,
+    ) -> WorkspaceProviderModelPreferenceHandle {
+        WorkspaceProviderModelPreferenceHandle::new(
+            provider_routes.provider_workspace_launch_runtime(),
+        )
     }
     pub(crate) fn workspace_attachments_runtime(
         &self,

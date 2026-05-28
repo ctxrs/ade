@@ -139,8 +139,8 @@ const RATCHETED_FILE_LIMITS = [
     limit: 120,
   },
   {
-    path: "core/crates/ctx-daemon/src/daemon/route_builders/providers.rs",
-    limit: 115,
+    path: "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
+    limit: 150,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",

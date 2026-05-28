@@ -19,7 +19,10 @@ impl RouteBuilder {
             Arc::clone(&self.state.workspaces.workspace_active_snapshot),
         )
     }
-    pub fn session_control(&self) -> SessionControlHandle {
+    pub(super) fn session_control_with_provider_routes(
+        &self,
+        provider_routes: &provider_deps::ProviderRouteDeps,
+    ) -> SessionControlHandle {
         SessionControlHandle::new(SessionControlHandleParts {
             session_stores: self.session_store_lookup(),
             session_runtime: Arc::clone(&self.state.sessions),
@@ -27,7 +30,7 @@ impl RouteBuilder {
                 &self.state.session_scheduler_worker_host.worker_host(),
             )),
             perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            provider_launch: self.provider_workspace_launch_runtime(),
+            provider_launch: provider_routes.provider_workspace_launch_runtime(),
             session_publication: self.session_publication_effects(),
             ask_user_question: Arc::clone(&self.state.core.ask_user_question),
             provider_unknown_events: self.state.telemetry.provider_unknown_events.clone(),
@@ -123,7 +126,10 @@ impl RouteBuilder {
             emit_legacy_context_window_key_reject,
         )
     }
-    pub fn session_subagent_mcp_control(&self) -> SessionSubagentMcpControlHandle {
+    pub(super) fn session_subagent_mcp_control_with_provider_routes(
+        &self,
+        provider_routes: &provider_deps::ProviderRouteDeps,
+    ) -> SessionSubagentMcpControlHandle {
         let provider_inactivity_timeout = Arc::new({
             let sessions = Arc::clone(&self.state.sessions);
             move || {
@@ -185,7 +191,7 @@ impl RouteBuilder {
             child_run_host,
             session_vcs: self.session_vcs(),
             worktrees: worktree_host,
-            provider_launch: self.provider_workspace_launch_runtime(),
+            provider_launch: provider_routes.provider_workspace_launch_runtime(),
             global_store: self.state.global_store().clone(),
             perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
             data_root: self.state.core.data_root.clone(),
