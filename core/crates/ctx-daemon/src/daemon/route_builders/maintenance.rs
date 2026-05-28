@@ -13,25 +13,7 @@ impl RouteBuilder {
     pub(super) fn merge_queue_route_host(
         &self,
     ) -> Arc<crate::daemon::merge_queue::MergeQueueRouteHost> {
-        let workspace_stores = self.protected_workspace_store_lookup();
-        let session_stores =
-            SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
-        let publisher = self.session_publication_effects();
-        let publish_merge_queue_notice: MergeQueueNoticePublicationEffect =
-            Arc::new(move |notice_event: MergeQueueNoticeSessionEvent| {
-                let publisher = publisher.clone();
-                Box::pin(async move { publisher.publish_merge_queue_notice(notice_event).await })
-                    as MergeQueueNoticePublicationFuture
-            });
-        Arc::new(crate::daemon::merge_queue::MergeQueueRouteHost::new(
-            self.state.core.stores.clone(),
-            self.state.global_store().clone(),
-            workspace_stores,
-            session_stores,
-            Arc::clone(&self.state.transport.merge_queue),
-            self.state.telemetry.ops_events.clone(),
-            publish_merge_queue_notice,
-        ))
+        crate::daemon::merge_queue::route_host_from_state(self.state.as_ref())
     }
     pub fn update_release(&self) -> UpdateReleaseHandle {
         UpdateReleaseHandle::new(self.state.core.data_root.clone())

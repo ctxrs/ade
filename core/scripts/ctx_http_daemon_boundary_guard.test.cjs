@@ -720,6 +720,7 @@ test("daemon state boundary ratchet allows current broad baseline files", () => 
   const baselineFixtures = [
     "core/crates/ctx-daemon/src/daemon/handle.rs",
     "core/crates/ctx-daemon/src/daemon/state.rs",
+    "core/crates/ctx-daemon/src/daemon/state/merge_queue.rs",
   ];
 
   for (const filePath of baselineFixtures) {

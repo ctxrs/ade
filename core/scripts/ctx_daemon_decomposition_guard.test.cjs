@@ -30,6 +30,7 @@ const {
   checkCtxHttpCliOnlyServiceUsage,
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
+  checkDaemonStateMergeQueueHost,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,
@@ -1121,6 +1122,20 @@ test("provider runtime AppState alias cannot be reintroduced", () => {
 
   assert.equal(violations.length, 2);
   assert(violations.every((violation) => violation.kind === "app_state_alias"));
+});
+
+test("DaemonState cannot be reintroduced as the merge queue host", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs", `
+    impl MergeQueueHost for DaemonState {}
+
+    impl ctx_merge_queue::MergeQueueHost for DaemonState {}
+  `);
+
+  const violations = checkDaemonStateMergeQueueHost(rootDir);
+
+  assert.equal(violations.length, 2);
+  assert(violations.every((violation) => violation.kind === "daemon_state_merge_queue_host"));
 });
 
 test("full evaluator aggregates all static decomposition violations", () => {

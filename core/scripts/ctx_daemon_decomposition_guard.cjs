@@ -1040,6 +1040,33 @@ const checkDaemonHandleStoreLookupOwnership = (rootDir) => {
   return violations;
 };
 
+const checkDaemonStateMergeQueueHost = (rootDir) => {
+  const violations = [];
+  const daemonSrcRoot = path.join(rootDir, "core", "crates", "ctx-daemon", "src");
+  const daemonStateMergeQueueHostPattern =
+    /\bimpl(?:\s*<[^>]*>)?\s+(?:ctx_merge_queue\s*::\s*)?MergeQueueHost\s+for\s+DaemonState\b/gu;
+
+  for (const absolutePath of walkFiles(daemonSrcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = daemonStateMergeQueueHostPattern.exec(contents);
+      match;
+      match = daemonStateMergeQueueHostPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_state_merge_queue_host",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "MergeQueueHost must be implemented by MergeQueueRouteHost or another narrow host, not DaemonState.",
+      });
+    }
+  }
+
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
@@ -1051,6 +1078,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkCtxHttpCliOnlyServiceUsage(rootDir),
     ...checkDaemonRootRouteFacades(rootDir),
     ...checkDaemonHandleStoreLookupOwnership(rootDir),
+    ...checkDaemonStateMergeQueueHost(rootDir),
   ];
   return { violations };
 };
@@ -1112,6 +1140,7 @@ module.exports = {
   checkCtxHttpCliOnlyServiceUsage,
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
+  checkDaemonStateMergeQueueHost,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,

@@ -28,6 +28,7 @@ use ctx_workspace_runtime::HarnessRuntimeManager;
 mod builder;
 mod cache;
 mod installs;
+mod merge_queue;
 mod metrics;
 mod runtime_adapters;
 mod store_lookup;
@@ -35,6 +36,7 @@ mod types;
 mod worktree_data_plane;
 
 pub use cache::{CacheSweepConfig, TimedEntry};
+pub(in crate::daemon) use merge_queue::merge_queue_route_host_from_state;
 use runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };

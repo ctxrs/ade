@@ -11,7 +11,7 @@ use ctx_store::StoreManager;
 
 use crate::daemon::{
     merge_queue_route_handles::{MergeQueueNoticePublicationEffect, MergeQueueNoticeSessionEvent},
-    DaemonState, ProtectedWorkspaceStoreLookup, ScopedMcpSessionAccessError, SessionStoreLookup,
+    ProtectedWorkspaceStoreLookup, ScopedMcpSessionAccessError, SessionStoreLookup,
     WorkspaceStoreAccessError,
 };
 
@@ -187,60 +187,5 @@ impl MergeQueueHost for MergeQueueRouteHost {
 
     fn emit_tool_exec(state: &Self, event: MergeQueueToolExecEvent) {
         state.ops_events.emit(merge_queue_tool_exec_event(event));
-    }
-}
-
-#[async_trait]
-impl MergeQueueHost for DaemonState {
-    fn merge_queue_runtime(state: &Self) -> &ctx_merge_queue::MergeQueueRuntime {
-        &state.transport.merge_queue
-    }
-
-    async fn protected_workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store> {
-        state.store_for_workspace(workspace_id).await
-    }
-
-    async fn raw_workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store> {
-        state.core.stores.workspace(workspace_id).await
-    }
-
-    async fn session_store(state: &Self, session_id: SessionId) -> Result<Store> {
-        state.store_for_session(session_id).await
-    }
-
-    async fn worktree_store(state: &Self, worktree_id: WorktreeId) -> Result<Store> {
-        state.store_for_worktree(worktree_id).await
-    }
-
-    async fn get_workspace(state: &Self, workspace_id: WorkspaceId) -> Result<Option<Workspace>> {
-        state.global_store().get_workspace(workspace_id).await
-    }
-
-    async fn upsert_workspace_worktree_index(
-        state: &Self,
-        worktree_id: WorktreeId,
-        workspace_id: WorkspaceId,
-    ) -> Result<()> {
-        state
-            .global_store()
-            .upsert_workspace_worktree_index(worktree_id, workspace_id)
-            .await
-    }
-
-    async fn publish_notice(state: &Arc<Self>, notice: MergeQueueNotice) -> Result<()> {
-        let (session_id, payload) = merge_queue_notice_payload(notice);
-        let store = state.store_for_session(session_id).await?;
-        let notice = store
-            .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
-            .await?;
-        state.session_publication.publish_event(notice).await;
-        Ok(())
-    }
-
-    fn emit_tool_exec(state: &Self, event: MergeQueueToolExecEvent) {
-        state
-            .telemetry
-            .ops_events
-            .emit(merge_queue_tool_exec_event(event));
     }
 }

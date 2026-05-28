@@ -32,10 +32,7 @@ use super::{
         TerminalRouteHandle, WebSessionRouteHandle,
     },
     maintenance_route_handles::{DaemonShutdownHandle, UpdateActivityHandle, UpdateDrainHandle},
-    merge_queue_route_handles::{
-        MergeQueueApiHandle, MergeQueueNoticePublicationEffect, MergeQueueNoticePublicationFuture,
-        MergeQueueNoticeSessionEvent,
-    },
+    merge_queue_route_handles::MergeQueueApiHandle,
     mobile_route_handles::{MobileRuntimeHandle, MobileSecureProxyHandle},
     provider_route_handles::{
         ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle,

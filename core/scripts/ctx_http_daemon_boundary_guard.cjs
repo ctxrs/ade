@@ -145,6 +145,7 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/state/installs/mirrors.rs",
   "core/crates/ctx-daemon/src/daemon/state/installs/progress.rs",
   "core/crates/ctx-daemon/src/daemon/state/installs/queries.rs",
+  "core/crates/ctx-daemon/src/daemon/state/merge_queue.rs",
   "core/crates/ctx-daemon/src/daemon/state/metrics.rs",
   "core/crates/ctx-daemon/src/daemon/state/store_lookup.rs",
   "core/crates/ctx-daemon/src/daemon/state/types.rs",

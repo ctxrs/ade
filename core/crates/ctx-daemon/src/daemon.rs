@@ -144,8 +144,8 @@ pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;
 pub use settings_route_handles::SettingsHandle;
 pub(in crate::daemon) use state::{
-    session_store_access_anyhow, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
-    WeakSessionStoreLookup,
+    merge_queue_route_host_from_state, session_store_access_anyhow, ProtectedWorkspaceStoreLookup,
+    SessionStoreLookup, WeakSessionStoreLookup,
 };
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
