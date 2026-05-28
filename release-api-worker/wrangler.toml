@@ -1,0 +1,32 @@
+name = "ctx-release-api"
+main = "src/worker.ts"
+compatibility_date = "2026-05-28"
+
+[vars]
+RELEASE_ARTIFACT_REDIRECT_BASE_URL = "https://api.ctx.rs/storage/v1/object/public/releases"
+
+[[r2_buckets]]
+binding = "RELEASES_BUCKET"
+bucket_name = "ade-releases"
+preview_bucket_name = "ade-releases"
+
+[env.staging]
+name = "ctx-release-api-staging"
+
+[env.staging.vars]
+RELEASE_ARTIFACT_REDIRECT_BASE_URL = "https://release-api-staging.example.invalid/storage/v1/object/public/releases"
+
+[[env.staging.r2_buckets]]
+binding = "RELEASES_BUCKET"
+bucket_name = "ade-releases"
+preview_bucket_name = "ade-releases"
+
+[env.prod]
+name = "ctx-release-api"
+
+[env.prod.vars]
+RELEASE_ARTIFACT_REDIRECT_BASE_URL = "https://api.ctx.rs/storage/v1/object/public/releases"
+
+[[env.prod.r2_buckets]]
+binding = "RELEASES_BUCKET"
+bucket_name = "ade-releases"

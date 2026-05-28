@@ -1,11 +1,10 @@
 {
-  "name": "ctx-llm-relay-worker",
+  "name": "ctx-release-api-worker",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --local --port 8790",
-    "readiness:check": "node scripts/cloudflare-neon-readiness.mjs",
+    "dev": "wrangler dev --local --port 8791",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "deploy": "wrangler deploy",
