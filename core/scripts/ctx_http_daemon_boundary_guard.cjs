@@ -75,7 +75,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
   "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
   "core/crates/ctx-daemon/src/daemon/execution_effective/execution_effective_test/mod.rs",
-  "core/crates/ctx-daemon/src/daemon/execution_setup.rs",
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
@@ -170,8 +169,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|execution|state.execution
 1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|transport|state.transport
 2 core/crates/ctx-daemon/src/daemon/activity/turns.rs|core|state.core
-7 core/crates/ctx-daemon/src/daemon/execution_setup.rs|core|state.core
-6 core/crates/ctx-daemon/src/daemon/execution_setup.rs|execution|state.execution
 1 core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs|core|state.core
 2 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|providers|state.providers

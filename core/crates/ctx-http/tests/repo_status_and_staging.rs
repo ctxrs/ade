@@ -84,5 +84,12 @@ async fn repo_staging_path_uses_daemon_data_root() {
             .unwrap_or_default(),
     );
     assert!(path.exists());
-    assert!(path.starts_with(fixture.data_dir.path().join("workspaces").join("staging")));
+    let expected_root = fixture
+        .data_dir
+        .path()
+        .canonicalize()
+        .expect("canonical data dir")
+        .join("workspaces")
+        .join("staging");
+    assert!(path.starts_with(expected_root));
 }

@@ -33,8 +33,14 @@ mod tests {
         let staging = create_repo_staging_path(tmp.path())
             .await
             .expect("staging path");
+        let expected_root = tmp
+            .path()
+            .canonicalize()
+            .expect("canonical tempdir")
+            .join("workspaces")
+            .join("staging");
 
         assert!(staging.exists());
-        assert!(staging.starts_with(tmp.path().join("workspaces").join("staging")));
+        assert!(staging.starts_with(expected_root));
     }
 }

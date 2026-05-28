@@ -132,8 +132,14 @@ mod tests {
                 .and_then(|path| path.as_str())
                 .expect("path field"),
         );
+        let expected_root = data_root
+            .path()
+            .canonicalize()
+            .expect("canonical data root")
+            .join("workspaces")
+            .join("staging");
         assert!(route_path.exists());
-        assert!(route_path.starts_with(data_root.path().join("workspaces").join("staging")));
+        assert!(route_path.starts_with(expected_root));
     }
 
     #[tokio::test]
