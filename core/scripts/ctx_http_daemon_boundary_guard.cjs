@@ -17406,6 +17406,13 @@ function scanDaemonStateBucketAccessRatchet({
   return violations;
 }
 
+const executionRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/execution_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/execution.rs",
+]);
+const executionRouteDepsDefinitionPath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/execution_deps.rs";
+
 const providerRouteBuilderAssemblyPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
 ]);
@@ -17422,6 +17429,13 @@ const taskRouteBuilderAssemblyPaths = new Set([
 const taskRouteDepsDefinitionPath =
   "core/crates/ctx-daemon/src/daemon/route_builders/task_deps.rs";
 
+const transportRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/transport_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/transport.rs",
+]);
+const transportRouteDepsDefinitionPath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/transport_deps.rs";
+
 const workspaceRouteBuilderAssemblyPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/workspace_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
@@ -17432,6 +17446,89 @@ const routeBuilderDepsAssemblyAllowedPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
 ]);
+
+function scanExecutionRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    !routeBuilderDepsAssemblyAllowedPaths.has(filePath) &&
+    filePath !== executionRouteDepsDefinitionPath
+  ) {
+    const childChecks = [
+      {
+        name: "execution route child builder reconstructs execution deps",
+        regex: /\bexecution_route_deps\s*\(/gu,
+      },
+      {
+        name: "execution route child builder constructs execution deps directly",
+        regex: /\b(?:execution_deps\s*::\s*)?ExecutionRouteDeps\s*::\s*new\s*\(/gu,
+      },
+      {
+        name: "execution route child builder uses execution deps struct literal",
+        regex: /\b(?:execution_deps\s*::\s*)?ExecutionRouteDeps\s*\{/gu,
+        allowedText: /^impl\s+(?:execution_deps\s*::\s*)?ExecutionRouteDeps\s*\{/u,
+      },
+      {
+        name: "execution route child builder accesses execution deps parts",
+        regex: /\b(?:execution_deps\s*::\s*)?ExecutionRouteDepsParts\b/gu,
+      },
+    ];
+    for (const check of childChecks) {
+      for (
+        let match = check.regex.exec(contents);
+        match;
+        match = check.regex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        const text = lines[line - 1]?.trim() ?? match[0];
+        if (check.allowedText?.test(text)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text,
+        });
+      }
+    }
+  }
+  if (!executionRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "execution route builder uses broad daemon state",
+      regex:
+        /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "execution route builder accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "execution route builder uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
 
 function scanProviderRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
   const violations = [];
@@ -17591,6 +17688,89 @@ function scanTaskRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
     },
     {
       name: "task route builder uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTransportRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    !routeBuilderDepsAssemblyAllowedPaths.has(filePath) &&
+    filePath !== transportRouteDepsDefinitionPath
+  ) {
+    const childChecks = [
+      {
+        name: "transport route child builder reconstructs transport deps",
+        regex: /\btransport_route_deps\s*\(/gu,
+      },
+      {
+        name: "transport route child builder constructs transport deps directly",
+        regex: /\b(?:transport_deps\s*::\s*)?TransportRouteDeps\s*::\s*new\s*\(/gu,
+      },
+      {
+        name: "transport route child builder uses transport deps struct literal",
+        regex: /\b(?:transport_deps\s*::\s*)?TransportRouteDeps\s*\{/gu,
+        allowedText: /^impl\s+(?:transport_deps\s*::\s*)?TransportRouteDeps\s*\{/u,
+      },
+      {
+        name: "transport route child builder accesses transport deps parts",
+        regex: /\b(?:transport_deps\s*::\s*)?TransportRouteDepsParts\b/gu,
+      },
+    ];
+    for (const check of childChecks) {
+      for (
+        let match = check.regex.exec(contents);
+        match;
+        match = check.regex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        const text = lines[line - 1]?.trim() ?? match[0];
+        if (check.allowedText?.test(text)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text,
+        });
+      }
+    }
+  }
+  if (!transportRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "transport route builder uses broad daemon state",
+      regex:
+        /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "transport route builder accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "transport route builder uses broad route builder",
       regex: /\bRouteBuilder\b/gu,
     },
   ];
@@ -18331,6 +18511,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanExecutionRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanProviderRouteBuilderStateAssemblyRatchet({
         filePath: relativePath,
         contents,
@@ -18340,6 +18524,10 @@ function scanRepo() {
         contents,
       }),
       ...scanTaskRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTransportRouteBuilderStateAssemblyRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19224,9 +19412,11 @@ module.exports = {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanExecutionRouteBuilderStateAssemblyRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
   scanTaskRouteBuilderStateAssemblyRatchet,
+  scanTransportRouteBuilderStateAssemblyRatchet,
   scanWorkspaceRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,

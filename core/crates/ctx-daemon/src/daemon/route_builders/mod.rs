@@ -87,6 +87,7 @@ use super::{
 
 mod core;
 mod execution;
+mod execution_deps;
 mod maintenance;
 mod provider_deps;
 mod session_deps;
@@ -97,6 +98,7 @@ mod tasks;
 #[cfg(any(test, feature = "test-support"))]
 mod test_helpers;
 mod transport;
+mod transport_deps;
 mod workspace;
 mod workspace_deps;
 
@@ -114,6 +116,8 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
     let workspace_routes = handle.workspace_route_deps();
     let session_routes = handle.session_route_deps(&workspace_routes);
     let task_routes = handle.task_route_deps();
+    let transport_routes = handle.transport_route_deps();
+    let execution_routes = handle.execution_route_deps();
     let session_title_model_mode = session_routes.session_title_model_mode();
     let task_session_admission = task_routes.task_session_admission_with_route_deps(
         &provider_routes,
@@ -146,9 +150,9 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
         update_release: handle.update_release(),
         update_activity: handle.update_activity(),
         settings: handle.settings(),
-        mobile_store: handle.mobile_store(),
-        mobile_runtime: handle.mobile_runtime(),
-        mobile_secure_proxy: handle.mobile_secure_proxy(),
+        mobile_store: transport_routes.mobile_store(),
+        mobile_runtime: transport_routes.mobile_runtime(),
+        mobile_secure_proxy: transport_routes.mobile_secure_proxy(),
         resource_utilization: handle.resource_utilization(),
         run_archive: handle.run_archive(),
         session_artifacts: session_routes.session_artifacts(),
@@ -187,10 +191,10 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
         provider_options: provider_routes.provider_options(),
         provider_workspace_auth: provider_routes.provider_workspace_auth(),
         telemetry: handle.telemetry(),
-        terminal_route: handle.terminal_route(),
-        web_session_route: handle.web_session_route(),
-        execution_launch: handle.execution_launch(),
-        linux_sandbox_runtime: handle.linux_sandbox_runtime(),
+        terminal_route: transport_routes.terminal_route(),
+        web_session_route: transport_routes.web_session_route(),
+        execution_launch: execution_routes.execution_launch(),
+        linux_sandbox_runtime: execution_routes.linux_sandbox_runtime(),
         update_drain: handle.update_drain(),
         daemon_shutdown: handle.daemon_shutdown_with_session_routes(&session_routes),
     }

@@ -1,6 +1,19 @@
 use super::*;
 
 impl RouteBuilder {
+    pub(super) fn execution_route_deps(&self) -> execution_deps::ExecutionRouteDeps {
+        execution_deps::ExecutionRouteDeps::new(execution_deps::ExecutionRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            global_store: self.state.global_store().clone(),
+            stores: self.state.core.stores.clone(),
+            update_drain: Arc::clone(&self.state.core.update_drain),
+            execution_setup: Arc::clone(&self.state.execution.setup),
+            harness: Arc::clone(&self.state.execution.harness),
+            terminals: Arc::clone(&self.state.transport.terminals),
+        })
+    }
+
     pub(super) fn provider_route_deps(&self) -> provider_deps::ProviderRouteDeps {
         provider_deps::ProviderRouteDeps::new(provider_deps::ProviderRouteDepsParts {
             data_root: self.state.core.data_root.clone(),
@@ -78,6 +91,24 @@ impl RouteBuilder {
             task_worktree_host: workspace_routes.task_worktree_host(),
             worktree_vcs_runtime: workspace_routes.worktree_vcs_runtime_host(),
             worktree_vcs_execution: workspace_routes.worktree_vcs_execution_host(),
+        })
+    }
+
+    pub(super) fn transport_route_deps(&self) -> transport_deps::TransportRouteDeps {
+        transport_deps::TransportRouteDeps::new(transport_deps::TransportRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            auth_token_configured: self.state.core.auth_token.is_some(),
+            global_store: self.state.global_store().clone(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            mobile_tunnel: self.state.transport.mobile_tunnel.clone(),
+            terminals: Arc::clone(&self.state.transport.terminals),
+            web_sessions: Arc::clone(&self.state.transport.web_sessions),
+            providers: Arc::clone(&self.state.providers),
+            harness: Arc::clone(&self.state.execution.harness),
+            health: self.health(),
+            telemetry: self.state.telemetry.telemetry.clone(),
+            ops_events: self.state.telemetry.ops_events.clone(),
         })
     }
 
