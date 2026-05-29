@@ -239,7 +239,7 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   assert.match(tauriToolsLockContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
     tauriToolsLockContracts,
-    /args = \["core", "--test", "scripts\/tauri_tools_lock_contract\.test\.cjs"\]/,
+    /args = \[\s*"core",\s*"--test",\s*"scripts\/tauri_tools_lock_contract\.test\.cjs",\s*"scripts\/release_public_storage_locked_objects\.test\.cjs",\s*\]/s,
   );
   assert.doesNotMatch(tauriToolsLockContracts, /run_workspace_task\.sh/);
 

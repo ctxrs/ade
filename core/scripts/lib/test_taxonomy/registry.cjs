@@ -1239,6 +1239,10 @@ function buildStaticEntries() {
       owner: "toolchain",
       sourceGlobs: [
         "core/package.json",
+        "core/apps/desktop/src-tauri/bundles/runtime_lock.v2.json",
+        "core/apps/desktop/src-tauri/bundles/tauri_tools_lock.v1.json",
+        "core/scripts/release_public_storage_locked_objects.cjs",
+        "core/scripts/release_public_storage_locked_objects.test.cjs",
         "core/scripts/tauri_tools_lock_contract.test.cjs",
       ],
       dependencyCrates: [],
@@ -1757,6 +1761,9 @@ function buildStaticEntries() {
       owner: "updates-release",
       sourceGlobs: [
         "core/package.json",
+        "core/apps/desktop/src-tauri/bundles/runtime_lock.v2.json",
+        "core/apps/desktop/src-tauri/bundles/tauri_tools_lock.v1.json",
+        "core/scripts/release_public_storage_locked_objects.cjs",
         "scripts/tests/release_manifest_concurrency_smoke.sh",
         "scripts/tests/release_promote_supabase_latest_smoke.sh",
         "scripts/tests/updater_contract_validate_smoke.sh",

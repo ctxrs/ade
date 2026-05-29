@@ -167,7 +167,12 @@ sh_binary(
 sh_binary(
     name = "tauri_tools_lock_contracts",
     srcs = ["//tools/bazel:run_node_task.sh"],
-    args = ["core", "--test", "scripts/tauri_tools_lock_contract.test.cjs"],
+    args = [
+        "core",
+        "--test",
+        "scripts/tauri_tools_lock_contract.test.cjs",
+        "scripts/release_public_storage_locked_objects.test.cjs",
+    ],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
