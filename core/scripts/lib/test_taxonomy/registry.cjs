@@ -2164,6 +2164,7 @@ function buildStaticEntries() {
       sourceGlobs: [
         "scripts/buildkite/release_pipeline_lib.sh",
         "scripts/buildkite/run_release_stable_promote.sh",
+        "core/scripts/resolve_canary_release_evidence_buildkite.cjs",
         "core/scripts/release_promote_canary_to_stable.cjs",
         "scripts/release_verify_supabase.sh",
         "scripts/release_promote_supabase_latest.sh",
