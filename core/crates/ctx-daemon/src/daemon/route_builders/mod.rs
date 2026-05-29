@@ -92,6 +92,7 @@ mod provider_deps;
 mod session_deps;
 mod sessions;
 mod state_deps;
+mod task_deps;
 mod tasks;
 #[cfg(any(test, feature = "test-support"))]
 mod test_helpers;
@@ -112,8 +113,9 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
     let provider_routes = handle.provider_route_deps();
     let workspace_routes = handle.workspace_route_deps();
     let session_routes = handle.session_route_deps(&workspace_routes);
+    let task_routes = handle.task_route_deps();
     let session_title_model_mode = session_routes.session_title_model_mode();
-    let task_session_admission = handle.task_session_admission_with_route_deps(
+    let task_session_admission = task_routes.task_session_admission_with_route_deps(
         &provider_routes,
         &session_routes,
         session_title_model_mode.clone(),
@@ -162,14 +164,14 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
         session_vcs: session_routes.session_vcs(),
         demo_seed_transcript: session_routes.demo_seed_transcript(),
         title_generation_local: session_routes.title_generation_local(),
-        task_creation: handle
+        task_creation: task_routes
             .task_creation_with_session_admission(task_session_admission.clone(), &session_routes),
-        task_lifecycle: handle.task_lifecycle_with_session_routes(&session_routes),
-        task_listing: handle.task_listing(),
-        task_read_state: handle.task_read_state_with_session_routes(&session_routes),
+        task_lifecycle: task_routes.task_lifecycle_with_session_routes(&session_routes),
+        task_listing: task_routes.task_listing(),
+        task_read_state: task_routes.task_read_state_with_session_routes(&session_routes),
         task_session_admission,
-        task_session_listing: handle.task_session_listing(),
-        task_title: handle.task_title_with_session_routes(&session_routes),
+        task_session_listing: task_routes.task_session_listing(),
+        task_title: task_routes.task_title_with_session_routes(&session_routes),
         workspace_deletion: workspace_routes.workspace_deletion(),
         workspace_active: workspace_routes.workspace_active(),
         workspace_stream: workspace_routes.workspace_stream(),

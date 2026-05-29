@@ -22,6 +22,22 @@ impl RouteBuilder {
         )
     }
 
+    pub(super) fn task_route_deps(&self) -> task_deps::TaskRouteDeps {
+        task_deps::TaskRouteDeps::new(task_deps::TaskRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            global_store: self.state.global_store().clone(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            sessions: Arc::clone(&self.state.sessions),
+            scheduler_worker_host: self.state.session_scheduler_worker_host.worker_host(),
+            providers: Arc::clone(&self.state.providers),
+            web_sessions: Arc::clone(&self.state.transport.web_sessions),
+            telemetry: self.state.telemetry.telemetry.clone(),
+            ops_events: self.state.telemetry.ops_events.clone(),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+        })
+    }
+
     pub(super) fn session_route_deps(
         &self,
         workspace_routes: &workspace_deps::WorkspaceRouteDeps,

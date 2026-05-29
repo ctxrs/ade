@@ -17415,6 +17415,13 @@ const sessionRouteBuilderAssemblyPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
 ]);
 
+const taskRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/task_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+]);
+const taskRouteDepsDefinitionPath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/task_deps.rs";
+
 const workspaceRouteBuilderAssemblyPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/workspace_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
@@ -17512,6 +17519,79 @@ function scanSessionRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
     {
       name: "session route builder reads broad route-builder state",
       regex: /\bself\s*\.\s*state\s*\./gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanTaskRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    !routeBuilderDepsAssemblyAllowedPaths.has(filePath) &&
+    filePath !== taskRouteDepsDefinitionPath
+  ) {
+    const childChecks = [
+      {
+        name: "task route child builder reconstructs task deps",
+        regex: /\btask_route_deps\s*\(/gu,
+      },
+      {
+        name: "task route child builder constructs task deps directly",
+        regex: /\b(?:task_deps\s*::\s*)?TaskRouteDeps\s*::\s*new\s*\(/gu,
+      },
+      {
+        name: "task route child builder accesses task deps parts",
+        regex: /\b(?:task_deps\s*::\s*)?TaskRouteDepsParts\b/gu,
+      },
+    ];
+    for (const check of childChecks) {
+      for (
+        let match = check.regex.exec(contents);
+        match;
+        match = check.regex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text: lines[line - 1]?.trim() ?? match[0],
+        });
+      }
+    }
+  }
+  if (!taskRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "task route builder uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "task route builder accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "task route builder uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
     },
   ];
   for (const check of checks) {
@@ -18256,6 +18336,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanTaskRouteBuilderStateAssemblyRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19142,6 +19226,7 @@ module.exports = {
   scanDaemonStateBucketAccessRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
+  scanTaskRouteBuilderStateAssemblyRatchet,
   scanWorkspaceRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,

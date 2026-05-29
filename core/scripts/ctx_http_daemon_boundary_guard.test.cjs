@@ -199,6 +199,7 @@ const {
   scanDaemonStateBucketAccessRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
+  scanTaskRouteBuilderStateAssemblyRatchet,
   scanWorkspaceRouteBuilderStateAssemblyRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
@@ -949,6 +950,119 @@ test("session route builder state assembly ratchet allows composition helper", (
     scanSessionRouteBuilderStateAssemblyRatchet({
       filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
       contents: "fn session_route_deps(&self) {}",
+    }),
+    [],
+  );
+});
+
+test("task route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanTaskRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn task_listing(&self) -> TaskListingHandle {
+          TaskListingHandle::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.transport.web_sessions),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "task route builder uses broad daemon state",
+      "task route builder accesses broad route-builder state",
+      "task route builder accesses broad route-builder state",
+      "task route builder uses broad route builder",
+    ],
+  );
+});
+
+test("task route builder state assembly ratchet rejects broad route builder type", () => {
+  const violations = scanTaskRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "impl RouteBuilder { fn task_listing(&self) {} }",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["task route builder uses broad route builder"],
+  );
+});
+
+test("task route builder state assembly ratchet rejects cloning broad state", () => {
+  const violations = scanTaskRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "let state = Arc::clone(&self.state);",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["task route builder accesses broad route-builder state"],
+  );
+});
+
+test("task route builder state assembly ratchet ignores other route builders", () => {
+  assert.deepEqual(
+    scanTaskRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/workspace.rs",
+      contents: "let _ = self.state.core.data_root.clone();",
+    }),
+    [],
+  );
+});
+
+test("task route builder state assembly ratchet rejects child task deps rebuilds", () => {
+  const violations = scanTaskRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: "let task_routes = self.task_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["task route child builder reconstructs task deps"],
+  );
+});
+
+test("task route builder state assembly ratchet rejects direct task deps reconstruction", () => {
+  const violations = scanTaskRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
+    contents:
+      "let task_routes = task_deps::TaskRouteDeps::new(task_deps::TaskRouteDepsParts { global_store });",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "task route child builder constructs task deps directly",
+      "task route child builder accesses task deps parts",
+    ],
+  );
+});
+
+test("task route builder state assembly ratchet allows composition helper", () => {
+  assert.deepEqual(
+    scanTaskRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      contents:
+        "fn task_route_deps(&self) { task_deps::TaskRouteDeps::new(task_deps::TaskRouteDepsParts {}) }",
+    }),
+    [],
+  );
+});
+
+test("task route builder state assembly ratchet allows task deps definitions", () => {
+  assert.deepEqual(
+    scanTaskRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/task_deps.rs",
+      contents:
+        "pub(super) struct TaskRouteDepsParts; impl TaskRouteDeps { pub(super) fn new(parts: TaskRouteDepsParts) -> Self {} }",
     }),
     [],
   );
