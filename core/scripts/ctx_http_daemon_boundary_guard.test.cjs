@@ -202,6 +202,7 @@ const {
   scanMaintenanceRouteBuilderStateAssemblyRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanRouteBuilderChildStateBlindRatchet,
+  scanRouteBuilderStateDepsExplicitPartsRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
   scanTaskRouteBuilderStateAssemblyRatchet,
   scanTransportRouteBuilderStateAssemblyRatchet,
@@ -1157,6 +1158,7 @@ test("route-builder child state-blind ratchet allows mod.rs route-builder orches
 
 test("route-builder child state-blind ratchet allows central state deps and test helpers", () => {
   for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
   ]) {
@@ -1169,6 +1171,163 @@ test("route-builder child state-blind ratchet allows central state deps and test
       [],
     );
   }
+});
+
+test("route-builder state deps explicit-parts ratchet rejects old broad builder shape", () => {
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    contents: `
+      pub(crate) struct RouteBuilder {
+        state: Arc<DaemonState>,
+      }
+
+      pub(super) struct RouteGraphParts {
+        state: Arc<DaemonState>,
+      }
+
+      impl RouteBuilder {
+        pub(crate) fn new(state: Arc<DaemonState>) -> Self {
+          Self { state }
+        }
+
+        fn route(&self) {
+          let _ = self.state.core.data_root.clone();
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route builder stores broad daemon state",
+      "route graph parts stores broad daemon state",
+      "route builder constructor accepts broad daemon state",
+      "route builder accesses broad daemon state field",
+      "route graph reads broad daemon state outside composition edge",
+    ],
+  );
+});
+
+test("route-builder state deps explicit-parts ratchet scans route graph parts", () => {
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
+    contents: `
+      pub(super) struct RouteGraphParts {
+        daemon_state: Weak<DaemonState>,
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["route graph parts stores broad daemon state"],
+  );
+});
+
+test("route-builder state deps explicit-parts ratchet rejects bare daemon state storage", () => {
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    contents: `
+      pub(crate) struct RouteBuilder {
+        state: DaemonState,
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["route builder stores broad daemon state"],
+  );
+});
+
+test("route-builder state deps explicit-parts ratchet rejects broad helper and bucket reads", () => {
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    contents: `
+      fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
+        RouteGraphParts::from_state(state)
+      }
+
+      fn accidental_helper(daemon: &DaemonState) {
+        let _ = daemon.core.data_root.clone();
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route graph helper accepts broad daemon state",
+      "route graph reads broad daemon state outside composition edge",
+    ],
+  );
+});
+
+test("route-builder state deps explicit-parts ratchet allows explicit graph and test bridge", () => {
+  assert.deepEqual(
+    scanRouteBuilderStateDepsExplicitPartsRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
+      contents: `
+        pub(super) struct RouteGraphParts {
+          data_root: PathBuf,
+        }
+
+        impl RouteGraphParts {
+          fn from_state(state: &Arc<DaemonState>) -> Self {
+            let data_root = state.core.data_root.clone();
+            todo!()
+          }
+        }
+      `,
+    }),
+    [],
+  );
+
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    contents: `
+      pub(crate) struct RouteBuilder {
+        parts: RouteGraphParts,
+      }
+
+      impl RouteBuilder {
+        pub(crate) fn new(parts: RouteGraphParts) -> Self {
+          Self { parts }
+        }
+
+        #[cfg(any(test, feature = "test-support"))]
+        pub(crate) fn from_state_for_test_support(state: &Arc<DaemonState>) -> Self {
+          Self::new(RouteGraphParts::from_state(state))
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("route-builder state deps explicit-parts ratchet does not scan test helpers", () => {
+  const violations = scanRouteBuilderStateDepsExplicitPartsRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
+    contents: `
+      pub(crate) struct RouteBuilder {
+        state: Arc<DaemonState>,
+      }
+
+      impl RouteBuilder {
+        pub(crate) fn new(state: Arc<DaemonState>) -> Self {
+          Self { state }
+        }
+
+        fn route(&self) {
+          let _ = self.state.core.data_root.clone();
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("execution route builder state assembly ratchet rejects broad state reads", () => {

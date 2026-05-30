@@ -374,6 +374,7 @@ test("route builder split modules have line-cap ratchets", () => {
     "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/maintenance_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/session_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",

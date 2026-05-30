@@ -26,7 +26,6 @@ use crate::daemon::sessions::{
 
 use super::{
     blobs::BlobHandle,
-    git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost},
     launch_route_handles::{
         ExecutionLaunchHandle, LinuxSandboxRuntimeHandle, TerminalRouteHandle,
         WebSessionRouteHandle,
@@ -53,9 +52,7 @@ use super::{
         SessionVcsFuture, SessionVcsHandle,
     },
     settings_route_handles::SettingsHandle,
-    state::{
-        ProtectedWorkspaceStoreLookup, SessionStoreLookup, TaskStoreLookup, WeakSessionStoreLookup,
-    },
+    state::{ProtectedWorkspaceStoreLookup, TaskStoreLookup},
     task_route_handles::{
         TaskAdmissionFuture, TaskAdmissionModelCatalogLoader, TaskAdmissionSessionEffects,
         TaskArchivedRevLoader, TaskCloseWebSessionsForTask, TaskCreationHandle,
@@ -91,6 +88,7 @@ mod execution_deps;
 mod maintenance;
 mod maintenance_deps;
 mod provider_deps;
+mod route_graph_parts;
 mod session_deps;
 mod sessions;
 mod state_deps;

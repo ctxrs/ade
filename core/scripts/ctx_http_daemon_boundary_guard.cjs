@@ -17922,14 +17922,20 @@ const workspaceRouteBuilderAssemblyPaths = new Set([
 
 const routeBuilderDepsAssemblyAllowedPaths = new Set([
   daemonRouteBuildersRelativePath,
+  "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
 ]);
 const routeBuilderBroadStateAllowedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
 ]);
 const routeBuilderDepsReconstructionAllowedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+]);
+const routeBuilderExplicitPartsRatchetPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
 ]);
 
@@ -18170,6 +18176,182 @@ function scanRouteBuilderChildStateBlindRatchet({ filePath, contents }) {
     }
   }
   return violations;
+}
+
+function scanRouteBuilderStateDepsExplicitPartsRatchet({ filePath, contents }) {
+  if (!routeBuilderExplicitPartsRatchetPaths.has(filePath)) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const daemonStateName =
+    String.raw`(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?(?:state\s*::\s*)?DaemonState`;
+  const daemonStatePointerType =
+    String.raw`(?:std\s*::\s*sync\s*::\s*)?(?:Arc|Weak)\s*<\s*${daemonStateName}\s*>`;
+  const daemonStateStorageType = String.raw`(?:${daemonStateName}|${daemonStatePointerType})`;
+  const daemonStateBroadType = String.raw`(?:&\s*)?(?:${daemonStateName}|${daemonStatePointerType})`;
+  const allowedBroadStateParamFunctionsByPath = new Map([
+    [
+      "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
+      new Set(["from_state"]),
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      new Set(["route_handles_from_state", "from_state_for_test_support"]),
+    ],
+  ]);
+  const allowedBucketAccessFunctionsByPath = new Map([
+    [
+      "core/crates/ctx-daemon/src/daemon/route_builders/route_graph_parts.rs",
+      new Set(["from_state"]),
+    ],
+  ]);
+  const checks = [
+    {
+      name: "route builder stores broad daemon state",
+      regex: new RegExp(
+        String.raw`\bstruct\s+RouteBuilder\s*\{[\s\S]*?\b\w+\s*:\s*${daemonStateStorageType}`,
+        "gu",
+      ),
+    },
+    {
+      name: "route graph parts stores broad daemon state",
+      regex: new RegExp(
+        String.raw`\bstruct\s+RouteGraphParts\s*\{[\s\S]*?\b\w+\s*:\s*${daemonStateStorageType}`,
+        "gu",
+      ),
+    },
+    {
+      name: "route builder constructor accepts broad daemon state",
+      regex: new RegExp(
+        String.raw`\bfn\s+new\s*\([^)]*\b(?:mut\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*${daemonStateBroadType}`,
+        "gu",
+      ),
+    },
+    {
+      name: "route builder accesses broad daemon state field",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  const allowedBroadStateParamFunctions =
+    allowedBroadStateParamFunctionsByPath.get(filePath) ?? new Set();
+  const broadStateParamBindings = new Set(["state"]);
+  const functionSignatureRegex =
+    /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/gu;
+  const broadStateParamRegex = new RegExp(
+    String.raw`\b(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*${daemonStateBroadType}`,
+    "gu",
+  );
+  for (
+    let match = functionSignatureRegex.exec(contents);
+    match;
+    match = functionSignatureRegex.exec(contents)
+  ) {
+    const [signature, functionName, params] = match;
+    broadStateParamRegex.lastIndex = 0;
+    for (
+      let paramMatch = broadStateParamRegex.exec(params);
+      paramMatch;
+      paramMatch = broadStateParamRegex.exec(params)
+    ) {
+      const bindingName = paramMatch[1];
+      broadStateParamBindings.add(bindingName);
+      if (
+        functionName === "new" ||
+        allowedBroadStateParamFunctions.has(functionName)
+      ) {
+        continue;
+      }
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "route graph helper accepts broad daemon state",
+        text: lines[line - 1]?.trim() ?? signature,
+      });
+    }
+  }
+  const allowedBucketAccessFunctions =
+    allowedBucketAccessFunctionsByPath.get(filePath) ?? new Set();
+  const allowedBucketAccessRanges = rustFunctionRangesByName(
+    contents,
+    allowedBucketAccessFunctions,
+  );
+  const broadStateBindingAlternation = [...broadStateParamBindings]
+    .filter((binding) => binding !== "_")
+    .map((binding) => escapeRegExp(binding))
+    .join("|");
+  const stateBucketRegex = new RegExp(
+    String.raw`\b(?:${broadStateBindingAlternation})\s*\.\s*(?:core|sessions|workspaces|providers|telemetry|transport|execution|task_publication|session_scheduler_worker_host|global_store\s*\()`,
+    "gu",
+  );
+  for (
+    let match = stateBucketRegex.exec(contents);
+    match;
+    match = stateBucketRegex.exec(contents)
+  ) {
+    if (isInAnyRange(match.index, allowedBucketAccessRanges)) {
+      continue;
+    }
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "route graph reads broad daemon state outside composition edge",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
+function rustFunctionRangesByName(contents, names) {
+  if (names.size === 0) {
+    return [];
+  }
+  const ranges = [];
+  const fnRegex = /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gu;
+  for (let match = fnRegex.exec(contents); match; match = fnRegex.exec(contents)) {
+    if (!names.has(match[1])) {
+      continue;
+    }
+    const bodyStart = contents.indexOf("{", fnRegex.lastIndex);
+    if (bodyStart === -1) {
+      continue;
+    }
+    let depth = 0;
+    for (let index = bodyStart; index < contents.length; index += 1) {
+      const char = contents[index];
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          ranges.push([match.index, index + 1]);
+          break;
+        }
+      }
+    }
+  }
+  return ranges;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function scanExecutionRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
@@ -19273,6 +19455,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanRouteBuilderStateDepsExplicitPartsRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...(relativePath === "core/crates/ctx-daemon/src/daemon/handle.rs"
         ? []
         : scanAppStateRouteHandleRatchet({
@@ -20199,6 +20385,7 @@ module.exports = {
   scanTransportRouteBuilderStateAssemblyRatchet,
   scanWorkspaceRouteBuilderStateAssemblyRatchet,
   scanRouteBuilderChildStateBlindRatchet,
+  scanRouteBuilderStateDepsExplicitPartsRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,

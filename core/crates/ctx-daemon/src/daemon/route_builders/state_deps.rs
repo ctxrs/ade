@@ -1,13 +1,14 @@
+use super::route_graph_parts::RouteGraphParts;
 use super::*;
 use crate::daemon::state::DaemonState;
 
 #[derive(Clone)]
 pub(crate) struct RouteBuilder {
-    state: Arc<DaemonState>,
+    parts: RouteGraphParts,
 }
 
 pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
-    let handle = RouteBuilder::new(Arc::clone(state));
+    let handle = RouteBuilder::new(RouteGraphParts::from_state(state));
     let core_routes = handle.core_route_deps();
     let merge_queue_host = handle.merge_queue_route_host();
     let provider_routes = handle.provider_route_deps();
@@ -100,37 +101,40 @@ pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteH
 }
 
 impl RouteBuilder {
-    pub(crate) fn new(state: Arc<DaemonState>) -> Self {
-        Self { state }
+    pub(crate) fn new(parts: RouteGraphParts) -> Self {
+        Self { parts }
     }
-}
 
-impl RouteBuilder {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn from_state_for_test_support(state: &Arc<DaemonState>) -> Self {
+        Self::new(RouteGraphParts::from_state(state))
+    }
+
     pub(super) fn core_route_deps(&self) -> core_deps::CoreRouteDeps {
         core_deps::CoreRouteDeps::new(core_deps::CoreRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            public_base_url: self.state.core.public_base_url.clone(),
-            auth_token: self.state.core.auth_token.clone(),
-            mcp_auth: Arc::clone(&self.state.core.mcp_auth),
-            storage_guard: Arc::clone(&self.state.core.storage_guard),
-            global_store: self.state.global_store().clone(),
-            ops_events: self.state.telemetry.ops_events.clone(),
-            execution_setup: Arc::clone(&self.state.execution.setup),
-            providers: Arc::clone(&self.state.providers),
+            data_root: self.parts.data_root.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            public_base_url: self.parts.public_base_url.clone(),
+            auth_token: self.parts.auth_token.clone(),
+            mcp_auth: Arc::clone(&self.parts.mcp_auth),
+            storage_guard: Arc::clone(&self.parts.storage_guard),
+            global_store: self.parts.global_store.clone(),
+            ops_events: self.parts.ops_events.clone(),
+            execution_setup: Arc::clone(&self.parts.execution_setup),
+            providers: Arc::clone(&self.parts.providers),
         })
     }
 
     pub(super) fn execution_route_deps(&self) -> execution_deps::ExecutionRouteDeps {
         execution_deps::ExecutionRouteDeps::new(execution_deps::ExecutionRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            global_store: self.state.global_store().clone(),
-            stores: self.state.core.stores.clone(),
-            update_drain: Arc::clone(&self.state.core.update_drain),
-            execution_setup: Arc::clone(&self.state.execution.setup),
-            harness: Arc::clone(&self.state.execution.harness),
-            terminals: Arc::clone(&self.state.transport.terminals),
+            data_root: self.parts.data_root.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            global_store: self.parts.global_store.clone(),
+            stores: self.parts.stores.clone(),
+            update_drain: Arc::clone(&self.parts.update_drain),
+            execution_setup: Arc::clone(&self.parts.execution_setup),
+            harness: Arc::clone(&self.parts.harness),
+            terminals: Arc::clone(&self.parts.terminals),
         })
     }
 
@@ -139,65 +143,61 @@ impl RouteBuilder {
         merge_queue_host: Arc<crate::daemon::merge_queue::MergeQueueRouteHost>,
     ) -> maintenance_deps::MaintenanceRouteDeps {
         maintenance_deps::MaintenanceRouteDeps::new(maintenance_deps::MaintenanceRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            global_store: self.state.global_store().clone(),
-            stores: self.state.core.stores.clone(),
+            data_root: self.parts.data_root.clone(),
+            global_store: self.parts.global_store.clone(),
+            stores: self.parts.stores.clone(),
             workspace_stores: self.protected_workspace_store_lookup(),
             merge_queue_host,
-            telemetry: self.state.telemetry.telemetry.clone(),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            resource_sampler: Arc::clone(&self.state.telemetry.resource_sampler),
-            resource_governance: Arc::clone(&self.state.telemetry.resource_governance),
-            providers: Arc::clone(&self.state.providers),
-            terminals: Arc::clone(&self.state.transport.terminals),
-            update_drain: Arc::clone(&self.state.core.update_drain),
-            sessions: Arc::clone(&self.state.sessions),
-            harness: Arc::clone(&self.state.execution.harness),
-            shutdown_tx: self.state.core.shutdown_tx.clone(),
-            local_shutdown_token: self.state.core.local_shutdown_token.clone(),
+            telemetry: self.parts.telemetry.clone(),
+            perf_telemetry: self.parts.perf_telemetry.clone(),
+            resource_sampler: Arc::clone(&self.parts.resource_sampler),
+            resource_governance: Arc::clone(&self.parts.resource_governance),
+            providers: Arc::clone(&self.parts.providers),
+            terminals: Arc::clone(&self.parts.terminals),
+            update_drain: Arc::clone(&self.parts.update_drain),
+            sessions: Arc::clone(&self.parts.sessions),
+            harness: Arc::clone(&self.parts.harness),
+            shutdown_tx: self.parts.shutdown_tx.clone(),
+            local_shutdown_token: self.parts.local_shutdown_token.clone(),
         })
     }
 
     pub(super) fn merge_queue_route_host(
         &self,
     ) -> Arc<crate::daemon::merge_queue::MergeQueueRouteHost> {
-        crate::daemon::merge_queue_route_host_from_state(self.state.as_ref())
+        Arc::clone(&self.parts.merge_queue_host)
     }
 
     pub(super) fn provider_route_deps(&self) -> provider_deps::ProviderRouteDeps {
         provider_deps::ProviderRouteDeps::new(provider_deps::ProviderRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            auth_token: self.state.core.auth_token.clone(),
+            data_root: self.parts.data_root.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            auth_token: self.parts.auth_token.clone(),
             workspace_stores: self.protected_workspace_store_lookup(),
-            providers: Arc::clone(&self.state.providers),
-            ops_events: self.state.telemetry.ops_events.clone(),
-            shutdown_tx: self.state.core.shutdown_tx.clone(),
-            harness: Arc::clone(&self.state.execution.harness),
+            providers: Arc::clone(&self.parts.providers),
+            ops_events: self.parts.ops_events.clone(),
+            shutdown_tx: self.parts.shutdown_tx.clone(),
+            harness: Arc::clone(&self.parts.harness),
         })
     }
 
     pub(super) fn protected_workspace_store_lookup(&self) -> ProtectedWorkspaceStoreLookup {
-        ProtectedWorkspaceStoreLookup::new(
-            self.state.core.stores.clone(),
-            Arc::clone(&self.state.sessions),
-            Arc::clone(&self.state.transport.merge_queue),
-        )
+        self.parts.workspace_stores.clone()
     }
 
     pub(super) fn task_route_deps(&self) -> task_deps::TaskRouteDeps {
         task_deps::TaskRouteDeps::new(task_deps::TaskRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            global_store: self.state.global_store().clone(),
+            data_root: self.parts.data_root.clone(),
+            global_store: self.parts.global_store.clone(),
             workspace_stores: self.protected_workspace_store_lookup(),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
-            sessions: Arc::clone(&self.state.sessions),
-            scheduler_worker_host: self.state.session_scheduler_worker_host.worker_host(),
-            providers: Arc::clone(&self.state.providers),
-            web_sessions: Arc::clone(&self.state.transport.web_sessions),
-            telemetry: self.state.telemetry.telemetry.clone(),
-            ops_events: self.state.telemetry.ops_events.clone(),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            active_snapshot: Arc::clone(&self.parts.active_snapshot),
+            sessions: Arc::clone(&self.parts.sessions),
+            scheduler_worker_host: Arc::clone(&self.parts.scheduler_worker_host),
+            providers: Arc::clone(&self.parts.providers),
+            web_sessions: Arc::clone(&self.parts.web_sessions),
+            telemetry: self.parts.telemetry.clone(),
+            ops_events: self.parts.ops_events.clone(),
+            perf_telemetry: self.parts.perf_telemetry.clone(),
         })
     }
 
@@ -205,39 +205,30 @@ impl RouteBuilder {
         &self,
         workspace_routes: &workspace_deps::WorkspaceRouteDeps,
     ) -> session_deps::SessionRouteDeps {
-        let workspace_stores = self.protected_workspace_store_lookup();
-        let session_stores =
-            SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
-        let weak_session_stores = WeakSessionStoreLookup::new(
-            self.state.global_store().clone(),
-            self.state.core.stores.clone(),
-            Arc::downgrade(&self.state.sessions),
-            Arc::clone(&self.state.transport.merge_queue),
-        );
         session_deps::SessionRouteDeps::new(session_deps::SessionRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            tool_output_spool_dir: self.state.core.tool_output_spool_dir.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            auth_token: self.state.core.auth_token.clone(),
-            global_store: self.state.global_store().clone(),
-            stores: self.state.core.stores.clone(),
-            workspace_stores,
-            session_stores,
-            weak_session_stores,
-            sessions: Arc::clone(&self.state.sessions),
-            scheduler_worker_host: self.state.session_scheduler_worker_host.worker_host(),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            data_root: self.parts.data_root.clone(),
+            tool_output_spool_dir: self.parts.tool_output_spool_dir.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            auth_token: self.parts.auth_token.clone(),
+            global_store: self.parts.global_store.clone(),
+            stores: self.parts.stores.clone(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            session_stores: self.parts.session_stores.clone(),
+            weak_session_stores: self.parts.weak_session_stores.clone(),
+            sessions: Arc::clone(&self.parts.sessions),
+            scheduler_worker_host: Arc::clone(&self.parts.scheduler_worker_host),
+            active_snapshot: Arc::clone(&self.parts.active_snapshot),
             worktree_file_completions_cache: Arc::clone(
-                &self.state.workspaces.file_completions_cache,
+                &self.parts.worktree_file_completions_cache,
             ),
-            providers: Arc::clone(&self.state.providers),
-            ops_events: self.state.telemetry.ops_events.clone(),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            provider_unknown_events: self.state.telemetry.provider_unknown_events.clone(),
-            ask_user_question: Arc::clone(&self.state.core.ask_user_question),
-            update_drain: Arc::clone(&self.state.core.update_drain),
-            harness: Arc::clone(&self.state.execution.harness),
-            task_publication: Arc::clone(&self.state.task_publication),
+            providers: Arc::clone(&self.parts.providers),
+            ops_events: self.parts.ops_events.clone(),
+            perf_telemetry: self.parts.perf_telemetry.clone(),
+            provider_unknown_events: self.parts.provider_unknown_events.clone(),
+            ask_user_question: Arc::clone(&self.parts.ask_user_question),
+            update_drain: Arc::clone(&self.parts.update_drain),
+            harness: Arc::clone(&self.parts.harness),
+            task_publication: Arc::clone(&self.parts.task_publication),
             task_worktree_host: workspace_routes.task_worktree_host(),
             worktree_vcs_runtime: workspace_routes.worktree_vcs_runtime_host(),
             worktree_vcs_execution: workspace_routes.worktree_vcs_execution_host(),
@@ -249,19 +240,19 @@ impl RouteBuilder {
         health: HealthHandle,
     ) -> transport_deps::TransportRouteDeps {
         transport_deps::TransportRouteDeps::new(transport_deps::TransportRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            auth_token_configured: self.state.core.auth_token.is_some(),
-            global_store: self.state.global_store().clone(),
+            data_root: self.parts.data_root.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            auth_token_configured: self.parts.auth_token.is_some(),
+            global_store: self.parts.global_store.clone(),
             workspace_stores: self.protected_workspace_store_lookup(),
-            mobile_tunnel: self.state.transport.mobile_tunnel.clone(),
-            terminals: Arc::clone(&self.state.transport.terminals),
-            web_sessions: Arc::clone(&self.state.transport.web_sessions),
-            providers: Arc::clone(&self.state.providers),
-            harness: Arc::clone(&self.state.execution.harness),
+            mobile_tunnel: self.parts.mobile_tunnel.clone(),
+            terminals: Arc::clone(&self.parts.terminals),
+            web_sessions: Arc::clone(&self.parts.web_sessions),
+            providers: Arc::clone(&self.parts.providers),
+            harness: Arc::clone(&self.parts.harness),
             health,
-            telemetry: self.state.telemetry.telemetry.clone(),
-            ops_events: self.state.telemetry.ops_events.clone(),
+            telemetry: self.parts.telemetry.clone(),
+            ops_events: self.parts.ops_events.clone(),
         })
     }
 
@@ -269,51 +260,33 @@ impl RouteBuilder {
         &self,
         merge_queue_host: Arc<crate::daemon::merge_queue::MergeQueueRouteHost>,
     ) -> workspace_deps::WorkspaceRouteDeps {
-        let workspace_stores = self.protected_workspace_store_lookup();
-        let session_stores =
-            SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
         workspace_deps::WorkspaceRouteDeps::new(workspace_deps::WorkspaceRouteDepsParts {
-            data_root: self.state.core.data_root.clone(),
-            daemon_url: self.state.core.daemon_url.clone(),
-            stores: self.state.core.stores.clone(),
-            global_store: self.state.global_store().clone(),
-            workspace_stores,
-            session_stores,
-            sessions: Arc::clone(&self.state.sessions),
-            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            data_root: self.parts.data_root.clone(),
+            daemon_url: self.parts.daemon_url.clone(),
+            stores: self.parts.stores.clone(),
+            global_store: self.parts.global_store.clone(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            session_stores: self.parts.session_stores.clone(),
+            sessions: Arc::clone(&self.parts.sessions),
+            active_snapshot: Arc::clone(&self.parts.active_snapshot),
             workspace_active_snapshot_cache: Arc::clone(
-                &self.state.workspaces.workspace_active_snapshot_cache,
+                &self.parts.workspace_active_snapshot_cache,
             ),
-            workspace_active_heads_cache: Arc::clone(
-                &self.state.workspaces.workspace_active_heads_cache,
-            ),
+            workspace_active_heads_cache: Arc::clone(&self.parts.workspace_active_heads_cache),
             workspace_file_completions_cache: Arc::clone(
-                &self.state.workspaces.workspace_file_completions_cache,
+                &self.parts.workspace_file_completions_cache,
             ),
-            worktree_bootstrap_gates: Arc::clone(&self.state.workspaces.worktree_bootstrap_gates),
-            attachment_materialization: Arc::clone(
-                &self.state.workspaces.attachment_materialization,
-            ),
-            harness: Arc::clone(&self.state.execution.harness),
-            providers: Arc::clone(&self.state.providers),
-            merge_queue: Arc::clone(&self.state.transport.merge_queue),
+            worktree_bootstrap_gates: Arc::clone(&self.parts.worktree_bootstrap_gates),
+            attachment_materialization: Arc::clone(&self.parts.attachment_materialization),
+            harness: Arc::clone(&self.parts.harness),
+            providers: Arc::clone(&self.parts.providers),
+            merge_queue: Arc::clone(&self.parts.merge_queue),
             merge_queue_host,
-            telemetry: self.state.telemetry.telemetry.clone(),
-            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
-            worktree_vcs_runtime: WorktreeVcsRuntimeHost::from_workspace_runtime(
-                &self.state.workspaces,
-            ),
-            worktree_vcs_execution: WorktreeVcsExecutionHost::new(
-                self.state.core.data_root.clone(),
-                self.state.core.daemon_url.clone(),
-                self.state.global_store().clone(),
-                self.protected_workspace_store_lookup(),
-                Arc::clone(&self.state.execution.harness),
-            ),
-            workspace_vcs_stream_runtime:
-                crate::daemon::workspaces::stream::WorkspaceVcsStreamRuntime::from_workspace_runtime(
-                    &self.state.workspaces,
-                ),
+            telemetry: self.parts.telemetry.clone(),
+            perf_telemetry: self.parts.perf_telemetry.clone(),
+            worktree_vcs_runtime: self.parts.worktree_vcs_runtime.clone(),
+            worktree_vcs_execution: self.parts.worktree_vcs_execution.clone(),
+            workspace_vcs_stream_runtime: self.parts.workspace_vcs_stream_runtime.clone(),
         })
     }
 }

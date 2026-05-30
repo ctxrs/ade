@@ -11,7 +11,7 @@ use crate::daemon::DaemonState;
 pub(crate) fn workspace_attachments_runtime_from_state(
     state: &Arc<DaemonState>,
 ) -> Arc<crate::daemon::workspaces::attachments::WorkspaceAttachmentsRuntime> {
-    let builder = RouteBuilder::new(Arc::clone(state));
+    let builder = RouteBuilder::from_state_for_test_support(state);
     let merge_queue_host = builder.merge_queue_route_host();
     builder
         .workspace_route_deps(merge_queue_host)
@@ -23,7 +23,7 @@ pub(crate) fn workspace_primary_branch_with_refresh_effect_from_state(
     state: &Arc<DaemonState>,
     refresh_vcs_snapshot: WorkspacePrimaryBranchRefreshEffect,
 ) -> WorkspacePrimaryBranchHandle {
-    let builder = RouteBuilder::new(Arc::clone(state));
+    let builder = RouteBuilder::from_state_for_test_support(state);
     let merge_queue_host = builder.merge_queue_route_host();
     builder
         .workspace_route_deps(merge_queue_host)
@@ -35,7 +35,7 @@ pub(crate) fn workspace_vcs_stream_with_refresh_effect_from_state(
     state: &Arc<DaemonState>,
     refresh_worktree_vcs: WorkspaceVcsStreamRefreshEffect,
 ) -> WorkspaceVcsStreamHandle {
-    let builder = RouteBuilder::new(Arc::clone(state));
+    let builder = RouteBuilder::from_state_for_test_support(state);
     let merge_queue_host = builder.merge_queue_route_host();
     builder
         .workspace_route_deps(merge_queue_host)
