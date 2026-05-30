@@ -28,6 +28,12 @@ pub(crate) type WorkspaceActiveSnapshotCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>>;
 pub(crate) type WorkspaceActiveHeadsCache =
     Arc<Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>>;
+pub(crate) type WorktreeGitStatusSnapshotCache =
+    Arc<Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>>;
+pub(crate) type WorktreeVcsSnapshotCache =
+    Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>>;
+pub(crate) type WorktreeBootstrapGateCache =
+    Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>>;
 
 pub struct CoreState {
     pub(crate) data_root: PathBuf,
@@ -50,10 +56,8 @@ pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_enabled: bool,
     pub(crate) file_completions_cache: WorktreeFileCompletionsCache,
     pub(crate) workspace_file_completions_cache: WorkspaceFileCompletionsCache,
-    pub(crate) git_status_snapshots:
-        Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
-    pub(crate) worktree_vcs_snapshots:
-        Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>>,
+    pub(crate) git_status_snapshots: WorktreeGitStatusSnapshotCache,
+    pub(crate) worktree_vcs_snapshots: WorktreeVcsSnapshotCache,
     pub(crate) worktree_vcs_active: Arc<Mutex<HashMap<WorktreeId, usize>>>,
     pub(crate) worktree_vcs_refresh_locks:
         Arc<Mutex<HashMap<WorktreeId, std::sync::Weak<Mutex<()>>>>>,
@@ -66,8 +70,7 @@ pub struct WorkspaceRuntime {
     pub(crate) workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
     pub(crate) workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
     pub(crate) workspace_active_heads_cache: WorkspaceActiveHeadsCache,
-    pub(crate) worktree_bootstrap_gates:
-        Arc<Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>>,
+    pub(crate) worktree_bootstrap_gates: WorktreeBootstrapGateCache,
     pub(crate) attachment_materialization: Arc<WorkspaceAttachmentMaterializationRuntime>,
 }
 

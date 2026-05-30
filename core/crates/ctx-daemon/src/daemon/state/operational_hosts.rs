@@ -9,8 +9,8 @@ use crate::daemon::scheduler::DaemonTerminalStateReconcileHost;
 use crate::daemon::storage_guard::{StorageGuardHost, StorageGuardHostParts};
 use crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost;
 use crate::daemon::{
-    DaemonShutdownHost, DaemonShutdownHostParts, DaemonState, DaemonWorktreeDataPlaneHost,
-    ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+    CacheSweepHost, CacheSweepHostParts, DaemonShutdownHost, DaemonShutdownHostParts, DaemonState,
+    DaemonWorktreeDataPlaneHost, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
 };
 
 pub(in crate::daemon) fn worktree_data_plane_host_from_state(
@@ -110,6 +110,26 @@ pub(in crate::daemon) fn storage_guard_host_from_state(state: &DaemonState) -> S
         sessions: Arc::clone(&state.sessions),
         session_stores,
         ops_events: state.telemetry.ops_events.clone(),
+        shutdown_tx: state.core.shutdown_tx.clone(),
+    })
+}
+
+pub(in crate::daemon) fn cache_sweep_host_from_state(state: &DaemonState) -> CacheSweepHost {
+    CacheSweepHost::new(CacheSweepHostParts {
+        sessions: Arc::clone(&state.sessions),
+        file_completions_cache: Arc::clone(&state.workspaces.file_completions_cache),
+        workspace_file_completions_cache: Arc::clone(
+            &state.workspaces.workspace_file_completions_cache,
+        ),
+        git_status_snapshots: Arc::clone(&state.workspaces.git_status_snapshots),
+        worktree_vcs_snapshots: Arc::clone(&state.workspaces.worktree_vcs_snapshots),
+        workspace_active_snapshot_cache: Arc::clone(
+            &state.workspaces.workspace_active_snapshot_cache,
+        ),
+        workspace_active_heads_cache: Arc::clone(&state.workspaces.workspace_active_heads_cache),
+        worktree_bootstrap_gates: Arc::clone(&state.workspaces.worktree_bootstrap_gates),
+        workspace_stores: protected_workspace_store_lookup_from_state(state),
+        perf_telemetry: state.telemetry.perf_telemetry.clone(),
         shutdown_tx: state.core.shutdown_tx.clone(),
     })
 }

@@ -12,14 +12,6 @@ impl DaemonState {
             .await;
     }
 
-    pub(super) async fn emit_cache_evicted(&self, cache: &str, value: usize) {
-        if value == 0 {
-            return;
-        }
-        self.emit_cache_counter("daemon.cache_evicted", cache, value as u64, None)
-            .await;
-    }
-
     async fn emit_cache_counter(
         &self,
         name: &str,

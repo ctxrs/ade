@@ -1184,14 +1184,22 @@ const DAEMON_OPERATIONAL_STATE_BLIND_FILES = [
   "core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/sessions.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/stores.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/state/cache/sweep/workspaces.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
 ];
 
 const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
   const violations = [];
-  const broadStatePattern =
-    /\b(?:Arc|Weak)\s*<\s*DaemonState\s*>|&\s*DaemonState\b|\bDaemonState\b/gu;
+  const broadStatePattern = new RegExp(
+    String.raw`\b(?:Arc|Weak)\s*<\s*${DAEMON_STATE_TYPE_PATTERN}\s*>|&\s*${DAEMON_STATE_TYPE_PATTERN}\b|\b${DAEMON_STATE_TYPE_PATTERN}\b`,
+    "gu",
+  );
 
   for (const relativePath of DAEMON_OPERATIONAL_STATE_BLIND_FILES) {
     const absolutePath = path.join(rootDir, relativePath);

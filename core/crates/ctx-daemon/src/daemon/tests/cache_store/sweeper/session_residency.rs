@@ -95,7 +95,9 @@ async fn sweeper_eviction_keeps_active_entries() {
         workspace_ttl: Duration::from_secs(365 * 24 * 60 * 60),
         interval: Duration::from_secs(1),
     };
-    let stats = state.sweep_idle_caches(now, config).await;
+    let stats = cache_sweep_host_from_state(state.as_ref())
+        .sweep_idle_caches(now, config)
+        .await;
     assert_eq!(stats.session_head_evicted, 1);
     assert!(state
         .sessions

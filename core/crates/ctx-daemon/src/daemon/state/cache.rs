@@ -1,6 +1,14 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use super::DaemonState;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
+use tokio::sync::broadcast;
+
+use super::{
+    ProtectedWorkspaceStoreLookup, SessionRuntime, WorkspaceActiveHeadsCache,
+    WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache, WorktreeBootstrapGateCache,
+    WorktreeFileCompletionsCache, WorktreeGitStatusSnapshotCache, WorktreeVcsSnapshotCache,
+};
 
 mod sweep;
 
@@ -69,6 +77,87 @@ impl CacheSweepStats {
             + self.workspace_heads_evicted
             + self.worktree_bootstrap_evicted
             + self.workspace_stores_evicted
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct CacheSweepHost {
+    sessions: std::sync::Arc<SessionRuntime>,
+    file_completions_cache: WorktreeFileCompletionsCache,
+    workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    git_status_snapshots: WorktreeGitStatusSnapshotCache,
+    worktree_vcs_snapshots: WorktreeVcsSnapshotCache,
+    workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+    worktree_bootstrap_gates: WorktreeBootstrapGateCache,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    telemetry: CacheSweepTelemetry,
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+pub(in crate::daemon) struct CacheSweepHostParts {
+    pub sessions: std::sync::Arc<SessionRuntime>,
+    pub file_completions_cache: WorktreeFileCompletionsCache,
+    pub workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    pub git_status_snapshots: WorktreeGitStatusSnapshotCache,
+    pub worktree_vcs_snapshots: WorktreeVcsSnapshotCache,
+    pub workspace_active_snapshot_cache: WorkspaceActiveSnapshotCache,
+    pub workspace_active_heads_cache: WorkspaceActiveHeadsCache,
+    pub worktree_bootstrap_gates: WorktreeBootstrapGateCache,
+    pub workspace_stores: ProtectedWorkspaceStoreLookup,
+    pub perf_telemetry: PerfTelemetry,
+    pub shutdown_tx: broadcast::Sender<()>,
+}
+
+impl CacheSweepHost {
+    pub(in crate::daemon) fn new(parts: CacheSweepHostParts) -> Self {
+        Self {
+            sessions: parts.sessions,
+            file_completions_cache: parts.file_completions_cache,
+            workspace_file_completions_cache: parts.workspace_file_completions_cache,
+            git_status_snapshots: parts.git_status_snapshots,
+            worktree_vcs_snapshots: parts.worktree_vcs_snapshots,
+            workspace_active_snapshot_cache: parts.workspace_active_snapshot_cache,
+            workspace_active_heads_cache: parts.workspace_active_heads_cache,
+            worktree_bootstrap_gates: parts.worktree_bootstrap_gates,
+            workspace_stores: parts.workspace_stores,
+            telemetry: CacheSweepTelemetry::new(parts.perf_telemetry),
+            shutdown_tx: parts.shutdown_tx,
+        }
+    }
+
+    pub(in crate::daemon) fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
+        self.shutdown_tx.subscribe()
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::daemon) struct CacheSweepTelemetry {
+    perf_telemetry: PerfTelemetry,
+}
+
+impl CacheSweepTelemetry {
+    fn new(perf_telemetry: PerfTelemetry) -> Self {
+        Self { perf_telemetry }
+    }
+
+    async fn emit_cache_evicted(&self, cache: &str, value: usize) {
+        if value == 0 {
+            return;
+        }
+        let mut labels = HashMap::new();
+        labels.insert("cache".to_string(), cache.to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        let metric = PerfMetric {
+            name: "daemon.cache_evicted".to_string(),
+            kind: PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
     }
 }
 

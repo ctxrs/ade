@@ -1,14 +1,14 @@
 use std::time::Instant;
 
-use super::{CacheSweepConfig, CacheSweepStats, DaemonState};
+use super::{CacheSweepConfig, CacheSweepHost, CacheSweepStats};
 
 mod sessions;
 mod stores;
 mod telemetry;
 mod workspaces;
 
-impl DaemonState {
-    pub async fn sweep_idle_caches(
+impl CacheSweepHost {
+    pub(in crate::daemon) async fn sweep_idle_caches(
         &self,
         now: Instant,
         config: CacheSweepConfig,

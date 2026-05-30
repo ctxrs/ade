@@ -144,6 +144,16 @@ impl ProtectedWorkspaceStoreLookup {
         active_workspaces
     }
 
+    pub(in crate::daemon) async fn evict_idle_workspace_stores(
+        &self,
+        workspace_ttl: Duration,
+    ) -> usize {
+        let active_workspaces = self.protected_workspace_store_ids().await;
+        self.stores
+            .evict_idle_workspaces(workspace_ttl, &active_workspaces)
+            .await
+    }
+
     pub(in crate::daemon) async fn existing_workspace_store(
         &self,
         workspace_id: WorkspaceId,

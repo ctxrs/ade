@@ -1,16 +1,15 @@
-use std::sync::Arc;
 use std::time::Instant;
 
-use crate::daemon::{CacheSweepConfig, DaemonState};
+use crate::daemon::{CacheSweepConfig, CacheSweepHost};
 
-pub(in crate::daemon) fn spawn_cache_sweeper(state: Arc<DaemonState>) {
+pub(in crate::daemon) fn spawn_cache_sweeper(host: CacheSweepHost) {
     let config = CacheSweepConfig::from_env();
     tokio::spawn(async move {
-        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+        let mut shutdown_rx = host.subscribe_shutdown();
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(config.interval) => {
-                    let stats = state.sweep_idle_caches(Instant::now(), config).await;
+                    let stats = host.sweep_idle_caches(Instant::now(), config).await;
                     if stats.total_evicted() > 0 {
                         tracing::info!(
                             session_head_evicted = stats.session_head_evicted,

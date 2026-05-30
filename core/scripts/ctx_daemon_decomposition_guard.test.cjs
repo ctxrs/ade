@@ -1200,6 +1200,19 @@ test("operational daemon background entrypoints stay state-blind", () => {
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/storage_guard.rs", `
     pub(in crate::daemon) fn spawn_storage_guard(state: &DaemonState) {}
   `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs", `
+    pub(in crate::daemon) fn spawn_cache_sweeper(state: Arc<crate::daemon::DaemonState>) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/cache/sweep.rs", `
+    impl crate::daemon::state::DaemonState {
+      pub async fn sweep_idle_caches(&self) {}
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/cache/sweep/sessions.rs", `
+    impl DaemonState {
+      async fn running_sessions_snapshot(&self) {}
+    }
+  `);
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/merge_queue.rs", `
     pub(in crate::daemon) fn spawn_merge_queue_runner(state: Arc<DaemonState>) {}
   `);
@@ -1209,6 +1222,9 @@ test("operational daemon background entrypoints stay state-blind", () => {
   assert.deepEqual(
     violations.map((violation) => violation.kind),
     [
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",

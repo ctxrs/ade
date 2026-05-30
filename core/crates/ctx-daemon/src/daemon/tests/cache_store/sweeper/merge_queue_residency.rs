@@ -37,7 +37,8 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
         workspace_ttl: Duration::from_secs(0),
         interval: Duration::from_secs(30),
     };
-    let _ = state.sweep_idle_caches(Instant::now(), config).await;
+    let host = cache_sweep_host_from_state(state.as_ref());
+    let _ = host.sweep_idle_caches(Instant::now(), config).await;
     assert_eq!(stores.stats().await.workspace_store_count, 1);
 
     let _ = state
@@ -46,6 +47,6 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
         .finish_workspace_drain(workspace.id)
         .await;
 
-    let _ = state.sweep_idle_caches(Instant::now(), config).await;
+    let _ = host.sweep_idle_caches(Instant::now(), config).await;
     assert_eq!(stores.stats().await.workspace_store_count, 0);
 }

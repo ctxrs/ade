@@ -37,14 +37,16 @@ mod types;
 mod worktree_data_plane;
 
 pub use cache::{CacheSweepConfig, TimedEntry};
+pub(in crate::daemon) use cache::{CacheSweepHost, CacheSweepHostParts};
 pub(in crate::daemon) use merge_queue::merge_queue_route_host_from_state;
 #[cfg(test)]
 pub(in crate::daemon) use operational_hosts::scheduler_persistence_host_from_state;
 pub(in crate::daemon) use operational_hosts::{
-    daemon_shutdown_host_from_state, managed_daemon_auto_update_host_from_state,
-    provider_child_reclassifier_host_from_state, saved_mobile_tunnel_reconnect_host_from_state,
-    storage_guard_host_from_state, terminal_state_reconcile_host_from_state,
-    workspace_vcs_hook_host_from_state, worktree_data_plane_host_from_state,
+    cache_sweep_host_from_state, daemon_shutdown_host_from_state,
+    managed_daemon_auto_update_host_from_state, provider_child_reclassifier_host_from_state,
+    saved_mobile_tunnel_reconnect_host_from_state, storage_guard_host_from_state,
+    terminal_state_reconcile_host_from_state, workspace_vcs_hook_host_from_state,
+    worktree_data_plane_host_from_state,
 };
 use runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
@@ -63,7 +65,8 @@ pub use types::{
 };
 pub(crate) use types::{
     WorkspaceActiveHeadsCache, WorkspaceActiveSnapshotCache, WorkspaceFileCompletionsCache,
-    WorktreeFileCompletionsCache,
+    WorktreeBootstrapGateCache, WorktreeFileCompletionsCache, WorktreeGitStatusSnapshotCache,
+    WorktreeVcsSnapshotCache,
 };
 
 #[cfg(test)]

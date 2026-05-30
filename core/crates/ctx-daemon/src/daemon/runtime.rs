@@ -86,7 +86,7 @@ pub async fn bootstrap_daemon_runtime(
     ));
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
-    lifecycle::spawn_cache_sweeper(state.clone());
+    lifecycle::spawn_cache_sweeper(cache_sweep_host_from_state(state.as_ref()));
     memleak_debug::spawn_memleak_debug(state.clone());
     lifecycle::spawn_provider_worker_sweeper(Arc::clone(&state.provider_lifecycle_background));
     lifecycle::spawn_endpoint_model_catalog_sweeper(Arc::clone(
