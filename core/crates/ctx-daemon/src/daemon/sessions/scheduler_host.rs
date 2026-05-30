@@ -1,12 +1,14 @@
 use std::sync::{Arc, OnceLock};
 
-use ctx_core::models::Session;
-use tokio::sync::mpsc;
-
-use crate::daemon::scheduler::{
-    session_worker, SchedulerCommand, SessionSchedulerWorkerHost, SessionSchedulerWorkerHostParts,
-};
+#[cfg(test)]
+use crate::daemon::scheduler::{session_worker, SchedulerCommand};
+use crate::daemon::scheduler::{SessionSchedulerWorkerHost, SessionSchedulerWorkerHostParts};
+#[cfg(test)]
 use crate::daemon::state::SessionRuntime;
+#[cfg(test)]
+use ctx_core::models::Session;
+#[cfg(test)]
+use tokio::sync::mpsc;
 
 pub(in crate::daemon) struct SessionSchedulerWorkerHostFactory {
     host_parts: SessionSchedulerWorkerHostParts,
@@ -42,6 +44,7 @@ impl SessionSchedulerWorkerHostFactory {
         self.host_parts.tool_output_spool_dir = dir;
     }
 
+    #[cfg(test)]
     pub(in crate::daemon) async fn ensure_scheduler(
         &self,
         session_runtime: &Arc<SessionRuntime>,

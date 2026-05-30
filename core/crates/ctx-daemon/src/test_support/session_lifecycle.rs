@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -8,8 +7,6 @@ use ctx_core::models::{
     SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, Session, SessionEventType, SessionTurn,
     SessionTurnStatus, VcsKind, Worktree,
 };
-
-use crate::daemon;
 
 use super::{
     RunArchiveRouteFixture, SessionModelSwitchFixture, ShutdownRunningTurnFixture, TestDaemon,
@@ -394,15 +391,10 @@ impl TestDaemon {
             .get_session(session_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("session {session_id:?} not found"))?;
-        Ok(
-            daemon::sessions::title_generation::schedule_session_title_generation(
-                Arc::clone(&self.state),
-                session,
-                prompt.to_string(),
-                force,
-            )
-            .await,
-        )
+        Ok(self
+            .session_title_model_mode_handle_for_test()
+            .schedule_session_title_generation(session, prompt.to_string(), force)
+            .await)
     }
 
     pub async fn session_title_for_test(

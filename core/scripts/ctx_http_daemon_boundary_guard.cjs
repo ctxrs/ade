@@ -102,11 +102,8 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/serve/background.rs",
   "core/crates/ctx-daemon/src/daemon/session_control_effects.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog/loader.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
-  "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
   "core/crates/ctx-daemon/src/daemon/settings.rs",
   "core/crates/ctx-daemon/src/daemon/state.rs",
   "core/crates/ctx-daemon/src/daemon/state/builder.rs",
@@ -188,13 +185,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|workspaces|state.workspaces
 4 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|task_session_cleanup|state.task_session_cleanup
-1 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|session_publication|state.session_publication
-1 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|session_scheduler_worker_host|state.session_scheduler_worker_host
-2 core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs|sessions|state.sessions
-1 core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|session_publication|state.session_publication
-1 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|sessions|state.sessions
-2 core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs|task_publication|state.task_publication
 2 core/crates/ctx-daemon/src/daemon/settings.rs|telemetry|state.telemetry
 5 core/crates/ctx-daemon/src/daemon/storage_guard.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|core|state.core
@@ -516,6 +506,12 @@ const sessionTitleModelModeDaemonImplementationPaths = new Set([
 
 const sessionTitleModelModeMigratedTitleImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+  "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+]);
+
+const sessionTitleCommandBroadApiDeletedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
 ]);
@@ -13534,6 +13530,91 @@ function scanSessionTitleModelModeTitleImplementationRatchet({ filePath, content
   return violations;
 }
 
+function scanSessionTitleCommandBroadApiRatchet({ filePath, contents }) {
+  const isProductionPath = sessionTitleCommandBroadApiDeletedPaths.has(filePath);
+  const isSessionLifecycleTestSupport =
+    filePath === "core/crates/ctx-daemon/src/test_support/session_lifecycle.rs";
+  if (!isProductionPath && !isSessionLifecycleTestSupport) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const addViolation = ({ index, name, text }) => {
+    const line = contents.slice(0, index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text,
+    });
+  };
+
+  if (isProductionPath) {
+    const broadStateRegex =
+      /\b(?:DaemonState|DaemonHandle|SessionsHandle)\b|\b(?:Arc|Weak)\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonState\s*>|\bArc\s*::\s*clone\s*\(\s*&\s*(?:self\s*\.\s*)?state\s*\)/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "session title/command implementation uses broad daemon state",
+        text: match[0],
+      });
+    }
+  }
+
+  const deletedFunctionRegexByPath = new Map([
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+      /\bpub\s+(?:async\s+)?fn\s+(?:configured_title_generation_settings|maybe_generate_session_title|schedule_session_title_generation)\s*\(/gu,
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+      /\bpub\s+(?:async\s+)?fn\s+apply_session_title_update\s*\(/gu,
+    ],
+    [
+      "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
+      /\bpub\s+(?:async\s+)?fn\s+(?:delete_queued_session_message|enqueue_user_message_for_scheduler)\s*\(/gu,
+    ],
+  ]);
+
+  const deletedFunctionRegex = deletedFunctionRegexByPath.get(filePath);
+  if (deletedFunctionRegex) {
+    for (
+      let match = deletedFunctionRegex.exec(contents);
+      match;
+      match = deletedFunctionRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "deleted broad session title/command API reintroduced",
+        text: match[0],
+      });
+    }
+  }
+
+  if (isSessionLifecycleTestSupport) {
+    const staleTitleCallRegex =
+      /daemon\s*::\s*sessions\s*::\s*title_generation\s*::\s*schedule_session_title_generation\s*\(|schedule_session_title_generation\s*\(\s*Arc\s*::\s*clone\s*\(\s*&\s*self\s*\.\s*state\s*\)/gu;
+    for (
+      let match = staleTitleCallRegex.exec(contents);
+      match;
+      match = staleTitleCallRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "session lifecycle test support calls broad title-generation API",
+        text: match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
   if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
@@ -18871,6 +18952,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanSessionTitleCommandBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -19062,6 +19147,10 @@ function scanRepo() {
     const contents = fs.readFileSync(filePath, "utf8");
     violations.push(
       ...scanDeletedBroadDomainHandleRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanSessionTitleCommandBroadApiRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19773,6 +19862,7 @@ module.exports = {
   scanSessionTitleModelModeHandleFieldRatchet,
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
+  scanSessionTitleCommandBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,

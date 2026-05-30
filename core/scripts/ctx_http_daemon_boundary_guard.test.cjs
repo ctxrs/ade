@@ -314,6 +314,7 @@ const {
   scanSessionTitleModelModeHandleFieldRatchet,
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
+  scanSessionTitleCommandBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
@@ -5064,6 +5065,73 @@ test("appstate guard rejects broad seams in migrated title/model/mode title impl
   assert.deepEqual(persistenceViolations, [
     "session title/model/mode title implementation uses broad daemon seam",
   ]);
+});
+
+test("appstate guard rejects deleted broad session title and command APIs", () => {
+  const broadStateViolations = scanSessionTitleCommandBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, DaemonState, SessionsHandle};
+      fn hidden(state: Arc<DaemonState>) {
+        let _ = Arc::clone(&state);
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(broadStateViolations), new Set([
+    "session title/command implementation uses broad daemon state",
+  ]));
+
+  const titleApiViolations = scanSessionTitleCommandBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
+    contents: `
+      pub async fn configured_title_generation_settings(state: &DaemonState) {}
+      pub async fn maybe_generate_session_title(state: Arc<DaemonState>) {}
+      pub async fn schedule_session_title_generation(state: Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    titleApiViolations.filter(
+      (name) => name === "deleted broad session title/command API reintroduced",
+    ).length,
+    3,
+  );
+
+  const persistenceViolations = scanSessionTitleCommandBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+    contents: `
+      pub async fn apply_session_title_update(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert(persistenceViolations.includes("deleted broad session title/command API reintroduced"));
+
+  const commandViolations = scanSessionTitleCommandBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
+    contents: `
+      pub async fn delete_queued_session_message(state: &Arc<DaemonState>) {}
+      pub async fn enqueue_user_message_for_scheduler(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    commandViolations.filter(
+      (name) => name === "deleted broad session title/command API reintroduced",
+    ).length,
+    2,
+  );
+
+  const testSupportViolations = scanSessionTitleCommandBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/test_support/session_lifecycle.rs",
+    contents: `
+      daemon::sessions::title_generation::schedule_session_title_generation(
+        Arc::clone(&self.state),
+        session,
+        prompt.to_string(),
+        force,
+      ).await
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(testSupportViolations), new Set([
+    "session lifecycle test support calls broad title-generation API",
+  ]));
 });
 
 test("appstate guard rejects session message command broad route handles", () => {

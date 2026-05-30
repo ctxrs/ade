@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::daemon::{DaemonState, SessionTitleModelModeHandle};
+use crate::daemon::SessionTitleModelModeHandle;
 use async_trait::async_trait;
 use ctx_core::models::Session;
 use ctx_managed_installs::title_generation_local::{
@@ -18,7 +18,6 @@ use ctx_settings_model as user_settings;
 use ctx_store::Store;
 
 mod persistence;
-pub use persistence::apply_session_title_update;
 
 pub const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 
@@ -182,12 +181,6 @@ async fn title_generation_local_status(
     })
 }
 
-pub async fn configured_title_generation_settings(
-    state: &DaemonState,
-) -> Option<user_settings::TitleGenerationSettings> {
-    configured_title_generation_settings_for_store(state.global_store()).await
-}
-
 pub async fn configured_title_generation_settings_for_store(
     global_store: &Store,
 ) -> Option<user_settings::TitleGenerationSettings> {
@@ -206,30 +199,6 @@ pub async fn configured_title_generation_settings_for_store(
         .as_ref()
         .filter(|cfg| title_generation::is_configured(cfg))
         .cloned()
-}
-
-pub async fn maybe_generate_session_title(
-    state: Arc<DaemonState>,
-    session: Session,
-    prompt: String,
-    force: bool,
-    cfg: Option<user_settings::TitleGenerationSettings>,
-) -> anyhow::Result<Option<TitleGenerationOutcome>> {
-    let prompt = prompt.trim().to_string();
-    if prompt.is_empty() {
-        return Ok(None);
-    }
-
-    let current = session.title.trim();
-    if !force && !current.is_empty() && current != title_generation::DEFAULT_SESSION_TITLE {
-        return Ok(None);
-    }
-
-    let outcome =
-        title_generation::generate_title_for_prompt(cfg.as_ref(), &prompt, &state.core.data_root)
-            .await?;
-    apply_session_title_update(&state, &session, outcome.clone()).await?;
-    Ok(Some(outcome))
 }
 
 pub async fn maybe_generate_session_title_with_handle(
@@ -254,22 +223,4 @@ pub async fn maybe_generate_session_title_with_handle(
             .await?;
     persistence::apply_session_title_update_with_handle(handle, &session, outcome.clone()).await?;
     Ok(Some(outcome))
-}
-
-pub async fn schedule_session_title_generation(
-    state: Arc<DaemonState>,
-    session: Session,
-    prompt: String,
-    force: bool,
-) -> bool {
-    let cfg = configured_title_generation_settings(&state).await;
-    if cfg.is_some() {
-        tokio::spawn(async move {
-            let _ = maybe_generate_session_title(state, session, prompt, force, cfg).await;
-        });
-        true
-    } else {
-        let _ = maybe_generate_session_title(state, session, prompt, force, cfg).await;
-        false
-    }
 }
