@@ -83,7 +83,7 @@ impl task_deps::TaskRouteDeps {
         crate::daemon::task_session_effects::task_admission_session_effects(
             session_routes.session_publication_effects(),
             Arc::clone(&self.sessions),
-            SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.scheduler_worker_host)),
+            SessionMessageSchedulerSpawner::new(Arc::clone(&self.scheduler_worker_host)),
             session_title_model_mode,
             session_routes.task_publication_host(),
         )

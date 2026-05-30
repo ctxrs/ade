@@ -26,7 +26,7 @@ impl session_deps::SessionRouteDeps {
         SessionControlHandle::new(SessionControlHandleParts {
             session_stores: self.session_store_lookup(),
             session_runtime: Arc::clone(&self.sessions),
-            scheduler_spawner: SessionMessageSchedulerSpawner::new(Arc::downgrade(
+            scheduler_spawner: SessionMessageSchedulerSpawner::new(Arc::clone(
                 &self.scheduler_worker_host,
             )),
             perf_telemetry: self.perf_telemetry.clone(),
@@ -71,7 +71,7 @@ impl session_deps::SessionRouteDeps {
             Arc::clone(&self.update_drain),
             self.data_root.clone(),
             self.session_title_model_mode(),
-            SessionMessageSchedulerSpawner::new(Arc::downgrade(&self.scheduler_worker_host)),
+            SessionMessageSchedulerSpawner::new(Arc::clone(&self.scheduler_worker_host)),
         )
     }
     pub fn session_subagent_read(&self) -> SessionSubagentReadHandle {

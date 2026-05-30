@@ -69,6 +69,7 @@ sh_binary(
     args = [
         "core",
         "--test",
+        "scripts/session_scheduler_lifetime_contract.test.cjs",
         "scripts/check_neon_migrations.test.cjs",
         "scripts/updater_linux_release_truth_contract.test.cjs",
     ],

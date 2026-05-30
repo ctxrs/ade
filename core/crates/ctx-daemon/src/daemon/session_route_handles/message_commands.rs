@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Message, Session, SessionEvent};
@@ -16,11 +16,11 @@ use std::future::Future;
 
 #[derive(Clone)]
 pub(in crate::daemon) struct SessionMessageSchedulerSpawner {
-    host: Weak<SessionSchedulerWorkerHost>,
+    host: Arc<SessionSchedulerWorkerHost>,
 }
 
 impl SessionMessageSchedulerSpawner {
-    pub(in crate::daemon) fn new(host: Weak<SessionSchedulerWorkerHost>) -> Self {
+    pub(in crate::daemon) fn new(host: Arc<SessionSchedulerWorkerHost>) -> Self {
         Self { host }
     }
 
@@ -29,7 +29,7 @@ impl SessionMessageSchedulerSpawner {
         runtime: &SessionRuntime<crate::daemon::scheduler::SchedulerCommand>,
         session: Session,
     ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
-        let host = self.host.clone();
+        let host = Arc::downgrade(&self.host);
         runtime
             .ensure_scheduler(session, move |session, rx| {
                 crate::daemon::scheduler::session_worker(host, session, rx)
