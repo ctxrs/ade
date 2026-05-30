@@ -47,7 +47,9 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
         .method("POST")
         .uri("/api/mobile/access/disable")
         .header("content-type", "application/json")
-        .body(Body::from(json!({ "supabase_token": "token" }).to_string()))
+        .body(Body::from(
+            json!({ "managed_tunnel_grant": "token" }).to_string(),
+        ))
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);

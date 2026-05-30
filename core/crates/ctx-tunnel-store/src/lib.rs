@@ -17,7 +17,7 @@ mod tests;
 
 const HEALTHY_RELAY_WINDOW_SECS: i64 = 60;
 const REGISTER_RELAY_SQL: &str = r#"
-            insert into public.mobile_tunnel_relay_node
+            insert into ctx.mobile_tunnel_relay_node
               (relay_id, region, public_base_url, internal_base_url, status, max_active_tunnels)
             values ($1, $2, $3, $4, 'active', $5)
             on conflict (relay_id) do update
@@ -25,8 +25,8 @@ const REGISTER_RELAY_SQL: &str = r#"
                   public_base_url = excluded.public_base_url,
                   internal_base_url = excluded.internal_base_url,
                   status = case
-                    when public.mobile_tunnel_relay_node.status in ('disabled', 'draining')
-                      then public.mobile_tunnel_relay_node.status
+                    when ctx.mobile_tunnel_relay_node.status in ('disabled', 'draining')
+                      then ctx.mobile_tunnel_relay_node.status
                     else 'active'
                   end,
                   max_active_tunnels = excluded.max_active_tunnels
@@ -80,7 +80,7 @@ impl TunnelStore {
                   and heartbeat_expires_at > now()
                   and active_tunnel_count < max_active_tunnels
               )::bigint as healthy_relay_count
-            from public.mobile_tunnel_relay_node
+            from ctx.mobile_tunnel_relay_node
             "#,
         )
         .fetch_one(&self.pool)
@@ -136,7 +136,7 @@ impl TunnelStore {
         let expires_at = heartbeat.observed_at + Duration::seconds(HEALTHY_RELAY_WINDOW_SECS);
         let result = sqlx::query(
             r#"
-            update public.mobile_tunnel_relay_node
+            update ctx.mobile_tunnel_relay_node
                set active_tunnel_count = $2,
                    last_heartbeat_at = $3,
                    heartbeat_expires_at = $4
@@ -170,7 +170,7 @@ impl TunnelStore {
             select relay_id, region, public_base_url, internal_base_url,
                    active_tunnel_count, max_active_tunnels,
                    last_heartbeat_at, heartbeat_expires_at
-              from public.mobile_tunnel_relay_node
+              from ctx.mobile_tunnel_relay_node
              where region = $1
                and status = 'active'
                and heartbeat_expires_at > now()
@@ -201,8 +201,8 @@ impl TunnelStore {
                    r.public_base_url as relay_public_base_url,
                    r.internal_base_url as relay_internal_base_url,
                    t.public_base_url, t.created_at
-              from public.mobile_tunnel t
-              join public.mobile_tunnel_relay_node r on r.relay_id = t.relay_id
+              from ctx.mobile_tunnel t
+              join ctx.mobile_tunnel_relay_node r on r.relay_id = t.relay_id
              where t.user_id = $1
                and t.status = 'active'
                and t.disabled_at is null
@@ -220,6 +220,56 @@ impl TunnelStore {
         Ok(Some(tunnel_assignment_from_row(&row)?))
     }
 
+    pub async fn load_active_tunnel_for_binding(
+        &self,
+        user_id: &str,
+        daemon_id: &str,
+        device_id: &str,
+    ) -> Result<Option<TunnelAssignment>, TunnelStoreError> {
+        if user_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "user_id must not be empty".to_string(),
+            ));
+        }
+        if daemon_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "daemon_id must not be empty".to_string(),
+            ));
+        }
+        if device_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "device_id must not be empty".to_string(),
+            ));
+        }
+        let Some(row) = sqlx::query(
+            r#"
+            select t.tunnel_id, t.user_id, t.billing_subject_id, t.relay_id,
+                   r.public_base_url as relay_public_base_url,
+                   r.internal_base_url as relay_internal_base_url,
+                   t.public_base_url, t.created_at
+              from ctx.mobile_tunnel t
+              join ctx.mobile_tunnel_relay_node r on r.relay_id = t.relay_id
+             where t.user_id = $1
+               and t.daemon_id = $2
+               and t.device_id = $3
+               and t.status = 'active'
+               and t.disabled_at is null
+             order by t.created_at desc
+             limit 1
+            "#,
+        )
+        .bind(user_id)
+        .bind(daemon_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database_error)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(tunnel_assignment_from_row(&row)?))
+    }
+
     pub async fn create_tunnel(
         &self,
         request: CreateTunnelRequest,
@@ -227,14 +277,17 @@ impl TunnelStore {
         request.validate()?;
         let insert = sqlx::query(
             r#"
-            insert into public.mobile_tunnel
-              (tunnel_id, user_id, billing_subject_id, relay_id, public_base_url, status)
-            values ($1, $2, $3, $4, $5, 'active')
+            insert into ctx.mobile_tunnel
+              (tunnel_id, user_id, billing_subject_id, grant_id, daemon_id, device_id, relay_id, public_base_url, status)
+            values ($1, $2, $3, $4::uuid, $5, $6, $7, $8, 'active')
             "#,
         )
         .bind(&request.tunnel_id)
         .bind(&request.user_id)
         .bind(&request.billing_subject_id)
+        .bind(&request.grant_id)
+        .bind(&request.daemon_id)
+        .bind(&request.device_id)
         .bind(&request.relay_id)
         .bind(&request.public_base_url)
         .execute(&self.pool)
@@ -250,12 +303,22 @@ impl TunnelStore {
                     serde_json::json!({
                         "public_base_url": request.public_base_url,
                         "billing_subject_id": request.billing_subject_id,
+                        "grant_id": request.grant_id,
+                        "daemon_id": request.daemon_id,
+                        "device_id": request.device_id,
                     }),
                 )
                 .await?;
             }
             Err(err) if is_unique_violation(&err) => {
-                if let Some(existing) = self.load_active_tunnel_for_user(&request.user_id).await? {
+                if let Some(existing) = self
+                    .load_active_tunnel_for_binding(
+                        &request.user_id,
+                        &request.daemon_id,
+                        &request.device_id,
+                    )
+                    .await?
+                {
                     return Ok(existing);
                 }
                 return Err(database_error(err));
@@ -263,9 +326,80 @@ impl TunnelStore {
             Err(err) => return Err(database_error(err)),
         }
 
-        self.load_active_tunnel_for_user(&request.user_id)
-            .await?
-            .ok_or_else(|| TunnelStoreError::Database("created tunnel was not readable".into()))
+        self.load_active_tunnel_for_binding(
+            &request.user_id,
+            &request.daemon_id,
+            &request.device_id,
+        )
+        .await?
+        .ok_or_else(|| TunnelStoreError::Database("created tunnel was not readable".into()))
+    }
+
+    pub async fn verify_mobile_tunnel_grant(
+        &self,
+        grant_digest: &str,
+        daemon_id: &str,
+        device_id: &str,
+    ) -> Result<Option<VerifiedMobileTunnelGrant>, TunnelStoreError> {
+        if grant_digest.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "grant_digest must not be empty".to_string(),
+            ));
+        }
+        if daemon_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "daemon_id must not be empty".to_string(),
+            ));
+        }
+        if device_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "device_id must not be empty".to_string(),
+            ));
+        }
+        let row = sqlx::query(
+            r#"
+            select g.grant_id::text as grant_id,
+                   g.ctx_user_id::text as user_id,
+                   g.billing_subject_id::text as billing_subject_id,
+                   g.daemon_id,
+                   g.device_id
+              from ctx.mobile_tunnel_grants g
+             where g.grant_digest = $1
+               and g.daemon_id = $2
+               and g.device_id = $3
+               and g.audience = 'ctx-mobile-tunnel'
+               and g.revoked_at is null
+               and g.expires_at > now()
+               and g.scopes @> ARRAY['mobile_tunnel:enable']::text[]
+               and exists (
+                 select 1
+                   from ctx.billing_entitlements e
+                  where e.billing_subject_id = g.billing_subject_id
+                    and e.active = true
+                    and (e.valid_until is null or e.valid_until > now())
+                    and e.entitlement_key in ('mobile_relay', 'remote_mobile_access')
+                    and coalesce(e.entitlement_value->>'state', 'enabled') = 'enabled'
+               )
+             order by g.expires_at desc
+             limit 1
+            "#,
+        )
+        .bind(grant_digest)
+        .bind(daemon_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database_error)?;
+        match row {
+            Some(row) => Ok(Some(VerifiedMobileTunnelGrant {
+                grant_id: row.try_get("grant_id").map_err(database_error)?,
+                user_id: row.try_get("user_id").map_err(database_error)?,
+                billing_subject_id: row.try_get("billing_subject_id").map_err(database_error)?,
+                daemon_id: row.try_get("daemon_id").map_err(database_error)?,
+                device_id: row.try_get("device_id").map_err(database_error)?,
+            })),
+            None => Ok(None),
+        }
     }
 
     pub async fn revoke_active_tunnels_for_user(
@@ -279,9 +413,10 @@ impl TunnelStore {
         }
         let result = sqlx::query(
             r#"
-            update public.mobile_tunnel
+            update ctx.mobile_tunnel
                set status = 'revoked',
-                   disabled_at = now()
+                   disabled_at = now(),
+                   updated_at = now()
              where user_id = $1
                and status = 'active'
                and disabled_at is null
@@ -306,6 +441,63 @@ impl TunnelStore {
         Ok(result.rows_affected())
     }
 
+    pub async fn revoke_active_tunnels_for_binding(
+        &self,
+        user_id: &str,
+        daemon_id: &str,
+        device_id: &str,
+    ) -> Result<u64, TunnelStoreError> {
+        if user_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "user_id must not be empty".to_string(),
+            ));
+        }
+        if daemon_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "daemon_id must not be empty".to_string(),
+            ));
+        }
+        if device_id.trim().is_empty() {
+            return Err(TunnelStoreError::InvalidInput(
+                "device_id must not be empty".to_string(),
+            ));
+        }
+        let result = sqlx::query(
+            r#"
+            update ctx.mobile_tunnel
+               set status = 'revoked',
+                   disabled_at = now(),
+                   updated_at = now()
+             where user_id = $1
+               and daemon_id = $2
+               and device_id = $3
+               and status = 'active'
+               and disabled_at is null
+            "#,
+        )
+        .bind(user_id)
+        .bind(daemon_id)
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(database_error)?;
+        if result.rows_affected() > 0 {
+            self.insert_event(
+                None,
+                None,
+                Some(user_id),
+                "tunnels_revoked",
+                serde_json::json!({
+                    "count": result.rows_affected(),
+                    "daemon_id": daemon_id,
+                    "device_id": device_id,
+                }),
+            )
+            .await?;
+        }
+        Ok(result.rows_affected())
+    }
+
     pub async fn resolve_tunnel_target(
         &self,
         tunnel_id: &str,
@@ -318,8 +510,8 @@ impl TunnelStore {
                    r.internal_base_url as relay_internal_base_url,
                    r.status as relay_status,
                    r.heartbeat_expires_at
-              from public.mobile_tunnel t
-              join public.mobile_tunnel_relay_node r on r.relay_id = t.relay_id
+              from ctx.mobile_tunnel t
+              join ctx.mobile_tunnel_relay_node r on r.relay_id = t.relay_id
              where t.tunnel_id = $1
              limit 1
             "#,
@@ -368,7 +560,7 @@ impl TunnelStore {
         let Some(row) = sqlx::query(
             r#"
             select relay_id, status, disabled_at
-              from public.mobile_tunnel
+              from ctx.mobile_tunnel
              where tunnel_id = $1
              limit 1
             "#,
@@ -400,9 +592,10 @@ impl TunnelStore {
     ) -> Result<(), TunnelStoreError> {
         sqlx::query(
             r#"
-            update public.mobile_tunnel
+            update ctx.mobile_tunnel
                set last_connected_at = now(),
-                   last_accessed_at = now()
+                   last_accessed_at = now(),
+                   updated_at = now()
              where tunnel_id = $1
                and relay_id = $2
                and status = 'active'
@@ -441,7 +634,7 @@ impl TunnelStore {
 
     pub async fn mark_tunnel_accessed(&self, tunnel_id: &str) -> Result<(), TunnelStoreError> {
         sqlx::query(
-            "update public.mobile_tunnel set last_accessed_at = now() where tunnel_id = $1",
+            "update ctx.mobile_tunnel set last_accessed_at = now(), updated_at = now() where tunnel_id = $1",
         )
         .bind(tunnel_id)
         .execute(&self.pool)
@@ -460,7 +653,7 @@ impl TunnelStore {
     ) -> Result<(), TunnelStoreError> {
         sqlx::query(
             r#"
-            insert into public.mobile_tunnel_event
+            insert into ctx.mobile_tunnel_event
               (tunnel_id, relay_id, user_id, event_type, metadata)
             values ($1, $2, $3, $4, $5)
             "#,

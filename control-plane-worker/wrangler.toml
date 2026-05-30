@@ -1,0 +1,12 @@
+name = "ctx-control-plane"
+main = "src/worker.ts"
+compatibility_date = "2026-05-30"
+
+[env.staging]
+name = "ctx-control-plane-staging"
+
+[env.prod]
+name = "ctx-control-plane"
+routes = [
+  { pattern = "api.ctx.rs/v1/*", zone_name = "ctx.rs" }
+]

@@ -7,7 +7,7 @@ pub(super) struct EnableMobileAccessResp {
 
 #[derive(Debug, Serialize)]
 pub(super) struct EnableMobileAccessReq {
-    pub(super) supabase_token: String,
+    pub(super) managed_tunnel_grant: String,
 }
 
 #[derive(Debug, Deserialize)]

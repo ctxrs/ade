@@ -36,12 +36,12 @@ impl MobileRuntimeHandle {
 
     pub async fn disable_mobile_access_for_route(
         &self,
-        supabase_token: String,
+        managed_tunnel_grant: String,
     ) -> Result<(), DisableMobileAccessError> {
         lifecycle::disable_mobile_access_for_route(
             self.store(),
             self.mobile_tunnel(),
-            supabase_token,
+            managed_tunnel_grant,
         )
         .await
     }

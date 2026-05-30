@@ -17,7 +17,7 @@ pub use crate::{
 
 #[derive(Debug, Clone)]
 pub struct EnableMobileAccessRequest {
-    pub supabase_token: String,
+    pub managed_tunnel_grant: String,
 }
 
 #[derive(Debug, Clone)]

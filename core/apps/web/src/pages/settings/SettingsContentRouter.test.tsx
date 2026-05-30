@@ -171,7 +171,7 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
   },
   themeVariant: "dark",
   account: {
-    supabaseConfigured: true,
+    controlPlaneConfigured: true,
     billing: {
       checkoutStatus: null,
       billingUser: null,

@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS ctx.model_prices (
   model_id text NOT NULL,
   input_microusd_per_token integer NOT NULL CHECK (input_microusd_per_token >= 0),
   output_microusd_per_token integer NOT NULL CHECK (output_microusd_per_token >= 0),
+  input_microusd_per_1k_tokens bigint NOT NULL DEFAULT 0 CHECK (input_microusd_per_1k_tokens >= 0),
+  output_microusd_per_1k_tokens bigint NOT NULL DEFAULT 0 CHECK (output_microusd_per_1k_tokens >= 0),
   request_overhead_cents integer NOT NULL DEFAULT 0 CHECK (request_overhead_cents >= 0),
   valid_from timestamptz NOT NULL DEFAULT now()
 );

@@ -1,4 +1,3 @@
-import type { User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EnableMobileAccessResponse, MobileAccessStatus } from "../../../api/client";
 import { errorMessage } from "../../../utils/errorMessage";
@@ -16,11 +15,22 @@ import {
   shouldUseCachedValue,
   writeCachedValue,
 } from "../../../utils/entitlementsCache";
-import { getSupabaseClient } from "../../../utils/supabaseClient";
 import { runBillingCheckoutFlow } from "../billingCheckoutFlow";
 import { type PlanType, shouldTrackEntitlementActivated } from "../entitlementAnalytics";
 import type { SectionId } from "../SettingsPage.types";
-import { fetchEntitlementsSnapshot, type EntitlementsSnapshot } from "../teamEnterpriseSettingsApi";
+import {
+  fetchAccountSession,
+  fetchEntitlementsSnapshot,
+  invokePersonalBillingCheckout,
+  isCtxControlPlaneConfigured,
+  openBillingPortal,
+  requestManagedTunnelGrant,
+  signOutAccount,
+  startAccountAuth,
+  syncBillingCheckout,
+  type CtxBillingUser,
+  type EntitlementsSnapshot,
+} from "../teamEnterpriseSettingsApi";
 import {
   readStoredTeamEnterpriseActiveOrgId,
   teamEnterpriseEntitlementsCacheKey,
@@ -33,7 +43,7 @@ import {
 
 type SettingsBillingController = {
   checkoutStatus: string | null;
-  billingUser: User | null;
+  billingUser: CtxBillingUser | null;
   billingEmail: string;
   setBillingEmail: (value: string) => void;
   billingPassword: string;
@@ -51,7 +61,7 @@ type SettingsBillingController = {
 };
 
 type SettingsMobileAccessController = {
-  billingUser: User | null;
+  billingUser: CtxBillingUser | null;
   entitlementsBusy: boolean;
   proEnabled: boolean;
   mobileStatus: MobileAccessStatus | null;
@@ -65,7 +75,7 @@ type SettingsMobileAccessController = {
 };
 
 type SettingsAccountController = {
-  supabaseConfigured: boolean;
+  controlPlaneConfigured: boolean;
   billing: SettingsBillingController;
   mobileAccess: SettingsMobileAccessController;
   teamEnterprise: SettingsTeamEnterpriseController;
@@ -86,8 +96,8 @@ export function useSettingsAccountController({
   checkoutSessionId,
   clearCheckoutStatus,
 }: Params): SettingsAccountController {
-  const supabase = useMemo(() => getSupabaseClient(), []);
-  const [billingUser, setBillingUser] = useState<User | null>(null);
+  const controlPlaneConfigured = useMemo(() => isCtxControlPlaneConfigured(), []);
+  const [billingUser, setBillingUser] = useState<CtxBillingUser | null>(null);
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPassword, setBillingPassword] = useState("");
   const [billingBusy, setBillingBusy] = useState(false);
@@ -111,29 +121,22 @@ export function useSettingsAccountController({
   const priorPlanRef = useRef<PlanType | null>(entitlements?.plan_type ?? null);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
 
     let cancelled = false;
-    supabase.auth
-      .getUser()
-      .then(({ data }) => {
+    fetchAccountSession()
+      .then((user) => {
         if (cancelled) return;
-        setBillingUser(data.user ?? null);
+        setBillingUser(user);
       })
       .catch(() => {});
-
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setBillingUser(session?.user ?? null);
-    });
-
     return () => {
       cancelled = true;
-      data.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [controlPlaneConfigured]);
 
   const refreshEntitlements = useCallback(async (opts?: { force?: boolean; silent?: boolean; activeOrgId?: string | null }) => {
-    if (!supabase) return null;
+    if (!controlPlaneConfigured) return null;
     const activeOrgId = opts && "activeOrgId" in opts ? (opts.activeOrgId ?? null) : teamRequestedActiveOrgId;
     const cacheKey = teamEnterpriseEntitlementsCacheKey(activeOrgId);
     const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, cacheKey);
@@ -149,7 +152,7 @@ export function useSettingsAccountController({
       setBillingError(null);
     }
     try {
-      const next = await fetchEntitlementsSnapshot({ client: supabase, activeOrgId });
+      const next = await fetchEntitlementsSnapshot({ activeOrgId });
       setEntitlements(next);
       if (next) {
         writeCachedValue(window.localStorage, cacheKey, next);
@@ -165,12 +168,12 @@ export function useSettingsAccountController({
         setEntitlementsBusy(false);
       }
     }
-  }, [supabase, teamRequestedActiveOrgId]);
+  }, [controlPlaneConfigured, teamRequestedActiveOrgId]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
     void refreshEntitlements();
-  }, [billingUser, refreshEntitlements, supabase]);
+  }, [billingUser, controlPlaneConfigured, refreshEntitlements]);
 
   useEffect(() => {
     if (active !== "billing") {
@@ -204,7 +207,7 @@ export function useSettingsAccountController({
   }, []);
 
   useEffect(() => {
-    if (!supabase || checkoutStatus !== "success") return;
+    if (!controlPlaneConfigured || checkoutStatus !== "success") return;
     let cancelled = false;
     let attempt = 0;
     const maxAttempts = 6;
@@ -214,10 +217,7 @@ export function useSettingsAccountController({
       if (syncStarted) return;
       syncStarted = true;
       try {
-        const response = await supabase.functions.invoke("billing-sync", {
-          body: checkoutSessionId ? { checkout_session_id: checkoutSessionId } : {},
-        });
-        if (response.error) throw response.error;
+        await syncBillingCheckout(checkoutSessionId);
       } catch (error: unknown) {
         setBillingError(errorMessage(error));
       }
@@ -248,21 +248,12 @@ export function useSettingsAccountController({
     clearCheckoutStatus,
     isPaidPlan,
     refreshEntitlements,
-    supabase,
+    controlPlaneConfigured,
   ]);
 
   const getAuthToken = useCallback(async (): Promise<string> => {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    const token = data.session?.access_token;
-    if (!token) {
-      throw new Error("Sign in required to manage mobile access.");
-    }
-    return token;
-  }, [supabase]);
+    return requestManagedTunnelGrant();
+  }, []);
 
   const {
     mobileStatus,
@@ -274,7 +265,7 @@ export function useSettingsAccountController({
     refreshMobileAccess,
     handleEnableMobile,
     handleDisableMobile,
-  } = useMobileAccessController({ getAuthToken: supabase ? getAuthToken : null });
+  } = useMobileAccessController({ getAuthToken: controlPlaneConfigured ? getAuthToken : null });
 
   useEffect(() => {
     if (active !== "mobile_access") return;
@@ -282,56 +273,50 @@ export function useSettingsAccountController({
   }, [active, refreshMobileAccess]);
 
   const doSignIn = useCallback(async () => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
     setBillingBusy(true);
     setBillingError(null);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: billingEmail.trim(),
-        password: billingPassword,
-      });
-      if (error) throw error;
+      await startAccountAuth(billingEmail.trim(), billingPassword, "sign_in");
+      setBillingUser(await fetchAccountSession());
     } catch (error: unknown) {
       setBillingError(errorMessage(error));
     } finally {
       setBillingBusy(false);
     }
-  }, [billingEmail, billingPassword, supabase]);
+  }, [billingEmail, billingPassword, controlPlaneConfigured]);
 
   const doSignUp = useCallback(async () => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
     setBillingBusy(true);
     setBillingError(null);
     try {
-      const { error } = await supabase.auth.signUp({
-        email: billingEmail.trim(),
-        password: billingPassword,
-      });
-      if (error) throw error;
+      await startAccountAuth(billingEmail.trim(), billingPassword, "sign_up");
+      setBillingUser(await fetchAccountSession());
     } catch (error: unknown) {
       setBillingError(errorMessage(error));
     } finally {
       setBillingBusy(false);
     }
-  }, [billingEmail, billingPassword, supabase]);
+  }, [billingEmail, billingPassword, controlPlaneConfigured]);
 
   const doSignOut = useCallback(async () => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
     setBillingBusy(true);
     setBillingError(null);
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      await signOutAccount();
+      setBillingUser(null);
     } catch (error: unknown) {
       setBillingError(errorMessage(error));
     } finally {
       setBillingBusy(false);
     }
-  }, [supabase]);
+  }, [controlPlaneConfigured]);
 
   const startCheckout = useCallback(
     async (interval: "month" | "year") => {
-      if (!supabase) return;
+      if (!controlPlaneConfigured) return;
       setBillingBusy(true);
       setBillingError(null);
       try {
@@ -339,9 +324,7 @@ export function useSettingsAccountController({
           interval,
           returnPath: billingReturnPath,
           invokeCheckout: ({ interval: nextInterval, returnPath }) =>
-            supabase.functions.invoke("billing-checkout", {
-              body: { interval: nextInterval, return_path: returnPath },
-            }),
+            invokePersonalBillingCheckout({ interval: nextInterval, returnPath }),
           trackSubscribeCtaClicked,
           trackCheckoutStarted,
         });
@@ -351,28 +334,21 @@ export function useSettingsAccountController({
         setBillingBusy(false);
       }
     },
-    [billingReturnPath, supabase],
+    [billingReturnPath, controlPlaneConfigured],
   );
 
   const openPortal = useCallback(async () => {
-    if (!supabase) return;
+    if (!controlPlaneConfigured) return;
     setBillingBusy(true);
     setBillingError(null);
     try {
-      const response = await supabase.functions.invoke("billing-portal", {
-        body: { return_path: billingReturnPath },
-      });
-      if (response.error) throw response.error;
-      const data =
-        response.data && typeof response.data === "object" ? (response.data as Record<string, unknown>) : null;
-      const url = typeof data?.url === "string" ? data.url.trim() : "";
-      if (!url) throw new Error("Portal URL missing.");
+      const url = await openBillingPortal(billingReturnPath);
       window.location.href = url;
     } catch (error: unknown) {
       setBillingError(errorMessage(error));
       setBillingBusy(false);
     }
-  }, [billingReturnPath, supabase]);
+  }, [billingReturnPath, controlPlaneConfigured]);
 
   const plan = entitlements?.plan_type ?? "free_local";
   const proEnabled =
@@ -380,7 +356,6 @@ export function useSettingsAccountController({
     entitlements?.features?.mobile_relay === "enabled";
   const teamEnterprise = useTeamEnterpriseSettingsController({
     active,
-    supabase,
     billingUser,
     billingReturnPath,
     entitlementsBusy,
@@ -392,7 +367,7 @@ export function useSettingsAccountController({
   });
 
   return {
-    supabaseConfigured: Boolean(supabase),
+    controlPlaneConfigured,
     billing: {
       checkoutStatus,
       billingUser,

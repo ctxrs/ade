@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{header::AUTHORIZATION, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -8,12 +8,10 @@ use base64::Engine;
 use clap::Parser;
 use ctx_tunnel_store::{CreateTunnelRequest, TunnelStore, TunnelStoreError};
 use hmac::{Hmac, Mac};
-use reqwest::header::AUTHORIZATION;
-use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use tracing::{info, warn};
-use url::Url;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -26,15 +24,11 @@ struct Args {
 #[derive(Clone)]
 struct AppState {
     store: TunnelStore,
-    client: reqwest::Client,
     config: ControlPlaneConfig,
 }
 
 #[derive(Clone)]
 struct ControlPlaneConfig {
-    supabase_url: String,
-    supabase_anon_key: String,
-    entitlements_url: String,
     master_secret: Vec<u8>,
     public_base_url: String,
     relay_region: String,
@@ -53,13 +47,6 @@ struct EnableMobileAccessResp {
     tunnel_secret: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct EntitlementsSnapshot {
-    #[allow(dead_code)]
-    plan_type: String,
-    features: serde_json::Value,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -69,15 +56,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let database_url = std::env::var("MOBILE_TUNNEL_DATABASE_URL")
         .context("missing MOBILE_TUNNEL_DATABASE_URL")?;
-    let supabase_url = std::env::var("SUPABASE_URL").context("missing SUPABASE_URL")?;
-    let supabase_anon_key =
-        std::env::var("SUPABASE_ANON_KEY").context("missing SUPABASE_ANON_KEY")?;
-    let entitlements_url = std::env::var("CONTROL_PLANE_ENTITLEMENTS_URL").unwrap_or_else(|_| {
-        format!(
-            "{}/functions/v1/entitlements",
-            supabase_url.trim_end_matches('/')
-        )
-    });
     let public_base_url = std::env::var("MOBILE_TUNNEL_PUBLIC_BASE_URL")
         .context("missing MOBILE_TUNNEL_PUBLIC_BASE_URL")?;
     let relay_region = std::env::var("MOBILE_TUNNEL_RELAY_REGION")
@@ -90,11 +68,7 @@ async fn main() -> Result<()> {
 
     let state = AppState {
         store,
-        client: reqwest::Client::new(),
         config: ControlPlaneConfig {
-            supabase_url,
-            supabase_anon_key,
-            entitlements_url,
             master_secret,
             public_base_url,
             relay_region,
@@ -160,13 +134,12 @@ async fn enable_mobile_access_inner(
             "authorization required".to_string(),
         )
     })?;
-    tracing::info!("enable_mobile_access token_len={}", token.len());
-    let user_id = fetch_user_id(&state, &token).await?;
-    ensure_entitled(&state, &token).await?;
+    let binding = extract_tunnel_grant_binding(&headers)?;
+    let grant = verify_managed_tunnel_grant(&state, &token, &binding).await?;
 
     if let Some(existing) = state
         .store
-        .load_active_tunnel_for_user(&user_id)
+        .load_active_tunnel_for_binding(&grant.user_id, &grant.daemon_id, &grant.device_id)
         .await
         .map_err(store_api_error)?
     {
@@ -185,8 +158,11 @@ async fn enable_mobile_access_inner(
         .store
         .create_tunnel(CreateTunnelRequest {
             tunnel_id,
-            user_id,
-            billing_subject_id: None,
+            user_id: grant.user_id,
+            billing_subject_id: Some(grant.billing_subject_id),
+            grant_id: grant.grant_id,
+            daemon_id: grant.daemon_id,
+            device_id: grant.device_id,
             relay_id: relay.relay_id,
             public_base_url,
         })
@@ -212,12 +188,19 @@ async fn revoke_mobile_access(
         }
     };
 
-    let user_id = match fetch_user_id(&state, &token).await {
-        Ok(id) => id,
+    let binding = match extract_tunnel_grant_binding(&headers) {
+        Ok(binding) => binding,
+        Err((status, msg)) => return (status, Json(ApiErrorResp { error: msg })).into_response(),
+    };
+    let grant = match verify_managed_tunnel_grant(&state, &token, &binding).await {
+        Ok(grant) => grant,
         Err((status, msg)) => return (status, Json(ApiErrorResp { error: msg })).into_response(),
     };
 
-    let result = state.store.revoke_active_tunnels_for_user(&user_id).await;
+    let result = state
+        .store
+        .revoke_active_tunnels_for_binding(&grant.user_id, &grant.daemon_id, &grant.device_id)
+        .await;
 
     match result {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -249,93 +232,63 @@ fn tunnel_assignment_to_response(
     })
 }
 
-async fn fetch_user_id(state: &AppState, token: &str) -> Result<String, (StatusCode, String)> {
-    let url = format!(
-        "{}/auth/v1/user",
-        state.config.supabase_url.trim_end_matches('/')
-    );
-    let resp = state
-        .client
-        .get(url)
-        .header("apikey", &state.config.supabase_anon_key)
-        .header(AUTHORIZATION, format!("Bearer {token}"))
-        .send()
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::BAD_GATEWAY,
-                "auth service unavailable".to_string(),
-            )
-        })?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        warn!("auth user failed status={status} body={body}");
-        return Err((StatusCode::UNAUTHORIZED, "invalid user session".to_string()));
-    }
-
-    let value = resp
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, "invalid auth response".to_string()))?;
-    let user_id = value
-        .get("user")
-        .and_then(|user| user.get("id"))
-        .or_else(|| value.get("id"))
-        .and_then(|id| id.as_str());
-    let Some(user_id) = user_id else {
-        return Err((StatusCode::UNAUTHORIZED, "invalid user session".to_string()));
-    };
-    Ok(user_id.to_string())
-}
-
-async fn ensure_entitled(state: &AppState, token: &str) -> Result<(), (StatusCode, String)> {
-    let url = Url::parse(&state.config.entitlements_url).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid entitlements url".to_string(),
-        )
-    })?;
-    let resp = state
-        .client
-        .get(url)
-        .header("apikey", &state.config.supabase_anon_key)
-        .header(AUTHORIZATION, format!("Bearer {token}"))
-        .send()
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::BAD_GATEWAY,
-                "entitlements unavailable".to_string(),
-            )
-        })?;
-
-    if !resp.status().is_success() {
-        return Err((StatusCode::FORBIDDEN, "entitlements required".to_string()));
-    }
-
-    let snapshot = resp.json::<EntitlementsSnapshot>().await.map_err(|_| {
-        (
-            StatusCode::BAD_GATEWAY,
-            "invalid entitlements response".to_string(),
-        )
-    })?;
-
-    let enabled = snapshot
-        .features
-        .get("remote_mobile_access")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "enabled")
-        .unwrap_or(false);
-
-    if !enabled {
+async fn verify_managed_tunnel_grant(
+    state: &AppState,
+    token: &str,
+    binding: &TunnelGrantBinding,
+) -> Result<ctx_tunnel_store::VerifiedMobileTunnelGrant, (StatusCode, String)> {
+    let trimmed = token.trim();
+    if !trimmed.starts_with("ctmt_") {
         return Err((
-            StatusCode::FORBIDDEN,
-            "mobile access not entitled".to_string(),
+            StatusCode::UNAUTHORIZED,
+            "invalid managed tunnel grant".to_string(),
         ));
     }
-    Ok(())
+    let digest = managed_tunnel_grant_digest(trimmed);
+    state
+        .store
+        .verify_mobile_tunnel_grant(&digest, &binding.daemon_id, &binding.device_id)
+        .await
+        .map_err(store_api_error)?
+        .ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                "mobile access not entitled".to_string(),
+            )
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TunnelGrantBinding {
+    daemon_id: String,
+    device_id: String,
+}
+
+fn extract_tunnel_grant_binding(
+    headers: &axum::http::HeaderMap,
+) -> Result<TunnelGrantBinding, (StatusCode, String)> {
+    Ok(TunnelGrantBinding {
+        daemon_id: required_header(headers, "x-ctx-daemon-id")?,
+        device_id: required_header(headers, "x-ctx-device-id")?,
+    })
+}
+
+fn required_header(
+    headers: &axum::http::HeaderMap,
+    name: &'static str,
+) -> Result<String, (StatusCode, String)> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, format!("{name} required")))
+}
+
+fn managed_tunnel_grant_digest(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<String> {

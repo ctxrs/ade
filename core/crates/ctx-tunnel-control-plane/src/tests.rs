@@ -14,6 +14,22 @@ fn extract_bearer_trims_and_rejects_invalid_values() {
 }
 
 #[test]
+fn extract_tunnel_grant_binding_requires_daemon_and_device_headers() {
+    let mut headers = axum::http::HeaderMap::new();
+    assert!(extract_tunnel_grant_binding(&headers).is_err());
+
+    headers.insert("x-ctx-daemon-id", " daemon-1 ".parse().unwrap());
+    headers.insert("x-ctx-device-id", "device-1".parse().unwrap());
+    assert_eq!(
+        extract_tunnel_grant_binding(&headers).unwrap(),
+        TunnelGrantBinding {
+            daemon_id: "daemon-1".to_string(),
+            device_id: "device-1".to_string(),
+        }
+    );
+}
+
+#[test]
 fn normalize_public_base_url_appends_tunnel_path_once() {
     assert_eq!(
         normalize_public_base_url("https://public.example/", "tunnel-1"),

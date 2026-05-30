@@ -18,6 +18,7 @@ BUILDKITE_CONTRACT_DATA = COMMON_CORE_DATA + [
     "//:buildkite_pipeline_sources",
     "//:buildkite_script_sources",
     "//:ci_script_sources",
+    "//:control_plane_worker_sources",
     "//:ctx_doc_sources",
     "//:ctx_exec_plan_sources",
     "//:ctx_pack_spec_sources",

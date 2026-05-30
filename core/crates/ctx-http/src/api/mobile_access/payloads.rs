@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct EnableMobileAccessReq {
-    pub(in crate::api) supabase_token: String,
+    pub(in crate::api) managed_tunnel_grant: String,
 }
 
 #[derive(Debug, Serialize)]

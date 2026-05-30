@@ -1,9 +1,9 @@
-import type { User } from "@supabase/supabase-js";
 import { Card, Row } from "../SettingsPage.components";
 import { TextInput } from "../../../components/ui/text-input";
+import type { CtxBillingUser } from "../teamEnterpriseSettingsApi";
 
 export function BillingSection({
-  supabaseConfigured,
+  controlPlaneConfigured,
   checkoutStatus,
   billingUser,
   billingEmail,
@@ -21,9 +21,9 @@ export function BillingSection({
   onStartCheckout,
   onOpenPortal,
 }: {
-  supabaseConfigured: boolean;
+  controlPlaneConfigured: boolean;
   checkoutStatus: string | null;
-  billingUser: User | null;
+  billingUser: CtxBillingUser | null;
   billingEmail: string;
   onBillingEmailChange: (value: string) => void;
   billingPassword: string;
@@ -39,10 +39,10 @@ export function BillingSection({
   onStartCheckout: (interval: "month" | "year") => void | Promise<void>;
   onOpenPortal: () => void | Promise<void>;
 }) {
-  if (!supabaseConfigured) {
+  if (!controlPlaneConfigured) {
     return (
       <div className="settings-empty">
-        Billing is not configured. Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> for the web app.
+        Billing is not configured. Set <code>VITE_CTX_CONTROL_PLANE_URL</code> for the web app.
       </div>
     );
   }

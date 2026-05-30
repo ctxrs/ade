@@ -114,6 +114,12 @@ const TELEMETRY_REQUIRED_ENV = [
   },
   {
     group: "telemetry_storage",
+    name: "TELEMETRY_READ_DATABASE_URL",
+    aliases: ["CTX_TELEMETRY_READ_DATABASE_URL", "CTX_NEON_PROD_ANALYTICS_READONLY_DATABASE_URL"],
+    secret: true,
+  },
+  {
+    group: "telemetry_storage",
     name: "INSTALL_ID_HASH_SALT",
     aliases: [],
     secret: true,
@@ -156,16 +162,21 @@ const TELEMETRY_REQUIRED_WORKER_SECRETS = [
 ];
 
 const AUTHORITY_TABLES = [
+  "audit_events",
+  "billing_entitlements",
+  "billing_subjects",
   "billing_spend_limits",
   "credit_grants",
   "credit_ledger_events",
   "model_prices",
+  "provider_invoice_lines",
   "pricing_catalog_versions",
   "request_state_events",
+  "relay_grant_jti_consumptions",
   "route_configs",
   "route_policy_versions",
   "usage_ledger_events",
-  "usage_reservation_allocations",
+  "usage_reservation_credit_allocations",
   "usage_reservations",
 ];
 
@@ -179,7 +190,7 @@ Default behavior is read-only:
   - parse wrangler.toml for required Worker vars
   - inspect Cloudflare Worker and script-level secret names when credentials exist
   - inspect Neon project metadata when credentials exist
-  - skip live Postgres role/schema checks unless explicitly requested
+  - skip live Postgres role/ctx-schema checks unless explicitly requested
 
 Options:
   --environment <name>       Worker environment to evaluate (repeatable; default: staging, prod)
@@ -1021,7 +1032,7 @@ order by rolname;
 }
 
 function queryAuthorityTables({ databaseUrl, spawnSync }) {
-  const checks = AUTHORITY_TABLES.map((table) => `(${sqlLiteral(table)}, to_regclass(${sqlLiteral(`public.${table}`)}) is not null)`).join(",");
+  const checks = AUTHORITY_TABLES.map((table) => `(${sqlLiteral(table)}, to_regclass(${sqlLiteral(`ctx.${table}`)}) is not null)`).join(",");
   const sql = `
 select name, exists
 from (values ${checks}) as required(name, exists)
@@ -1182,6 +1193,7 @@ export {
   parseCloudflareWorkerNames,
   parsePsqlRows,
   parseWranglerToml,
+  queryAuthorityTables,
   stableJson,
 };
 

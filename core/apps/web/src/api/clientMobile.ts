@@ -48,14 +48,14 @@ export const listMobileDevicesForProfile = (profileId: string) =>
 
 export const getMobileAccessStatus = () => apiAny<MobileAccessStatus>(`/api/mobile/access/status`);
 
-export const enableMobileAccess = (supabase_token: string) =>
+export const enableMobileAccess = (managed_tunnel_grant: string) =>
   apiAny<EnableMobileAccessResponse>(`/api/mobile/access/enable`, {
     method: "POST",
-    body: JSON.stringify({ supabase_token }),
+    body: JSON.stringify({ managed_tunnel_grant }),
   });
 
-export const disableMobileAccess = (supabase_token: string) =>
+export const disableMobileAccess = (managed_tunnel_grant: string) =>
   apiAny<void>(`/api/mobile/access/disable`, {
     method: "POST",
-    body: JSON.stringify({ supabase_token }),
+    body: JSON.stringify({ managed_tunnel_grant }),
   });

@@ -43,7 +43,7 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "supabase_token": "entitled-token"
+                "managed_tunnel_grant": "ctmt_entitled_grant"
             })
             .to_string(),
         ))
@@ -116,7 +116,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "supabase_token": "entitled-token"
+                "managed_tunnel_grant": "ctmt_entitled_grant"
             })
             .to_string(),
         ))

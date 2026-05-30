@@ -180,7 +180,7 @@ export function SettingsContentRouter(props: {
   if (active === "mobile_access") {
     return (
       <MobileAccessSection
-        supabaseConfigured={account.supabaseConfigured}
+        controlPlaneConfigured={account.controlPlaneConfigured}
         billingUser={account.mobileAccess.billingUser}
         entitlementsBusy={account.mobileAccess.entitlementsBusy}
         proEnabled={account.mobileAccess.proEnabled}
@@ -217,7 +217,7 @@ export function SettingsContentRouter(props: {
   if (active === "billing") {
     return (
       <BillingSection
-        supabaseConfigured={account.supabaseConfigured}
+        controlPlaneConfigured={account.controlPlaneConfigured}
         checkoutStatus={account.billing.checkoutStatus}
         billingUser={account.billing.billingUser}
         billingEmail={account.billing.billingEmail}
@@ -241,7 +241,7 @@ export function SettingsContentRouter(props: {
   if (active === "team_enterprise") {
     return (
       <TeamEnterpriseSection
-        supabaseConfigured={account.supabaseConfigured}
+        controlPlaneConfigured={account.controlPlaneConfigured}
         billingUser={account.teamEnterprise.billingUser}
         entitlementsBusy={account.teamEnterprise.entitlementsBusy}
         plan={account.teamEnterprise.plan}

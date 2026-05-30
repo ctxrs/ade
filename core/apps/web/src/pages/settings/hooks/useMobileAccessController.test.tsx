@@ -30,8 +30,8 @@ describe("useMobileAccessController", () => {
     getMobileAccessStatusMock.mockReset();
   });
 
-  it("enables mobile access through the injected auth token provider", async () => {
-    const getAuthToken = vi.fn().mockResolvedValue("supabase-token");
+  it("enables mobile access through the injected tunnel grant provider", async () => {
+    const getAuthToken = vi.fn().mockResolvedValue("ctmt_grant");
     enableMobileAccessMock.mockResolvedValue({
       status: {
         enabled: true,
@@ -48,7 +48,7 @@ describe("useMobileAccessController", () => {
     });
 
     expect(getAuthToken).toHaveBeenCalledTimes(1);
-    expect(enableMobileAccessMock).toHaveBeenCalledWith("supabase-token");
+    expect(enableMobileAccessMock).toHaveBeenCalledWith("ctmt_grant");
     await waitFor(() => {
       expect(result.current.mobileStatus).toEqual({
         enabled: true,
@@ -68,7 +68,7 @@ describe("useMobileAccessController", () => {
 
     expect(enableMobileAccessMock).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(result.current.mobileEnableError).toBe("Supabase is not configured.");
+      expect(result.current.mobileEnableError).toBe("Managed mobile tunnel grants are not configured.");
     });
   });
 });

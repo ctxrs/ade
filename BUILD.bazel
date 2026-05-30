@@ -153,3 +153,17 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "control_plane_worker_sources",
+    srcs = glob(
+        [
+            "control-plane-worker/**",
+        ],
+        exclude = [
+            "control-plane-worker/node_modules/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)

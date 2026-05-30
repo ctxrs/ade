@@ -1,10 +1,10 @@
 import type { ComponentProps } from "react";
-import type { User } from "@supabase/supabase-js";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import { TeamEnterpriseSection } from "./TeamEnterpriseSection";
 import type {
   EntitlementsSnapshot,
+  CtxBillingUser,
   TeamEnterpriseCloudState,
   TeamEnterprisePolicyDraft,
 } from "../teamEnterpriseSettingsApi";
@@ -24,8 +24,8 @@ const emptyCloudState: TeamEnterpriseCloudState = {
 
 function renderSection(overrides: Partial<ComponentProps<typeof TeamEnterpriseSection>> = {}) {
   const props: ComponentProps<typeof TeamEnterpriseSection> = {
-    supabaseConfigured: true,
-    billingUser: { email: "owner@example.com" } as User,
+    controlPlaneConfigured: true,
+    billingUser: { id: "user-1", email: "owner@example.com" } satisfies CtxBillingUser,
     entitlementsBusy: false,
     plan: "team",
     entitlements: {
@@ -141,14 +141,14 @@ function renderSection(overrides: Partial<ComponentProps<typeof TeamEnterpriseSe
 describe("TeamEnterpriseSection", () => {
   it("renders explicit unavailable states when org wiring is missing", () => {
     renderSection({
-      supabaseConfigured: false,
+      controlPlaneConfigured: false,
       billingUser: null,
       plan: "free_local",
       entitlements: null,
       cloudState: emptyCloudState,
     });
 
-    expect(screen.getByText(/Billing\/auth is not configured/i)).toBeInTheDocument();
+    expect(screen.getByText(/Account control plane is not configured/i)).toBeInTheDocument();
     expect(screen.getByText("Account & Plans")).toBeInTheDocument();
     expect(screen.getByText("Organization")).toBeInTheDocument();
     expect(screen.getByText("Members & Seats")).toBeInTheDocument();

@@ -1,6 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useState } from "react";
-import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { errorMessage } from "../../../utils/errorMessage";
 import {
   trackCheckoutStarted,
@@ -15,6 +14,7 @@ import {
   fetchTeamEnterpriseCloudState,
   invokeTeamEnterpriseAdminAction,
   startTeamBillingCheckout,
+  type CtxBillingUser,
   type EntitlementsSnapshot,
   type MembershipRole,
   type TeamEnterpriseCloudState,
@@ -29,7 +29,7 @@ type RefreshEntitlements = (opts?: {
 }) => Promise<EntitlementsSnapshot | null>;
 
 export type SettingsTeamEnterpriseController = {
-  billingUser: User | null;
+  billingUser: CtxBillingUser | null;
   entitlementsBusy: boolean;
   plan: PlanType;
   entitlements: EntitlementsSnapshot | null;
@@ -62,8 +62,7 @@ export type SettingsTeamEnterpriseController = {
 
 type Params = {
   active: SectionId;
-  supabase: SupabaseClient | null;
-  billingUser: User | null;
+  billingUser: CtxBillingUser | null;
   billingReturnPath: string;
   entitlementsBusy: boolean;
   plan: PlanType;
@@ -87,7 +86,6 @@ const EMPTY_TEAM_ENTERPRISE_CLOUD_STATE: TeamEnterpriseCloudState = {
 
 export function useTeamEnterpriseSettingsController({
   active,
-  supabase,
   billingUser,
   billingReturnPath,
   entitlementsBusy,
@@ -113,7 +111,7 @@ export function useTeamEnterpriseSettingsController({
 
   const refreshCloudState = useCallback(
     async (opts?: { requestedActiveOrgId?: string | null; silent?: boolean }) => {
-      if (!supabase || !billingUser) {
+      if (!billingUser) {
         setCloudState(EMPTY_TEAM_ENTERPRISE_CLOUD_STATE);
         return EMPTY_TEAM_ENTERPRISE_CLOUD_STATE;
       }
@@ -125,7 +123,6 @@ export function useTeamEnterpriseSettingsController({
       }
       try {
         const next = await fetchTeamEnterpriseCloudState({
-          client: supabase,
           requestedActiveOrgId: nextRequestedActiveOrgId,
         });
         setCloudState(next);
@@ -151,7 +148,7 @@ export function useTeamEnterpriseSettingsController({
         }
       }
     },
-    [billingUser, requestedActiveOrgId, setRequestedActiveOrgId, supabase],
+    [billingUser, requestedActiveOrgId, setRequestedActiveOrgId],
   );
 
   useEffect(() => {
@@ -188,7 +185,7 @@ export function useTeamEnterpriseSettingsController({
 
   const runAction = useCallback(
     async (run: () => Promise<void>, successMessage: string) => {
-      if (!supabase || !billingUser) {
+      if (!billingUser) {
         setActionError("Sign in required to manage Team and Enterprise settings.");
         return;
       }
@@ -205,7 +202,7 @@ export function useTeamEnterpriseSettingsController({
         setActionBusy(false);
       }
     },
-    [billingUser, refreshAll, supabase],
+    [billingUser, refreshAll],
   );
 
   const createOrg = useCallback(async () => {
@@ -215,12 +212,11 @@ export function useTeamEnterpriseSettingsController({
       return;
     }
     await runAction(async () => {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      await invokeTeamEnterpriseAdminAction(supabase, { action: "create_organization", name });
+      await invokeTeamEnterpriseAdminAction({ action: "create_organization", name });
       setOrgName("");
       trackFeatureUsed("org_created");
     }, "Organization create request submitted.");
-  }, [orgName, runAction, supabase]);
+  }, [orgName, runAction]);
 
   const inviteMember = useCallback(async () => {
     const activeOrgId = cloudState.activeOrgId;
@@ -234,8 +230,7 @@ export function useTeamEnterpriseSettingsController({
       return;
     }
     await runAction(async () => {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      await invokeTeamEnterpriseAdminAction(supabase, {
+      await invokeTeamEnterpriseAdminAction({
         action: "invite_member",
         organization_id: activeOrgId,
         email,
@@ -244,19 +239,18 @@ export function useTeamEnterpriseSettingsController({
       setInviteEmail("");
       trackFeatureUsed("org_invite_sent");
     }, "Invite request submitted.");
-  }, [cloudState.activeOrgId, inviteEmail, inviteRole, runAction, supabase]);
+  }, [cloudState.activeOrgId, inviteEmail, inviteRole, runAction]);
 
   const acceptInvite = useCallback(
     async (inviteToken: string) => {
       const token = inviteToken.trim();
       if (!token) return;
       await runAction(async () => {
-        if (!supabase) throw new Error("Supabase is not configured.");
-        await invokeTeamEnterpriseAdminAction(supabase, { action: "accept_invite", token });
+        await invokeTeamEnterpriseAdminAction({ action: "accept_invite", token });
         trackFeatureUsed("org_invite_accepted");
       }, "Invite accept request submitted.");
     },
-    [runAction, supabase],
+    [runAction],
   );
 
   const updateSeats = useCallback(async () => {
@@ -271,15 +265,14 @@ export function useTeamEnterpriseSettingsController({
       return;
     }
     await runAction(async () => {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      await invokeTeamEnterpriseAdminAction(supabase, {
+      await invokeTeamEnterpriseAdminAction({
         action: "update_seats",
         organization_id: activeOrgId,
         seats,
       });
       trackFeatureUsed("org_seats_updated");
     }, "Seat update request submitted.");
-  }, [cloudState.activeOrgId, runAction, seatTarget, supabase]);
+  }, [cloudState.activeOrgId, runAction, seatTarget]);
 
   const savePolicy = useCallback(async () => {
     const activeOrgId = cloudState.activeOrgId;
@@ -288,19 +281,18 @@ export function useTeamEnterpriseSettingsController({
       return;
     }
     await runAction(async () => {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      await invokeTeamEnterpriseAdminAction(supabase, {
+      await invokeTeamEnterpriseAdminAction({
         action: "update_policy",
         organization_id: activeOrgId,
         policy: policyDraft,
       });
       trackFeatureUsed("org_policy_updated");
     }, "Policy update request submitted.");
-  }, [cloudState.activeOrgId, policyDraft, runAction, supabase]);
+  }, [cloudState.activeOrgId, policyDraft, runAction]);
 
   const startCheckout = useCallback(
     async (interval: BillingInterval) => {
-      if (!supabase || !billingUser) {
+      if (!billingUser) {
         setActionError("Sign in required to start Team checkout.");
         return;
       }
@@ -316,7 +308,6 @@ export function useTeamEnterpriseSettingsController({
       try {
         trackSubscribeCtaClicked(interval);
         const url = await startTeamBillingCheckout({
-          client: supabase,
           organizationId: activeOrgId,
           billingSubjectId,
           interval,
@@ -330,7 +321,7 @@ export function useTeamEnterpriseSettingsController({
         setActionBusy(false);
       }
     },
-    [billingReturnPath, billingUser, cloudState.activeOrgId, cloudState.billingSubjectId, seatTarget, supabase],
+    [billingReturnPath, billingUser, cloudState.activeOrgId, cloudState.billingSubjectId, seatTarget],
   );
 
   const requestEnterpriseSetup = useCallback(async () => {
@@ -340,14 +331,13 @@ export function useTeamEnterpriseSettingsController({
       return;
     }
     await runAction(async () => {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      await invokeTeamEnterpriseAdminAction(supabase, {
+      await invokeTeamEnterpriseAdminAction({
         action: "request_enterprise_setup",
         organization_id: activeOrgId,
       });
       trackFeatureUsed("enterprise_setup_requested");
     }, "Enterprise setup request submitted.");
-  }, [cloudState.activeOrgId, runAction, supabase]);
+  }, [cloudState.activeOrgId, runAction]);
 
   return {
     billingUser,

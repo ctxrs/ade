@@ -5,7 +5,7 @@ use crate::api::FinalizeRequest;
 use crate::store::AuthorityError;
 
 use super::conversions::state_to_str;
-use super::ledger::{insert_state_event_tx, insert_usage_event_tx};
+use super::ledger::{insert_state_event_tx, insert_usage_event_tx, update_reservation_status_tx};
 use super::reservations::ReservationIdentity;
 
 pub(super) async fn record_unknown_usage_tx(
@@ -18,10 +18,19 @@ pub(super) async fn record_unknown_usage_tx(
         insert_state_event_tx(
             tx,
             &request.request_id,
+            Some(&reservation.reservation_id),
             Some(previous),
             RelayRequestState::StreamBrokenUsageUnknown,
-            "worker",
             None,
+        )
+        .await?;
+        update_reservation_status_tx(
+            tx,
+            &request.request_id,
+            RelayRequestState::StreamBrokenUsageUnknown,
+            request.provider_request_id.as_deref(),
+            None,
+            false,
         )
         .await?;
         insert_usage_event_tx(

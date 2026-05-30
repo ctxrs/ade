@@ -16,7 +16,7 @@ pub(in crate::api) async fn disable_mobile_access(
     }
 
     state
-        .disable_mobile_access_for_route(req.supabase_token)
+        .disable_mobile_access_for_route(req.managed_tunnel_grant)
         .await
         .map_err(disable_mobile_access_error)?;
     Ok(StatusCode::NO_CONTENT)

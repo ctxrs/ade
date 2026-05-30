@@ -13,9 +13,9 @@ pub(super) async fn latest_state_tx(
     let row = sqlx::query(
         r#"
         select to_state::text as state
-        from public.request_state_events
+        from ctx.request_state_events
         where request_id = $1
-        order by created_at desc, id desc
+        order by occurred_at desc, event_id desc
         limit 1
         "#,
     )
@@ -43,12 +43,12 @@ pub(super) async fn insert_credit_event_tx(
 ) -> Result<(), AuthorityError> {
     sqlx::query(
         r#"
-        insert into public.credit_ledger_events
-          (id, billing_subject_id, credit_grant_id, request_id, reservation_id, event_kind, amount_cents)
-        values ($1, $2, $3, $4, $5, $6::public.ctx_credit_event_kind, $7)
+        insert into ctx.credit_ledger_events
+          (event_id, billing_subject_id, credit_grant_id, request_id, usage_reservation_id, event_type, amount_cents)
+        values ($1, $2::uuid, $3::uuid, $4, $5::uuid, $6, $7)
         "#,
     )
-    .bind(format!("cred_evt_{}", Uuid::new_v4()))
+    .bind(Uuid::new_v4())
     .bind(billing_subject_id)
     .bind(credit_grant_id)
     .bind(request_id)
@@ -64,27 +64,60 @@ pub(super) async fn insert_credit_event_tx(
 pub(super) async fn insert_state_event_tx(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     request_id: &str,
+    reservation_id: Option<&str>,
     from_state: Option<RelayRequestState>,
     to_state: RelayRequestState,
-    actor: &str,
     reason: Option<&str>,
 ) -> Result<(), AuthorityError> {
     sqlx::query(
         r#"
-        insert into public.request_state_events
-          (id, request_id, from_state, to_state, actor, reason)
-        values ($1, $2, $3::public.ctx_relay_request_state, $4::public.ctx_relay_request_state, $5, $6)
+        insert into ctx.request_state_events
+          (event_id, request_id, reservation_id, from_state, to_state, reason)
+        values ($1, $2, $3::uuid, $4, $5, $6)
         "#,
     )
-    .bind(format!("state_evt_{}", Uuid::new_v4()))
+    .bind(Uuid::new_v4())
     .bind(request_id)
+    .bind(reservation_id)
     .bind(from_state.as_ref().map(state_to_str))
     .bind(state_to_str(&to_state))
-    .bind(actor)
     .bind(reason)
     .execute(&mut **tx)
     .await
     .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    Ok(())
+}
+
+pub(super) async fn update_reservation_status_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    request_id: &str,
+    state: RelayRequestState,
+    provider_request_id: Option<&str>,
+    actual_billable_cents: Option<u64>,
+    finalized: bool,
+) -> Result<(), AuthorityError> {
+    let result = sqlx::query(
+        r#"
+        update ctx.usage_reservations
+        set status = $2,
+            provider_request_id = coalesce($3::text, provider_request_id),
+            actual_billable_cents = coalesce($4::integer, actual_billable_cents),
+            finalized_at = case when $5 then now() else finalized_at end,
+            updated_at = now()
+        where request_id = $1
+        "#,
+    )
+    .bind(request_id)
+    .bind(state_to_str(&state))
+    .bind(provider_request_id)
+    .bind(actual_billable_cents.map(checked_i64).transpose()?)
+    .bind(finalized)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    if result.rows_affected() != 1 {
+        return Err(AuthorityError::NotFound);
+    }
     Ok(())
 }
 
@@ -108,28 +141,36 @@ pub(super) async fn insert_usage_event_tx(
 ) -> Result<(), AuthorityError> {
     sqlx::query(
         r#"
-        insert into public.usage_ledger_events
-          (id, request_id, reservation_id, billing_subject_id, event_kind, provider_id, model_id,
-           route_id, provider_request_id, estimated_input_tokens, estimated_output_tokens,
-           actual_input_tokens, actual_output_tokens, provider_cost_micros, billable_cents)
-        values ($1, $2, $3, $4, $5::public.ctx_usage_event_kind, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        insert into ctx.usage_ledger_events
+          (event_id, request_id, reservation_id, event_type, amount_cents, input_tokens, output_tokens, metadata)
+        values ($1, $2, $3::uuid, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(format!("usage_evt_{}", Uuid::new_v4()))
+    .bind(Uuid::new_v4())
     .bind(request_id)
     .bind(reservation_id)
-    .bind(billing_subject_id)
     .bind(event_kind)
-    .bind(provider_id)
-    .bind(model_id)
-    .bind(route_id)
-    .bind(provider_request_id)
-    .bind(estimated_input_tokens)
-    .bind(estimated_output_tokens.map(checked_i64).transpose()?)
-    .bind(actual_input_tokens)
-    .bind(actual_output_tokens)
-    .bind(provider_cost_micros.map(checked_i64).transpose()?)
     .bind(billable_cents.map(checked_i64).transpose()?)
+    .bind(actual_input_tokens.or(estimated_input_tokens))
+    .bind(
+        actual_output_tokens
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| AuthorityError::Store("negative output token count".to_string()))?
+            .or(estimated_output_tokens)
+            .map(checked_i64)
+            .transpose()?,
+    )
+    .bind(serde_json::json!({
+        "billing_subject_id": billing_subject_id,
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "route_id": route_id,
+        "provider_request_id": provider_request_id,
+        "provider_cost_micros": provider_cost_micros,
+        "estimated_input_tokens": estimated_input_tokens,
+        "estimated_output_tokens": estimated_output_tokens,
+    }))
     .execute(&mut **tx)
     .await
     .map_err(|err| AuthorityError::Store(err.to_string()))?;
@@ -143,9 +184,9 @@ pub(super) async fn load_state_events_pool(
     let rows = sqlx::query(
         r#"
         select from_state::text as from_state, to_state::text as to_state, reason
-        from public.request_state_events
+        from ctx.request_state_events
         where request_id = $1
-        order by created_at asc, id asc
+        order by occurred_at asc, event_id asc
         "#,
     )
     .bind(request_id)
@@ -179,9 +220,9 @@ pub(super) async fn latest_provider_request_id_pool(
     let row = sqlx::query(
         r#"
         select provider_request_id
-        from public.usage_ledger_events
+        from ctx.usage_reservations
         where request_id = $1 and provider_request_id is not null
-        order by created_at desc, id desc
+        order by updated_at desc, reservation_id desc
         limit 1
         "#,
     )

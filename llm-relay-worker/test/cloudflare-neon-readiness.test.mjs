@@ -7,6 +7,7 @@ import {
   parseCloudflareWorkerNames,
   parsePsqlRows,
   parseWranglerToml,
+  queryAuthorityTables,
   stableJson,
 } from "../scripts/cloudflare-neon-readiness.mjs";
 
@@ -56,6 +57,7 @@ describe("cloudflare neon readiness script", () => {
       NEON_API_KEY: "neon-secret-token",
       NEON_PROJECT_ID: "neon-project",
       TELEMETRY_DATABASE_URL: "postgresql://ctx_telemetry_ingest:db-secret@db.example.test/neondb?sslmode=require",
+      TELEMETRY_READ_DATABASE_URL: "postgresql://ctx_analytics_readonly:db-secret-read@db.example.test/neondb?sslmode=require",
       INSTALL_ID_HASH_SALT: "install-salt",
       POSTHOG_CANARY_PROJECT_API_KEY: "posthog-canary-secret",
     };
@@ -86,6 +88,7 @@ describe("cloudflare neon readiness script", () => {
     expect(serialized).not.toContain("cf-secret-token");
     expect(serialized).not.toContain("neon-secret-token");
     expect(serialized).not.toContain("db-secret");
+    expect(serialized).not.toContain("db-secret-read");
     expect(serialized).not.toContain("install-salt");
     expect(serialized).not.toContain("posthog-canary-secret");
     expect(report.failures).toEqual([]);
@@ -142,6 +145,38 @@ GRANT_VERIFICATION_MODE = "signed_chain"
         superuser: "f",
       },
     ]);
+  });
+
+  test("authority table check targets canonical ctx relay ledger tables", () => {
+    let capturedSql = "";
+    queryAuthorityTables({
+      databaseUrl: {
+        ok: true,
+        database: "neondb",
+        hostname: "db.example.test",
+        password: "secret",
+        port: "",
+        sslmode: "require",
+        username: "ctx_relay_authority_app",
+      },
+      spawnSync: (_command, _args, options) => {
+        capturedSql = options.input;
+        return {
+          status: 0,
+          stderr: "",
+          stdout: [
+            "relay_grant_jti_consumptions|t",
+            "usage_reservation_credit_allocations|t",
+            "usage_reservations|t",
+          ].join("\n"),
+        };
+      },
+    });
+
+    expect(capturedSql).toContain("to_regclass('ctx.usage_reservation_credit_allocations')");
+    expect(capturedSql).toContain("to_regclass('ctx.relay_grant_jti_consumptions')");
+    expect(capturedSql).not.toContain("public.");
+    expect(capturedSql).not.toContain("usage_reservation_allocations");
   });
 });
 

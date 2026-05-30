@@ -75,15 +75,15 @@ impl Client {
 
     pub async fn enable_mobile_access(
         &self,
-        supabase_token: &str,
+        managed_tunnel_grant: &str,
     ) -> Result<EnableMobileAccessResponse> {
-        let req = serde_json::json!({ "supabase_token": supabase_token });
+        let req = serde_json::json!({ "managed_tunnel_grant": managed_tunnel_grant });
         self.request_json(Method::POST, "/api/mobile/access/enable", Some(&req))
             .await
     }
 
-    pub async fn disable_mobile_access(&self, supabase_token: &str) -> Result<()> {
-        let req = serde_json::json!({ "supabase_token": supabase_token });
+    pub async fn disable_mobile_access(&self, managed_tunnel_grant: &str) -> Result<()> {
+        let req = serde_json::json!({ "managed_tunnel_grant": managed_tunnel_grant });
         self.request_empty(Method::POST, "/api/mobile/access/disable", Some(&req))
             .await
     }

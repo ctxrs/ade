@@ -120,3 +120,69 @@ test("missing telemetry ingest returning grant fails validation", () => {
     assert.match(result.errors.join("\n"), /missing required SQL contract: telemetry ingest role can return idempotent inserted event ids/);
   });
 });
+
+test("missing relay spend limit runtime columns fail validation", () => {
+  withTempMigrations((migrationsDir) => {
+    replaceInMigration(
+      migrationsDir,
+      "0008_relay_spend_limits_and_mobile_grant_hardening.sql",
+      "ADD COLUMN IF NOT EXISTS hard_limit_cents integer",
+      "ADD COLUMN IF NOT EXISTS soft_limit_cents integer",
+    );
+
+    const result = checkMigrationDirectory(migrationsDir);
+
+    assert.match(result.errors.join("\n"), /missing required SQL contract: relay spend limit schema exposes runtime enforcement columns/);
+  });
+});
+
+test("missing mobile grant runtime revoke fails validation", () => {
+  withTempMigrations((migrationsDir) => {
+    replaceInMigration(
+      migrationsDir,
+      "0008_relay_spend_limits_and_mobile_grant_hardening.sql",
+      "REVOKE INSERT, UPDATE ON ctx.mobile_tunnel_grants FROM ctx_mobile_tunnel;",
+      "GRANT SELECT ON ctx.mobile_tunnel_grants TO ctx_mobile_tunnel;",
+    );
+
+    const result = checkMigrationDirectory(migrationsDir);
+
+    assert.match(result.errors.join("\n"), /missing required SQL contract: mobile tunnel runtime role cannot mutate grant rows/);
+  });
+});
+
+test("missing mobile tunnel binding index fails validation", () => {
+  withTempMigrations((migrationsDir) => {
+    replaceInMigration(
+      migrationsDir,
+      "0009_mobile_tunnel_binding_hardening.sql",
+      "CREATE INDEX IF NOT EXISTS mobile_tunnel_binding_active_idx",
+      "CREATE INDEX IF NOT EXISTS mobile_tunnel_binding_active_missing_idx",
+    );
+
+    const result = checkMigrationDirectory(migrationsDir);
+
+    assert.match(result.errors.join("\n"), /missing required index: mobile_tunnel_binding_active_idx/);
+  });
+});
+
+test("missing relay pricing precision columns fail validation", () => {
+  withTempMigrations((migrationsDir) => {
+    replaceInMigration(
+      migrationsDir,
+      "0005_relay_ledger_foundation.sql",
+      "input_microusd_per_1k_tokens",
+      "input_microusd_per_token_legacy_only",
+    );
+    replaceInMigration(
+      migrationsDir,
+      "0010_relay_pricing_precision.sql",
+      "input_microusd_per_1k_tokens",
+      "input_microusd_per_token_legacy_only",
+    );
+
+    const result = checkMigrationDirectory(migrationsDir);
+
+    assert.match(result.errors.join("\n"), /missing required SQL contract: relay pricing preserves per-1k token precision/);
+  });
+});

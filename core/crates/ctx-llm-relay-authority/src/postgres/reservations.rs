@@ -1,13 +1,11 @@
-use ctx_llm_relay_contract::{CreditAllocation, CreditGrant};
+use ctx_llm_relay_contract::{CreditAllocation, CreditAllocationSettlement, CreditGrant};
 use sqlx::{postgres::PgRow, Postgres, Row};
 use uuid::Uuid;
 
 use crate::api::ReserveRequest;
 use crate::store::AuthorityError;
 
-use super::conversions::{
-    cents_from_i64, checked_i64, credit_source_from_str, credit_source_to_str,
-};
+use super::conversions::{cents_from_i64, checked_i64, credit_source_from_str};
 
 pub(super) struct ReservationIdentity {
     pub(super) reservation_id: String,
@@ -28,18 +26,16 @@ pub(super) fn existing_reservation_matches(
         row.try_get("max_estimated_cents")
             .map_err(|err| AuthorityError::Store(err.to_string()))?,
     )?;
-    let max_input_tokens: Option<i64> = row
-        .try_get("max_input_tokens")
-        .map_err(|err| AuthorityError::Store(err.to_string()))?;
-    let max_output_tokens: Option<i64> = row
-        .try_get("max_output_tokens")
-        .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    let reserved_cents = cents_from_i64(
+        row.try_get("reserved_cents")
+            .map_err(|err| AuthorityError::Store(err.to_string()))?,
+    )?;
     Ok(row
         .try_get::<String, _>("run_grant_jti")
         .map_err(|err| AuthorityError::Store(err.to_string()))?
         == request.grant.jti
         && row
-            .try_get::<String, _>("relay_delegation_jti")
+            .try_get::<String, _>("delegation_jti")
             .map_err(|err| AuthorityError::Store(err.to_string()))?
             == request.grant.delegation_jti
         && row
@@ -50,6 +46,10 @@ pub(super) fn existing_reservation_matches(
             .try_get::<String, _>("ctx_user_id")
             .map_err(|err| AuthorityError::Store(err.to_string()))?
             == request.grant.ctx_user_id
+        && row
+            .try_get::<Option<String>, _>("ctx_account_id")
+            .map_err(|err| AuthorityError::Store(err.to_string()))?
+            == request.grant.ctx_account_id
         && row
             .try_get::<Option<String>, _>("ctx_org_id")
             .map_err(|err| AuthorityError::Store(err.to_string()))?
@@ -71,8 +71,7 @@ pub(super) fn existing_reservation_matches(
             .map_err(|err| AuthorityError::Store(err.to_string()))?
             == request.grant.pricing_version
         && max_estimated_cents == reservation_cents
-        && max_input_tokens == request.grant.max_input_tokens.map(i64::from)
-        && max_output_tokens == request.grant.max_output_tokens.map(i64::from))
+        && reserved_cents == reservation_cents)
 }
 
 pub(super) async fn reserved_cents_tx(
@@ -80,7 +79,7 @@ pub(super) async fn reserved_cents_tx(
     reservation_id: &str,
 ) -> Result<u64, AuthorityError> {
     let row = sqlx::query(
-        "select coalesce(sum(allocated_cents), 0)::bigint as cents from public.usage_reservation_allocations where reservation_id = $1",
+        "select coalesce(sum(reserved_cents), 0)::bigint as cents from ctx.usage_reservation_credit_allocations where reservation_id = $1::uuid",
     )
     .bind(reservation_id)
     .fetch_one(&mut **tx)
@@ -98,21 +97,15 @@ pub(super) async fn load_credit_grants_tx(
 ) -> Result<Vec<CreditGrant>, AuthorityError> {
     let rows = sqlx::query(
         r#"
-        select g.id, g.billing_subject_id, g.source::text as source, g.total_cents,
-               g.issued_at, g.expires_at,
-               (
-                 g.total_cents + coalesce(
-                 (
-                   select sum(e.amount_cents)::bigint
-                   from public.credit_ledger_events e
-                   where e.credit_grant_id = g.id
-                 ),
-                 0
-                 )
-               )::bigint as remaining_cents
-        from public.credit_grants g
-        where g.billing_subject_id = $1
-        order by g.expires_at asc nulls last, g.issued_at asc, g.id asc
+        select g.id::text as id, g.billing_subject_id::text as billing_subject_id,
+               g.credit_source::text as source, g.original_cents::bigint as total_cents,
+               g.remaining_cents::bigint as remaining_cents, g.created_at as issued_at,
+               g.expires_at
+        from ctx.credit_grants g
+        where g.billing_subject_id = $1::uuid
+          and g.active = true
+          and g.remaining_cents > 0
+        order by g.expires_at asc nulls last, g.created_at asc, g.id asc
         for update
         "#,
     )
@@ -160,20 +153,80 @@ pub(super) async fn insert_allocation_tx(
 ) -> Result<(), AuthorityError> {
     sqlx::query(
         r#"
-        insert into public.usage_reservation_allocations
-          (id, reservation_id, credit_grant_id, credit_source, allocated_cents, grant_expires_at)
-        values ($1, $2, $3, $4::public.ctx_credit_source, $5, $6)
+        insert into ctx.usage_reservation_credit_allocations
+          (allocation_id, reservation_id, credit_grant_id, reserved_cents)
+        values ($1, $2::uuid, $3::uuid, $4)
         "#,
     )
-    .bind(format!("alloc_{}", Uuid::new_v4()))
+    .bind(Uuid::new_v4())
     .bind(reservation_id)
     .bind(&allocation.grant_id)
-    .bind(credit_source_to_str(&allocation.source))
     .bind(checked_i64(allocation.reserved_cents)?)
-    .bind(allocation.grant_expires_at)
     .execute(&mut **tx)
     .await
     .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    let result = sqlx::query(
+        r#"
+        update ctx.credit_grants
+        set remaining_cents = remaining_cents - $2
+        where id = $1::uuid
+          and remaining_cents >= $2
+        "#,
+    )
+    .bind(&allocation.grant_id)
+    .bind(checked_i64(allocation.reserved_cents)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    if result.rows_affected() != 1 {
+        return Err(AuthorityError::Conflict(
+            "credit grant balance changed before reservation allocation".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) async fn settle_allocation_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    reservation_id: &str,
+    settlement: &CreditAllocationSettlement,
+) -> Result<(), AuthorityError> {
+    let result = sqlx::query(
+        r#"
+        update ctx.usage_reservation_credit_allocations
+        set debited_cents = debited_cents + $3,
+            released_cents = released_cents + $4
+        where reservation_id = $1::uuid
+          and credit_grant_id = $2::uuid
+          and debited_cents + released_cents + $3 + $4 <= reserved_cents
+        "#,
+    )
+    .bind(reservation_id)
+    .bind(&settlement.grant_id)
+    .bind(checked_i64(settlement.finalized_cents)?)
+    .bind(checked_i64(settlement.released_cents)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    if result.rows_affected() != 1 {
+        return Err(AuthorityError::Conflict(
+            "reservation allocation was already settled".to_string(),
+        ));
+    }
+    if settlement.released_spendable_cents > 0 {
+        sqlx::query(
+            r#"
+            update ctx.credit_grants
+            set remaining_cents = remaining_cents + $2
+            where id = $1::uuid
+            "#,
+        )
+        .bind(&settlement.grant_id)
+        .bind(checked_i64(settlement.released_spendable_cents)?)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    }
     Ok(())
 }
 
@@ -182,7 +235,7 @@ pub(super) async fn reservation_identity_tx(
     request_id: &str,
 ) -> Result<ReservationIdentity, AuthorityError> {
     let row = sqlx::query(
-        "select id, billing_subject_id, provider_id, model_id, route_id, pricing_version, max_estimated_cents from public.usage_reservations where request_id = $1",
+        "select reservation_id::text as reservation_id, billing_subject_id::text as billing_subject_id, provider_id, model_id, route_id, pricing_version, max_estimated_cents::bigint as max_estimated_cents from ctx.usage_reservations where request_id = $1",
     )
     .bind(request_id)
     .fetch_optional(&mut **tx)
@@ -191,7 +244,7 @@ pub(super) async fn reservation_identity_tx(
     .ok_or(AuthorityError::NotFound)?;
     Ok(ReservationIdentity {
         reservation_id: row
-            .try_get("id")
+            .try_get("reservation_id")
             .map_err(|err| AuthorityError::Store(err.to_string()))?,
         billing_subject_id: row
             .try_get("billing_subject_id")
@@ -221,10 +274,14 @@ pub(super) async fn load_allocations_tx(
 ) -> Result<Vec<CreditAllocation>, AuthorityError> {
     let rows = sqlx::query(
         r#"
-        select credit_grant_id, credit_source::text as credit_source, allocated_cents, grant_expires_at
-        from public.usage_reservation_allocations
-        where reservation_id = $1
-        order by created_at asc, id asc
+        select a.credit_grant_id::text as credit_grant_id,
+               g.credit_source::text as credit_source,
+               a.reserved_cents::bigint as reserved_cents,
+               g.expires_at as grant_expires_at
+        from ctx.usage_reservation_credit_allocations a
+        join ctx.credit_grants g on g.id = a.credit_grant_id
+        where a.reservation_id = $1::uuid
+        order by a.created_at asc, a.allocation_id asc
         "#,
     )
     .bind(reservation_id)
@@ -242,7 +299,7 @@ pub(super) async fn load_allocations_tx(
                     .map_err(|err| AuthorityError::Store(err.to_string()))?,
                 source: credit_source_from_str(&source)?,
                 reserved_cents: cents_from_i64(
-                    row.try_get("allocated_cents")
+                    row.try_get("reserved_cents")
                         .map_err(|err| AuthorityError::Store(err.to_string()))?,
                 )?,
                 grant_expires_at: row

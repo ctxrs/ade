@@ -51,7 +51,7 @@ pub(super) async fn enable_mobile_access_for_route(
         ));
     }
 
-    let payload = request_control_plane_enable(&request.supabase_token).await?;
+    let payload = request_control_plane_enable(&request.managed_tunnel_grant).await?;
     let public_url = parse_allowed_public_url(&payload.public_base_url)?;
     let now = Utc::now();
     let (daemon_public_key, daemon_private_key) =
@@ -93,9 +93,9 @@ pub(super) async fn enable_mobile_access_for_route(
 pub(super) async fn disable_mobile_access_for_route(
     store: &Store,
     mobile_tunnel: &MobileTunnelManager,
-    supabase_token: String,
+    managed_tunnel_grant: String,
 ) -> Result<(), DisableMobileAccessError> {
-    revoke_control_plane_mobile_access_best_effort(&supabase_token).await;
+    revoke_control_plane_mobile_access_best_effort(&managed_tunnel_grant).await;
     super::disable_mobile_access_runtime(store, mobile_tunnel).await
 }
 

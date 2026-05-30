@@ -2,8 +2,13 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  CONTROL_PLANE_WORKER_COMMAND,
   CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND,
+  LLM_RELAY_WORKER_COMMAND,
   MERGE_READY_COMMAND,
+  NEON_MIGRATIONS_COMMAND,
+  RELEASE_API_WORKER_COMMAND,
+  TELEMETRY_WORKER_COMMAND,
   buildOverlayCommands,
   buildVerificationPlan,
   parseArgs,
@@ -78,30 +83,24 @@ test("verify:affected routes root Bazel graph changes through generated deps and
   );
 });
 
-test("verify:affected routes supabase migrations through the dedicated invariant check", () => {
+test("verify:affected routes Neon migrations through the dedicated invariant check", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
-    changedFiles: ["supabase/migrations/20260421000000_test.sql"],
+    changedFiles: ["neon/migrations/0007_reserved.sql"],
   });
 
-  assert.deepEqual(plan.commands, [
-    "pnpm supabase:migrations:check",
-    "pnpm supabase:telemetry-storage:check",
-  ]);
+  assert.deepEqual(plan.commands, [NEON_MIGRATIONS_COMMAND]);
 });
 
-test("verify:affected routes supabase function edits through telemetry storage and function checks", () => {
+test("verify:affected routes release API Worker edits through Worker checks", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
-    changedFiles: ["supabase/functions/telemetry/index.ts"],
+    changedFiles: ["release-api-worker/src/worker.ts"],
   });
 
-  assert.deepEqual(plan.commands, [
-    "pnpm supabase:telemetry-storage:check",
-    "pnpm supabase:functions:check",
-  ]);
+  assert.deepEqual(plan.commands, [RELEASE_API_WORKER_COMMAND]);
 });
 
 test("verify:broader keeps web escalations changed-aware", () => {
@@ -402,10 +401,35 @@ test("verify:merge-ready uses the clean checkin profile gate", () => {
 });
 
 test("verify:merge-ready keeps overlay invariants alongside the checkin profile", () => {
-  assert.deepEqual(buildOverlayCommands(["supabase/migrations/20260421000000_test.sql"]), [
-    "pnpm supabase:migrations:check",
-    "pnpm supabase:telemetry-storage:check",
+  assert.deepEqual(buildOverlayCommands(["neon/migrations/0007_reserved.sql"]), [
+    NEON_MIGRATIONS_COMMAND,
   ]);
+});
+
+test("verify:affected routes telemetry Worker edits through Worker unit and type checks", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["telemetry-worker/src/worker.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [TELEMETRY_WORKER_COMMAND]);
+  assert.match(TELEMETRY_WORKER_COMMAND, /telemetry-worker/);
+  assert.match(TELEMETRY_WORKER_COMMAND, /corepack pnpm@9\.15\.1 --config\.store-dir/);
+  assert.match(TELEMETRY_WORKER_COMMAND, /typecheck/);
+});
+
+test("verify:affected routes control-plane Worker edits through Worker unit and type checks", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["control-plane-worker/src/worker.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [CONTROL_PLANE_WORKER_COMMAND]);
+  assert.match(CONTROL_PLANE_WORKER_COMMAND, /control-plane-worker/);
+  assert.match(CONTROL_PLANE_WORKER_COMMAND, /corepack pnpm@9\.15\.1 --config\.store-dir/);
+  assert.match(CONTROL_PLANE_WORKER_COMMAND, /typecheck/);
 });
 
 test("verify:touched routes crate manifests through the decomposition boundary guard", () => {
@@ -531,6 +555,19 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
   assert.match(plan.commands[22], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
 });
 
+test("verify:affected routes LLM relay Worker edits through Worker unit and type checks", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["llm-relay-worker/src/worker.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [LLM_RELAY_WORKER_COMMAND]);
+  assert.match(LLM_RELAY_WORKER_COMMAND, /llm-relay-worker/);
+  assert.match(LLM_RELAY_WORKER_COMMAND, /corepack pnpm@9\.15\.1 --config\.store-dir/);
+  assert.match(LLM_RELAY_WORKER_COMMAND, /typecheck/);
+});
+
 test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and still runs commands", () => {
   const spawnCalls = [];
 
@@ -539,12 +576,12 @@ test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and stil
     entrypoint: "verify:touched",
     profileId: "agent-default",
     baseRef: "origin/main",
-    changedFiles: ["supabase/migrations/20260421000000_test.sql"],
+    changedFiles: ["neon/migrations/0007_reserved.sql"],
     mergeBase: "",
-    overlayCommands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
+    overlayCommands: [NEON_MIGRATIONS_COMMAND],
     taxonomyEntries: [],
     taxonomyCommands: [],
-    commands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
+    commands: [NEON_MIGRATIONS_COMMAND],
   }, {
     buildCtxCacheEnvImpl: () => ({
       env: {
@@ -562,7 +599,7 @@ test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and stil
     },
   });
 
-  assert.equal(spawnCalls.length, 2);
+  assert.equal(spawnCalls.length, 1);
 });
 
 test("verify router degrades gracefully when telemetry initialization fails", () => {
@@ -574,12 +611,12 @@ test("verify router degrades gracefully when telemetry initialization fails", ()
     entrypoint: "verify:touched",
     profileId: "agent-default",
     baseRef: "origin/main",
-    changedFiles: ["supabase/migrations/20260421000000_test.sql"],
+    changedFiles: ["neon/migrations/0007_reserved.sql"],
     mergeBase: "",
-    overlayCommands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
+    overlayCommands: [NEON_MIGRATIONS_COMMAND],
     taxonomyEntries: [],
     taxonomyCommands: [],
-    commands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
+    commands: [NEON_MIGRATIONS_COMMAND],
   }, {
     buildCtxCacheEnvImpl: () => ({
       env: {
@@ -600,7 +637,7 @@ test("verify router degrades gracefully when telemetry initialization fails", ()
     },
   });
 
-  assert.equal(spawnCalls.length, 2);
+  assert.equal(spawnCalls.length, 1);
   assert.match(errors[0], /failed to initialize verification telemetry/u);
 });
 

@@ -579,7 +579,6 @@
   },
   "devDependencies": {
     "@bazel/bazelisk": "1.28.1",
-    "@supabase/supabase-js": "2.49.1",
     "pixelmatch": "^7.1.0",
     "playwright-core": "^1.57.0",
     "pngjs": "^7.0.0",

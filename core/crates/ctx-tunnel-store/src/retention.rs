@@ -7,17 +7,17 @@ pub const DEFAULT_TUNNEL_EVENT_RETENTION_DAYS: i64 = 90;
 pub const DEFAULT_INACTIVE_TUNNEL_RETENTION_DAYS: i64 = 90;
 
 const RETENTION_DELETE_EVENTS_SQL: &str = r#"
-            delete from public.mobile_tunnel_event
+            delete from ctx.mobile_tunnel_event
              where created_at < $1
             "#;
 pub(crate) const RETENTION_DELETE_INACTIVE_TUNNELS_SQL: &str = r#"
-            delete from public.mobile_tunnel as t
+            delete from ctx.mobile_tunnel as t
              where t.status = 'revoked'
                and t.disabled_at is not null
                and t.updated_at < $1
                and not exists (
                  select 1
-                   from public.mobile_tunnel_event e
+                   from ctx.mobile_tunnel_event e
                   where e.tunnel_id = t.tunnel_id
                     and e.created_at >= $1
                )

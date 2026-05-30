@@ -30,7 +30,7 @@ export function useMobileAccessController({ getAuthToken }: Params) {
 
   const resolveAuthToken = useCallback(async (): Promise<string> => {
     if (!getAuthToken) {
-      throw new Error("Supabase is not configured.");
+      throw new Error("Managed mobile tunnel grants are not configured.");
     }
     return getAuthToken();
   }, [getAuthToken]);

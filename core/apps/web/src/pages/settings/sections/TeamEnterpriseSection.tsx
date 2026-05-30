@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { User } from "@supabase/supabase-js";
 import { TextInput } from "../../../components/ui/text-input";
 import {
   OrganizationSwitcher,
@@ -8,7 +7,7 @@ import {
   StatusPill,
   TEAM_ENTERPRISE_CONTROL_ROW_STYLE,
 } from "./TeamEnterpriseSection.controls";
-import type { EntitlementsSnapshot, MembershipRole } from "../teamEnterpriseSettingsApi";
+import type { CtxBillingUser, EntitlementsSnapshot, MembershipRole } from "../teamEnterpriseSettingsApi";
 import { Card, Row, Toggle } from "../SettingsPage.components";
 import type { PlanType } from "../entitlementAnalytics";
 import type {
@@ -26,7 +25,7 @@ import {
 } from "./TeamEnterpriseSection.helpers";
 
 export function TeamEnterpriseSection({
-  supabaseConfigured,
+  controlPlaneConfigured,
   billingUser,
   entitlementsBusy,
   plan,
@@ -57,8 +56,8 @@ export function TeamEnterpriseSection({
   onStartTeamCheckout,
   onRequestEnterpriseSetup,
 }: {
-  supabaseConfigured: boolean;
-  billingUser: User | null;
+  controlPlaneConfigured: boolean;
+  billingUser: CtxBillingUser | null;
   entitlementsBusy: boolean;
   plan: PlanType;
   entitlements: EntitlementsSnapshot | null;
@@ -99,10 +98,10 @@ export function TeamEnterpriseSection({
   const mobileRelay = featureStatus(entitlements?.features?.mobile_relay);
   const llmTokenRelay = featureStatus(entitlements?.features?.llm_token_relay);
   const activeRole = cloudState.activeOrg?.role ?? entitlements?.membership_role ?? null;
-  const canAdmin = Boolean(supabaseConfigured && billingUser && roleCanAdmin(activeRole));
+  const canAdmin = Boolean(controlPlaneConfigured && billingUser && roleCanAdmin(activeRole));
   const canUseOrgActions = canAdmin && !actionBusy && !cloudBusy;
-  const canAcceptInvite = Boolean(supabaseConfigured && billingUser && !actionBusy && inviteToken.trim());
-  const canRefresh = Boolean(supabaseConfigured && billingUser && !cloudBusy);
+  const canAcceptInvite = Boolean(controlPlaneConfigured && billingUser && !actionBusy && inviteToken.trim());
+  const canRefresh = Boolean(controlPlaneConfigured && billingUser && !cloudBusy);
   const canCheckout = Boolean(canUseOrgActions && cloudState.activeOrgId && cloudState.billingSubjectId);
   const pendingInvites = cloudState.invites.filter((invite) => invite.status === "pending");
   const activeSubscription = cloudState.subscriptions[0] ?? null;
@@ -115,9 +114,9 @@ export function TeamEnterpriseSection({
 
   return (
     <>
-      {!supabaseConfigured ? (
+      {!controlPlaneConfigured ? (
         <div className="settings-banner settings-banner-error">
-          Billing/auth is not configured in this web build. Account, organization, and enterprise controls are unavailable.
+          Account control plane is not configured in this web build. Account, organization, and enterprise controls are unavailable.
         </div>
       ) : null}
       {cloudBusy ? <div className="settings-banner">Loading organization state…</div> : null}
@@ -179,9 +178,9 @@ export function TeamEnterpriseSection({
                 placeholder="Team name"
                 value={orgName}
                 onChange={(event) => onOrgNameChange(event.target.value)}
-                disabled={!supabaseConfigured || !billingUser || actionBusy}
+                disabled={!controlPlaneConfigured || !billingUser || actionBusy}
               />
-              <button type="button" className="settings-btn" onClick={() => void onCreateOrg()} disabled={!supabaseConfigured || !billingUser || actionBusy}>
+              <button type="button" className="settings-btn" onClick={() => void onCreateOrg()} disabled={!controlPlaneConfigured || !billingUser || actionBusy}>
                 Create
               </button>
             </div>
@@ -245,7 +244,7 @@ export function TeamEnterpriseSection({
                 placeholder="Invite token"
                 value={inviteToken}
                 onChange={(event) => setInviteToken(event.target.value)}
-                disabled={!supabaseConfigured || !billingUser || actionBusy}
+                disabled={!controlPlaneConfigured || !billingUser || actionBusy}
               />
               <button
                 type="button"

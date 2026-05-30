@@ -1,11 +1,11 @@
 import { Link } from "react-router-dom";
-import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import type { EnableMobileAccessResponse, MobileAccessStatus } from "../../../api/client";
 import { Card, Row } from "../SettingsPage.components";
+import type { CtxBillingUser } from "../teamEnterpriseSettingsApi";
 
 export function MobileAccessSection({
-  supabaseConfigured,
+  controlPlaneConfigured,
   billingUser,
   entitlementsBusy,
   proEnabled,
@@ -19,8 +19,8 @@ export function MobileAccessSection({
   onEnable,
   onDisable,
 }: {
-  supabaseConfigured: boolean;
-  billingUser: User | null;
+  controlPlaneConfigured: boolean;
+  billingUser: CtxBillingUser | null;
   entitlementsBusy: boolean;
   proEnabled: boolean;
   mobileStatus: MobileAccessStatus | null;
@@ -33,10 +33,10 @@ export function MobileAccessSection({
   onEnable: () => void | Promise<void>;
   onDisable: () => void | Promise<void>;
 }) {
-  if (!supabaseConfigured) {
+  if (!controlPlaneConfigured) {
     return (
       <div className="settings-empty">
-        Mobile access requires Supabase config. Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>.
+        Mobile access requires ctx control-plane config. Set <code>VITE_CTX_CONTROL_PLANE_URL</code>.
       </div>
     );
   }

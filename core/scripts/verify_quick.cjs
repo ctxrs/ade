@@ -112,9 +112,31 @@ function main() {
     ],
     env,
   );
-  run("pnpm", ["supabase:migrations:check"], env);
-  run("pnpm", ["supabase:telemetry-storage:check"], env);
-  run("pnpm", ["supabase:functions:check"], env);
+  run("pnpm", ["neon:migrations:check"], env);
+  run(
+    "bash",
+    [
+      "-lc",
+      'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+    ],
+    env,
+  );
+  run(
+    "bash",
+    [
+      "-lc",
+      'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+    ],
+    env,
+  );
+  run(
+    "bash",
+    [
+      "-lc",
+      'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+    ],
+    env,
+  );
   run("pnpm", ["bazel:web:typecheck"], env);
 }
 

@@ -27,6 +27,11 @@ const repoRoot = path.resolve(coreRoot, "..");
 const MERGE_READY_COMMAND = "node scripts/run_test_taxonomy_profile.cjs --run --profile checkin";
 const CTX_HTTP_DAEMON_BOUNDARY_COMMAND = "pnpm ctx-http:daemon-boundary:check";
 const CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND = "pnpm ctx:decomposition-boundary:check";
+const NEON_MIGRATIONS_COMMAND = "pnpm neon:migrations:check";
+const TELEMETRY_WORKER_COMMAND = "bash -lc 'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const CONTROL_PLANE_WORKER_COMMAND = "bash -lc 'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const RELEASE_API_WORKER_COMMAND = "bash -lc 'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const LLM_RELAY_WORKER_COMMAND = "bash -lc 'cd ../llm-relay-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
 const VERIFICATION_TOOLING_COMMAND = [
   "node",
   "--test",
@@ -128,12 +133,24 @@ function resolveIntentConfig(intent) {
   }
 }
 
-function hasSupabaseMigrationChange(changedFiles) {
-  return changedFiles.some((entry) => entry.startsWith("supabase/migrations/") && entry.endsWith(".sql"));
+function hasNeonMigrationChange(changedFiles) {
+  return changedFiles.some((entry) => entry.startsWith("neon/migrations/") && entry.endsWith(".sql"));
 }
 
-function hasSupabaseFunctionChange(changedFiles) {
-  return changedFiles.some((entry) => entry.startsWith("supabase/functions/") && entry.endsWith(".ts"));
+function hasReleaseApiWorkerChange(changedFiles) {
+  return changedFiles.some((entry) => entry.startsWith("release-api-worker/"));
+}
+
+function hasTelemetryWorkerChange(changedFiles) {
+  return changedFiles.some((entry) => entry.startsWith("telemetry-worker/"));
+}
+
+function hasControlPlaneWorkerChange(changedFiles) {
+  return changedFiles.some((entry) => entry.startsWith("control-plane-worker/"));
+}
+
+function hasLlmRelayWorkerChange(changedFiles) {
+  return changedFiles.some((entry) => entry.startsWith("llm-relay-worker/"));
 }
 
 function hasProductionSourceChange(changedFiles) {
@@ -184,13 +201,20 @@ function buildOverlayCommands(changedFiles) {
   )) {
     commands.push(VERIFICATION_TOOLING_COMMAND);
   }
-  if (hasSupabaseMigrationChange(changedFiles)) {
-    commands.push("pnpm supabase:migrations:check");
-    commands.push("pnpm supabase:telemetry-storage:check");
+  if (hasNeonMigrationChange(changedFiles)) {
+    commands.push(NEON_MIGRATIONS_COMMAND);
   }
-  if (hasSupabaseFunctionChange(changedFiles)) {
-    commands.push("pnpm supabase:telemetry-storage:check");
-    commands.push("pnpm supabase:functions:check");
+  if (hasTelemetryWorkerChange(changedFiles)) {
+    commands.push(TELEMETRY_WORKER_COMMAND);
+  }
+  if (hasControlPlaneWorkerChange(changedFiles)) {
+    commands.push(CONTROL_PLANE_WORKER_COMMAND);
+  }
+  if (hasReleaseApiWorkerChange(changedFiles)) {
+    commands.push(RELEASE_API_WORKER_COMMAND);
+  }
+  if (hasLlmRelayWorkerChange(changedFiles)) {
+    commands.push(LLM_RELAY_WORKER_COMMAND);
   }
   return commands;
 }
@@ -436,16 +460,22 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CONTROL_PLANE_WORKER_COMMAND,
   CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND,
   CTX_HTTP_DAEMON_BOUNDARY_COMMAND,
+  LLM_RELAY_WORKER_COMMAND,
   MERGE_READY_COMMAND,
+  NEON_MIGRATIONS_COMMAND,
+  RELEASE_API_WORKER_COMMAND,
+  TELEMETRY_WORKER_COMMAND,
   buildOverlayCommands,
   buildVerificationPlan,
   dedupeCommands,
+  hasLlmRelayWorkerChange,
+  hasNeonMigrationChange,
   hasProductionSourceChange,
+  hasReleaseApiWorkerChange,
   hasRustCrateSourceOrManifestChange,
-  hasSupabaseFunctionChange,
-  hasSupabaseMigrationChange,
   parseArgs,
   resolveIntentConfig,
   runVerificationPlan,

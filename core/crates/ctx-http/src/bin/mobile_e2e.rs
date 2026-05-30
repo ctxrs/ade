@@ -30,9 +30,8 @@ mod harness;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let supabase_token = std::env::var("CTX_SUPABASE_ACCESS_TOKEN")
-        .or_else(|_| std::env::var("SUPABASE_ACCESS_TOKEN"))
-        .context("missing CTX_SUPABASE_ACCESS_TOKEN")?;
+    let managed_tunnel_grant =
+        std::env::var("CTX_MANAGED_TUNNEL_GRANT").context("missing CTX_MANAGED_TUNNEL_GRANT")?;
     let control_plane_url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL")
         .context("missing CTX_TUNNEL_CONTROL_PLANE_URL")?;
 
@@ -56,7 +55,13 @@ async fn main() -> Result<()> {
     ));
 
     let auth_token = read_daemon_auth_token(data_dir.path()).await?;
-    let outcome = run_e2e(&daemon_url, &auth_token, &supabase_token, repo_dir.path()).await;
+    let outcome = run_e2e(
+        &daemon_url,
+        &auth_token,
+        &managed_tunnel_grant,
+        repo_dir.path(),
+    )
+    .await;
 
     serve_task.abort();
     outcome
@@ -65,7 +70,7 @@ async fn main() -> Result<()> {
 async fn run_e2e(
     daemon_url: &str,
     auth_token: &str,
-    supabase_token: &str,
+    managed_tunnel_grant: &str,
     repo_root: &Path,
 ) -> Result<()> {
     let client = reqwest::Client::new();
@@ -79,7 +84,7 @@ async fn run_e2e(
         .post(format!("{daemon_url}/api/mobile/access/enable"))
         .bearer_auth(auth_token)
         .json(&EnableMobileAccessReq {
-            supabase_token: supabase_token.to_string(),
+            managed_tunnel_grant: managed_tunnel_grant.to_string(),
         })
         .send()
         .await?

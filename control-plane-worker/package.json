@@ -1,11 +1,10 @@
 {
-  "name": "ctx-release-api-worker",
+  "name": "ctx-control-plane-worker",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.1",
   "scripts": {
-    "dev": "wrangler dev --local --port 8791",
+    "dev": "wrangler dev --local --port 8794",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "deploy": "wrangler deploy",
@@ -17,5 +16,6 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.15",
     "wrangler": "^4.81.0"
-  }
+  },
+  "packageManager": "pnpm@9.15.1"
 }

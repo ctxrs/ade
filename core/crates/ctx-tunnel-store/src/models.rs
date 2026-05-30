@@ -36,6 +36,9 @@ pub struct CreateTunnelRequest {
     pub tunnel_id: String,
     pub user_id: String,
     pub billing_subject_id: Option<String>,
+    pub grant_id: String,
+    pub daemon_id: String,
+    pub device_id: String,
     pub relay_id: String,
     pub public_base_url: String,
 }
@@ -50,6 +53,15 @@ pub struct TunnelAssignment {
     pub relay_internal_base_url: String,
     pub public_base_url: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedMobileTunnelGrant {
+    pub grant_id: String,
+    pub user_id: String,
+    pub billing_subject_id: String,
+    pub daemon_id: String,
+    pub device_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +114,9 @@ impl CreateTunnelRequest {
     pub(crate) fn validate(&self) -> Result<(), TunnelStoreError> {
         ensure_non_empty("tunnel_id", &self.tunnel_id)?;
         ensure_non_empty("user_id", &self.user_id)?;
+        ensure_non_empty("grant_id", &self.grant_id)?;
+        ensure_non_empty("daemon_id", &self.daemon_id)?;
+        ensure_non_empty("device_id", &self.device_id)?;
         ensure_non_empty("relay_id", &self.relay_id)?;
         validate_url("public_base_url", &self.public_base_url)?;
         if let Some(subject) = self.billing_subject_id.as_ref() {

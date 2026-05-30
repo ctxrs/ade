@@ -12,17 +12,21 @@ pub(super) async fn enforce_spend_limits_tx(
     requested_cents: u64,
     now: DateTime<Utc>,
 ) -> Result<(), AuthorityError> {
+    acquire_spend_limit_advisory_lock_tx(tx, billing_subject_id).await?;
     let rows = sqlx::query(
         r#"
-        select id, ctx_user_id, period_start, period_end, hard_limit_cents
-        from public.billing_spend_limits
-        where billing_subject_id = $1
+        select id,
+               ctx_user_id::text as ctx_user_id,
+               period_start,
+               period_end,
+               hard_limit_cents::bigint as hard_limit_cents
+        from ctx.billing_spend_limits
+        where billing_subject_id = $1::uuid
           and status = 'active'
           and period_start <= $2
           and period_end > $2
-          and (ctx_user_id is null or ctx_user_id = $3)
+          and (ctx_user_id is null or ctx_user_id = $3::uuid)
         order by ctx_user_id nulls first, id
-        for update
         "#,
     )
     .bind(billing_subject_id)
@@ -63,6 +67,24 @@ pub(super) async fn enforce_spend_limits_tx(
     Ok(())
 }
 
+async fn acquire_spend_limit_advisory_lock_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    billing_subject_id: &str,
+) -> Result<(), AuthorityError> {
+    sqlx::query(
+        r#"
+        select pg_advisory_xact_lock(
+          hashtextextended($1::text, 1510249617)
+        )
+        "#,
+    )
+    .bind(billing_subject_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AuthorityError::Store(err.to_string()))?;
+    Ok(())
+}
+
 async fn spend_used_cents_tx(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     billing_subject_id: &str,
@@ -76,32 +98,32 @@ async fn spend_used_cents_tx(
           select distinct on (request_id)
                  request_id,
                  to_state::text as state
-          from public.request_state_events
-          order by request_id, created_at desc, id desc
+          from ctx.request_state_events
+          order by request_id, occurred_at desc, event_id desc
         ),
         latest_finalized as (
           select distinct on (request_id)
                  request_id,
-                 billable_cents
-          from public.usage_ledger_events
-          where event_kind = 'finalized'
-            and billable_cents is not null
-          order by request_id, created_at desc, id desc
+                 amount_cents as billable_cents
+          from ctx.usage_ledger_events
+          where event_type = 'finalized'
+            and amount_cents is not null
+          order by request_id, created_at desc, event_id desc
         )
         select coalesce(sum(
           case
             when latest_state.state = 'voided' then 0
             when latest_state.state in ('finalized', 'reconciled') then coalesce(latest_finalized.billable_cents, 0)
-            else reservations.max_estimated_cents
+            else reservations.reserved_cents
           end
         ), 0)::bigint as used_cents
-        from public.usage_reservations reservations
+        from ctx.usage_reservations reservations
         left join latest_state on latest_state.request_id = reservations.request_id
         left join latest_finalized on latest_finalized.request_id = reservations.request_id
-        where reservations.billing_subject_id = $1
+        where reservations.billing_subject_id = $1::uuid
           and reservations.created_at >= $2
           and reservations.created_at < $3
-          and ($4::text is null or reservations.ctx_user_id = $4)
+          and ($4::uuid is null or reservations.ctx_user_id = $4::uuid)
         "#,
     )
     .bind(billing_subject_id)

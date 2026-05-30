@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@9.15.1",
   "scripts": {
     "dev": "wrangler dev --local --port 8790",
     "readiness:check": "node scripts/cloudflare-neon-readiness.mjs",

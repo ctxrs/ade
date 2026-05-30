@@ -68,8 +68,11 @@ CREATE TABLE IF NOT EXISTS ctx.mobile_tunnel_revocations (
 CREATE INDEX IF NOT EXISTS mobile_tunnel_revocations_jti_idx
   ON ctx.mobile_tunnel_revocations (grant_jti, revoked_at);
 
+GRANT SELECT ON
+  ctx.mobile_tunnel_grants
+TO ctx_mobile_tunnel;
+
 GRANT SELECT, INSERT, UPDATE ON
-  ctx.mobile_tunnel_grants,
   ctx.mobile_tunnel_sessions,
   ctx.mobile_tunnel_state_events,
   ctx.mobile_tunnel_revocations

@@ -1,20 +1,20 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import type { User } from "@supabase/supabase-js";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { MobileAccessSection } from "./MobileAccessSection";
+import type { CtxBillingUser } from "../teamEnterpriseSettingsApi";
 
 const billingUser = {
   id: "user-1",
   email: "user@example.com",
-} as User;
+} satisfies CtxBillingUser;
 
 const renderSection = (
   overrides: Partial<ComponentProps<typeof MobileAccessSection>> = {},
 ) => {
   const props: ComponentProps<typeof MobileAccessSection> = {
-    supabaseConfigured: true,
+    controlPlaneConfigured: true,
     billingUser,
     entitlementsBusy: false,
     proEnabled: true,

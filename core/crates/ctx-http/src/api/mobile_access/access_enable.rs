@@ -15,7 +15,7 @@ pub(in crate::api) async fn enable_mobile_access(
     }
     let result = state
         .enable_mobile_access_for_route(EnableMobileAccessRequest {
-            supabase_token: req.supabase_token,
+            managed_tunnel_grant: req.managed_tunnel_grant,
         })
         .await
         .map_err(mobile_access_api_error)?;

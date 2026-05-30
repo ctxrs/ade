@@ -45,8 +45,8 @@ fn validates_relay_registration_urls_and_capacity() {
 #[test]
 fn register_relay_preserves_ops_disabled_and_draining_statuses() {
     assert!(REGISTER_RELAY_SQL
-        .contains("public.mobile_tunnel_relay_node.status in ('disabled', 'draining')"));
-    assert!(REGISTER_RELAY_SQL.contains("then public.mobile_tunnel_relay_node.status"));
+        .contains("ctx.mobile_tunnel_relay_node.status in ('disabled', 'draining')"));
+    assert!(REGISTER_RELAY_SQL.contains("then ctx.mobile_tunnel_relay_node.status"));
 }
 
 #[test]
@@ -55,6 +55,9 @@ fn validates_create_tunnel_request() {
         tunnel_id: "tun_1".to_string(),
         user_id: "user_1".to_string(),
         billing_subject_id: None,
+        grant_id: "55555555-5555-5555-5555-555555555555".to_string(),
+        daemon_id: "daemon_1".to_string(),
+        device_id: "device_1".to_string(),
         relay_id: "relay-1".to_string(),
         public_base_url: "https://tunnel.ctx.rs/t/tun_1".to_string(),
     };
@@ -66,6 +69,33 @@ fn validates_create_tunnel_request() {
         invalid.validate(),
         Err(TunnelStoreError::InvalidInput(_))
     ));
+}
+
+#[test]
+fn mobile_tunnel_grant_verification_is_bound_to_daemon_and_device() {
+    let source = include_str!("lib.rs");
+    assert!(source.contains("and g.daemon_id = $2"));
+    assert!(source.contains("and g.device_id = $3"));
+}
+
+#[test]
+fn mobile_tunnel_grant_verification_requires_explicit_enable_scope() {
+    let source = include_str!("lib.rs");
+    assert!(source.contains("and g.scopes @> ARRAY['mobile_tunnel:enable']::text[]"));
+    assert!(!source.contains("g.scopes = ARRAY[]::text[]"));
+}
+
+#[test]
+fn active_tunnel_reuse_and_revoke_are_bound_to_daemon_and_device() {
+    let source = include_str!("lib.rs");
+    assert!(source.contains("load_active_tunnel_for_binding"));
+    assert!(source.contains("where t.user_id = $1"));
+    assert!(source.contains("and t.daemon_id = $2"));
+    assert!(source.contains("and t.device_id = $3"));
+    assert!(source.contains("revoke_active_tunnels_for_binding"));
+    assert!(source.contains("and daemon_id = $2"));
+    assert!(source.contains("and device_id = $3"));
+    assert!(!source.contains("revoke_active_tunnels_for_user(&grant.user_id)"));
 }
 
 #[test]

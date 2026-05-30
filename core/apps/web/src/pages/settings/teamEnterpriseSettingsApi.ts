@@ -1,13 +1,17 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { BillingInterval } from "./billingCheckoutFlow";
+import type { BillingCheckoutInvokeResult, BillingInterval } from "./billingCheckoutFlow";
 import {
-  assertFunctionOk,
   parseTeamEnterpriseCloudState,
   readCheckoutUrl,
   readErrorMessage,
 } from "./teamEnterpriseSettingsApi.parsers";
 
 export { readCheckoutUrl } from "./teamEnterpriseSettingsApi.parsers";
+
+export type CtxBillingUser = {
+  id: string;
+  email: string | null;
+  displayName?: string | null;
+};
 
 export type EntitlementFeatureState = "enabled" | "disabled";
 export type EntitlementSubjectType = "install" | "account" | "org";
@@ -123,71 +127,171 @@ export type TeamEnterpriseAdminAction =
   | { action: "update_policy"; organization_id: string; policy: TeamEnterprisePolicyDraft }
   | { action: "request_enterprise_setup"; organization_id: string };
 
-export async function invokeTeamEnterpriseAdminAction(
-  client: SupabaseClient,
-  action: TeamEnterpriseAdminAction,
-): Promise<void> {
-  const response = await client.functions.invoke("team-admin", {
+type ControlPlaneRequestOptions = {
+  body?: unknown;
+  headers?: Record<string, string>;
+  method?: "GET" | "POST";
+};
+
+const DEFAULT_CONTROL_PLANE_BASE_URL = "https://api.ctx.rs";
+
+export function getCtxControlPlaneBaseUrl(): string {
+  const configured = String(import.meta.env.VITE_CTX_CONTROL_PLANE_URL ?? DEFAULT_CONTROL_PLANE_BASE_URL).trim();
+  return configured.replace(/\/+$/, "");
+}
+
+export function isCtxControlPlaneConfigured(): boolean {
+  return getCtxControlPlaneBaseUrl().length > 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function requestControlPlane(path: string, fallback: string, options: ControlPlaneRequestOptions = {}): Promise<unknown> {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    ...(options.headers ?? {}),
+  };
+  const init: RequestInit = {
+    credentials: "include",
+    method: options.method ?? "GET",
+    headers,
+  };
+  if (options.body !== undefined) {
+    headers["content-type"] = "application/json";
+    init.body = JSON.stringify(options.body);
+  }
+  const response = await fetch(`${getCtxControlPlaneBaseUrl()}${path}`, init);
+  const text = await response.text();
+  let data: unknown = null;
+  if (text.trim()) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`${fallback} (${response.status})`);
+    }
+  }
+  if (!response.ok) {
+    throw new Error(readErrorMessage(asRecord(data), fallback));
+  }
+  return data;
+}
+
+function parseSessionUser(data: unknown): CtxBillingUser | null {
+  const user = asRecord(asRecord(data)?.user);
+  const id = typeof user?.id === "string" && user.id.trim() ? user.id : null;
+  if (!id) return null;
+  const email = typeof user?.email === "string" && user.email.trim() ? user.email : null;
+  const displayName = typeof user?.displayName === "string" && user.displayName.trim()
+    ? user.displayName
+    : null;
+  return { id, email, displayName };
+}
+
+export async function fetchAccountSession(): Promise<CtxBillingUser | null> {
+  return parseSessionUser(await requestControlPlane("/v1/session", "Failed to load account session."));
+}
+
+export async function startAccountAuth(email: string, password: string, mode: "sign_in" | "sign_up"): Promise<void> {
+  await requestControlPlane("/v1/auth/start", "ctx account auth is unavailable in this deployment.", {
     method: "POST",
-    body: action,
+    body: { email, password, mode },
   });
-  if (response.error) {
-    throw new Error(readErrorMessage(response.error, "Team/Enterprise admin API is unavailable."));
+}
+
+export async function signOutAccount(): Promise<void> {
+  await requestControlPlane("/v1/auth/logout", "Failed to sign out.", { method: "POST" });
+}
+
+export async function syncBillingCheckout(checkoutSessionId: string | null): Promise<void> {
+  await requestControlPlane("/v1/billing/sync", "Failed to sync billing checkout.", {
+    method: "POST",
+    body: checkoutSessionId ? { checkout_session_id: checkoutSessionId } : {},
+  });
+}
+
+export async function invokePersonalBillingCheckout(args: {
+  interval: BillingInterval;
+  returnPath: string;
+}): Promise<BillingCheckoutInvokeResult> {
+  try {
+    const data = await requestControlPlane("/v1/billing/checkout", "Billing checkout is unavailable in this deployment.", {
+      method: "POST",
+      body: {
+        interval: args.interval,
+        return_path: args.returnPath,
+        plan_type: "pro",
+      },
+    });
+    return { data, error: null };
+  } catch (error: unknown) {
+    return { data: null, error };
   }
 }
 
+export async function openBillingPortal(returnPath: string): Promise<string> {
+  const data = await requestControlPlane("/v1/billing/portal", "Billing portal is unavailable in this deployment.", {
+    method: "POST",
+    body: { return_path: returnPath },
+  });
+  return readCheckoutUrl(data);
+}
+
+export async function invokeTeamEnterpriseAdminAction(action: TeamEnterpriseAdminAction): Promise<void> {
+  await requestControlPlane("/v1/team/admin", "Team/Enterprise admin API is unavailable.", {
+    method: "POST",
+    body: action,
+  });
+}
+
 export async function startTeamBillingCheckout(options: {
-  client: SupabaseClient;
   organizationId: string;
   billingSubjectId: string;
   interval: BillingInterval;
   returnPath: string;
   seatCount?: number | null;
 }): Promise<string> {
-  const response = await options.client.functions.invoke("billing-checkout", {
+  const data = await requestControlPlane("/v1/billing/checkout", "Team checkout API is unavailable.", {
     method: "POST",
     body: {
       interval: options.interval,
       return_path: options.returnPath,
       plan_type: "team",
       organization_id: options.organizationId,
+      billing_subject_id: options.billingSubjectId,
       seat_count: options.seatCount ?? undefined,
     },
   });
-  if (response.error) {
-    throw new Error(readErrorMessage(response.error, "Team checkout API is unavailable."));
-  }
-  return readCheckoutUrl(response.data);
+  return readCheckoutUrl(data);
 }
 
 export async function fetchEntitlementsSnapshot(options: {
-  client: SupabaseClient;
   activeOrgId: string | null;
 }): Promise<EntitlementsSnapshot | null> {
   const headers = options.activeOrgId ? { "x-ctx-active-org-id": options.activeOrgId } : undefined;
-  const response = await options.client.functions.invoke("entitlements", {
-    method: "GET",
-    headers,
+  return await requestControlPlane("/v1/entitlements", "Failed to refresh entitlements.", { headers }) as EntitlementsSnapshot | null;
+}
+
+export async function requestManagedTunnelGrant(): Promise<string> {
+  const data = await requestControlPlane("/v1/mobile/tunnel-grant", "Managed mobile tunnel grants are not enabled yet.", {
+    method: "POST",
   });
-  if (response.error) {
-    throw new Error(readErrorMessage(response.error, "Failed to refresh entitlements."));
+  const grant = asRecord(data)?.managed_tunnel_grant;
+  if (typeof grant !== "string" || !grant.trim().startsWith("ctmt_")) {
+    throw new Error("Control plane returned an invalid managed mobile tunnel grant.");
   }
-  return (response.data ?? null) as EntitlementsSnapshot | null;
+  return grant.trim();
 }
 
 export async function fetchTeamEnterpriseCloudState(options: {
-  client: SupabaseClient;
   requestedActiveOrgId: string | null;
 }): Promise<TeamEnterpriseCloudState> {
-  const response = await options.client.functions.invoke("team-admin", {
-    method: "GET",
-    headers: options.requestedActiveOrgId
-      ? { "x-ctx-active-org-id": options.requestedActiveOrgId }
-      : undefined,
-  });
-  const payload = assertFunctionOk(
-    { data: response.data, error: response.error },
-    "Failed to load Team/Enterprise organization state.",
-  );
+  const headers = options.requestedActiveOrgId
+    ? { "x-ctx-active-org-id": options.requestedActiveOrgId }
+    : undefined;
+  const payload = await requestControlPlane("/v1/team/state", "Failed to load Team/Enterprise organization state.", { headers });
   return parseTeamEnterpriseCloudState(payload, options.requestedActiveOrgId);
 }
