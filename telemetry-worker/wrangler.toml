@@ -1,0 +1,18 @@
+name = "ctx-telemetry"
+main = "src/worker.ts"
+compatibility_date = "2026-05-30"
+
+[vars]
+POSTHOG_HOST = "https://t.ctx.rs"
+
+[env.staging]
+name = "ctx-telemetry-staging"
+
+[env.staging.vars]
+POSTHOG_HOST = "https://t.ctx.rs"
+
+[env.prod]
+name = "ctx-telemetry"
+
+[env.prod.vars]
+POSTHOG_HOST = "https://t.ctx.rs"

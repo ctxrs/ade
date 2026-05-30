@@ -69,3 +69,17 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "telemetry_worker_sources",
+    srcs = glob(
+        [
+            "telemetry-worker/**",
+        ],
+        exclude = [
+            "telemetry-worker/node_modules/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)

@@ -220,6 +220,7 @@
     "rust:clippy": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "rust:test": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q",
     "supabase:migrations:check": "node scripts/check_supabase_migrations.cjs",
+    "neon:migrations:check": "node scripts/check_neon_migrations.cjs",
     "supabase:telemetry-storage:check": "node scripts/check_supabase_telemetry_storage_contract.cjs",
     "supabase:prod-ledger:check": "node scripts/check_supabase_prod_migration_ledger.mjs",
     "supabase:functions:check": "bash -lc 'if ! command -v deno >/dev/null 2>&1; then echo \"supabase functions: skipped (deno not installed)\"; exit 0; fi; deno check --quiet --config ../supabase/deno.json ../supabase/functions/*/index.ts'",
