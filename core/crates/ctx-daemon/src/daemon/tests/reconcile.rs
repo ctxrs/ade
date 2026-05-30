@@ -131,7 +131,11 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
     };
     store.insert_session_turn(running_turn).await.unwrap();
 
-    let activity = daemon_turn_activity_summary(&state).await.unwrap();
+    let activity = crate::daemon::route_handles_from_state(&state)
+        .update_drain
+        .daemon_turn_activity_summary()
+        .await
+        .unwrap();
     assert!(!activity.idle);
     assert_eq!(activity.active_turn_count, 2);
     assert_eq!(activity.queued_turn_count, 1);
@@ -196,7 +200,11 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
         "interrupted reconcile should persist terminal turn_finished event"
     );
 
-    let activity_after = daemon_turn_activity_summary(&state).await.unwrap();
+    let activity_after = crate::daemon::route_handles_from_state(&state)
+        .update_drain
+        .daemon_turn_activity_summary()
+        .await
+        .unwrap();
     assert!(activity_after.idle);
     assert_eq!(activity_after.active_turn_count, 0);
     assert_eq!(activity_after.queued_turn_count, 1);

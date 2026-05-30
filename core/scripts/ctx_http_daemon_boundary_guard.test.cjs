@@ -315,6 +315,7 @@ const {
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionTitleCommandBroadApiRatchet,
+  scanMaintenanceActivitySettingsBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
@@ -5131,6 +5132,98 @@ test("appstate guard rejects deleted broad session title and command APIs", () =
   }).map((violation) => violation.name);
   assert.deepEqual(new Set(testSupportViolations), new Set([
     "session lifecycle test support calls broad title-generation API",
+  ]));
+});
+
+test("appstate guard rejects deleted broad maintenance activity and settings APIs", () => {
+  const activityViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
+    contents: `
+      use super::*;
+      pub async fn daemon_turn_activity_summary(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(activityViolations), new Set([
+    "maintenance/activity/settings implementation uses broad daemon state",
+    "deleted broad maintenance/activity/settings API reintroduced",
+  ]));
+
+  const sandboxViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/activity/sandbox.rs",
+    contents: `
+      pub async fn daemon_sandbox_work_activity_summary(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert(sandboxViolations.includes("deleted broad maintenance/activity/settings API reintroduced"));
+
+  const maintenanceViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/maintenance.rs",
+    contents: `
+      pub async fn begin_update_drain(state: &Arc<DaemonState>) {}
+      pub async fn release_update_drain(state: &DaemonState) {}
+      pub async fn reject_new_execution_during_maintenance(state: &DaemonState) {}
+      pub async fn post_message_update_drain_reason(state: &DaemonState) {}
+      pub async fn acquire_linux_sandbox_prepare_drain(state: &Arc<DaemonState>) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    maintenanceViolations.filter(
+      (name) => name === "deleted broad maintenance/activity/settings API reintroduced",
+    ).length,
+    5,
+  );
+
+  const settingsViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/settings.rs",
+    contents: `
+      pub async fn load_settings(state: &DaemonState) {}
+      pub async fn save_settings(state: &DaemonState) {}
+      pub async fn public_settings_for_response(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    settingsViolations.filter(
+      (name) => name === "deleted broad maintenance/activity/settings API reintroduced",
+    ).length,
+    3,
+  );
+
+  const resourceViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
+    contents: `
+      pub async fn apply_settings(state: &DaemonState) {}
+      pub async fn build_public_settings(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    resourceViolations.filter(
+      (name) => name === "deleted broad maintenance/activity/settings API reintroduced",
+    ).length,
+    2,
+  );
+
+  const toolViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
+    contents: `
+      pub async fn apply_settings(state: &DaemonState) {}
+      pub async fn build_public_settings(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    toolViolations.filter(
+      (name) => name === "deleted broad maintenance/activity/settings API reintroduced",
+    ).length,
+    2,
+  );
+
+  const testViolations = scanMaintenanceActivitySettingsBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tests/sandbox_work_activity.rs",
+    contents: `
+      let activity = daemon_sandbox_work_activity_summary(&state).await?;
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(testViolations), new Set([
+    "daemon maintenance/activity test calls broad state API",
   ]));
 });
 

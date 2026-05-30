@@ -8,21 +8,9 @@ use ctx_resource_utilization::resource_governance::{
 use ctx_resource_utilization::ResourceSampler;
 use ctx_transport_runtime::terminals::TerminalManager;
 
-use crate::daemon::DaemonState;
 use ctx_settings_model::{
     PublicResourceGovernanceSettings, ResourceGovernanceStatusState, Settings,
 };
-
-pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
-    apply_settings_parts(
-        state.telemetry.resource_sampler.as_ref(),
-        state.telemetry.resource_governance.as_ref(),
-        state.providers.as_ref(),
-        state.transport.terminals.as_ref(),
-        settings,
-    )
-    .await
-}
 
 pub async fn apply_settings_parts(
     resource_sampler: &Mutex<ResourceSampler>,
@@ -58,18 +46,6 @@ pub async fn apply_settings_parts(
     let mut guard = resource_governance.lock().await;
     *guard = runtime;
     Ok(())
-}
-
-pub async fn build_public_settings(
-    state: &DaemonState,
-    settings: &Settings,
-) -> Option<PublicResourceGovernanceSettings> {
-    build_public_settings_parts(
-        state.telemetry.resource_sampler.as_ref(),
-        state.telemetry.resource_governance.as_ref(),
-        settings,
-    )
-    .await
 }
 
 pub async fn build_public_settings_parts(

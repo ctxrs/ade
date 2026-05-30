@@ -1,21 +1,12 @@
 use super::collect::{collect_turns_by_statuses_parts, session_execution_environment_parts};
 use super::types::{active_turn_record, DaemonSandboxWorkActivitySummary};
-use super::*;
+use std::collections::HashMap;
+
+use anyhow::Result;
+use ctx_core::models::{ExecutionEnvironment, SessionTurnStatus};
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_workspace_runtime::HarnessRuntimeManager;
-
-pub async fn daemon_sandbox_work_activity_summary(
-    state: &Arc<DaemonState>,
-) -> Result<DaemonSandboxWorkActivitySummary> {
-    daemon_sandbox_work_activity_summary_parts(
-        state.global_store(),
-        &state.core.stores,
-        state.transport.terminals.as_ref(),
-        state.execution.harness.as_ref(),
-    )
-    .await
-}
 
 pub(in crate::daemon) async fn daemon_sandbox_work_activity_summary_parts(
     global_store: &Store,

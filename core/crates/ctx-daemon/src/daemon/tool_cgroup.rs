@@ -8,15 +8,7 @@ use tokio::sync::Mutex;
 #[cfg(target_os = "linux")]
 pub const TOOL_SLICE_UNIT: &str = ctx_resource_utilization::tool_limits::TOOL_SLICE_UNIT;
 
-use crate::daemon::DaemonState;
 use ctx_settings_model::{PublicToolLimitsSettings, Settings};
-
-pub async fn build_public_settings(
-    state: &DaemonState,
-    settings: &Settings,
-) -> Option<PublicToolLimitsSettings> {
-    build_public_settings_parts(state.telemetry.resource_sampler.as_ref(), settings).await
-}
 
 pub async fn build_public_settings_parts(
     resource_sampler: &Mutex<ResourceSampler>,
@@ -29,10 +21,6 @@ pub async fn build_public_settings_parts(
     };
     let effective = compute_effective_limits(cfg, &system);
     Some(public_settings(cfg, effective.as_ref()))
-}
-
-pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
-    apply_settings_parts(state.telemetry.resource_sampler.as_ref(), settings).await
 }
 
 pub async fn apply_settings_parts(

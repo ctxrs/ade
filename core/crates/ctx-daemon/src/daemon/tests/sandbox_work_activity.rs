@@ -4,6 +4,15 @@ mod fixtures;
 
 use fixtures::SandboxWorkActivityFixture;
 
+async fn sandbox_work_activity(
+    state: &Arc<DaemonState>,
+) -> anyhow::Result<DaemonSandboxWorkActivitySummary> {
+    crate::daemon::route_handles_from_state(state)
+        .linux_sandbox_runtime
+        .daemon_sandbox_work_activity_summary()
+        .await
+}
+
 #[tokio::test]
 async fn sandbox_work_activity_ignores_host_turns() {
     let fixture = SandboxWorkActivityFixture::new().await;
@@ -17,7 +26,7 @@ async fn sandbox_work_activity_ignores_host_turns() {
     )
     .await;
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let activity = sandbox_work_activity(&state).await.unwrap();
     assert!(!activity.active);
     assert_eq!(activity.active_sandbox_turn_count, 0);
     assert_eq!(activity.running_sandbox_turn_count, 0);
@@ -44,7 +53,7 @@ async fn sandbox_work_activity_counts_sandbox_turns() {
     )
     .await;
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let activity = sandbox_work_activity(&state).await.unwrap();
     assert!(activity.active);
     assert_eq!(activity.active_sandbox_turn_count, 2);
     assert_eq!(activity.queued_sandbox_turn_count, 1);
@@ -59,7 +68,7 @@ async fn sandbox_work_activity_counts_runtime_operations() {
 
     let _runtime_guard = state.execution.harness.begin_runtime_operation();
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let activity = sandbox_work_activity(&state).await.unwrap();
     assert!(activity.active);
     assert_eq!(activity.runtime_operation_count, 1);
 }
@@ -71,7 +80,7 @@ async fn sandbox_work_activity_counts_prewarm_operations() {
 
     let _prewarm_guard = state.execution.harness.begin_prewarm_artifact_activity();
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let activity = sandbox_work_activity(&state).await.unwrap();
     assert!(activity.active);
     assert_eq!(activity.prewarm_artifact_operation_count, 1);
 }
@@ -113,7 +122,7 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let activity = loop {
-        let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+        let activity = sandbox_work_activity(&state).await.unwrap();
         if activity.active && activity.running_container_backed_terminal {
             break activity;
         }
@@ -149,7 +158,7 @@ async fn sandbox_work_activity_counts_running_workspace_containers() {
     );
     let state = fixture.state();
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let activity = sandbox_work_activity(&state).await.unwrap();
     assert!(activity.active);
     assert_eq!(activity.running_workspace_container_count, 2);
     let log = std::fs::read_to_string(&log_path).unwrap();

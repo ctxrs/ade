@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
 use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
+use ctx_core::models::{SessionTurn, SessionTurnStatus};
 #[cfg(test)]
 use ctx_store::{StoreManager, StoreManagerConfig};
 
@@ -79,10 +80,7 @@ pub mod workspaces;
 #[cfg(test)]
 pub(in crate::daemon) use self::runtime::spawn_startup_provider_status_refresh;
 pub(in crate::daemon) use activity::StartupTurnReconcileHost;
-pub use activity::{
-    daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
-    DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
-};
+pub use activity::{ActiveTurnRecord, DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary};
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::DaemonHandle;

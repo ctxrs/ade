@@ -9,7 +9,7 @@ use ctx_core::models::{ExecutionEnvironment, Session, SessionTurn, SessionTurnSt
 use ctx_store::{Store, StoreManager};
 use ctx_update_service::route_contract::MaintenanceRouteErrorKind;
 
-use crate::daemon::scheduler::SchedulerCommand;
+use crate::daemon::{scheduler::SchedulerCommand, DaemonState};
 
 async fn test_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     test_state_with_shutdown_token(None).await
@@ -122,23 +122,26 @@ async fn insert_session(state: &Arc<DaemonState>, root: &std::path::Path) -> (St
 #[tokio::test]
 async fn begin_update_drain_acquires_until_released() {
     let (_data_dir, state) = test_state().await;
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
 
-    let activity = begin_update_drain(&state, "test_update".to_string(), "unit_test".to_string())
+    let activity = handle
+        .begin_update_drain("test_update".to_string(), "unit_test".to_string())
         .await
         .expect("idle daemon should acquire update drain");
     assert!(activity.idle);
     assert_eq!(
-        post_message_update_drain_reason(&state).await.as_deref(),
+        handle.post_message_update_drain_reason().await.as_deref(),
         Some("test_update")
     );
 
-    let error = begin_update_drain(&state, "second".to_string(), "unit_test".to_string())
+    let error = handle
+        .begin_update_drain("second".to_string(), "unit_test".to_string())
         .await
         .expect_err("second drain should conflict");
     assert!(matches!(error, BeginUpdateDrainError::AlreadyActive));
 
-    assert!(release_update_drain(&state).await);
-    assert!(post_message_update_drain_reason(&state).await.is_none());
+    assert!(handle.release_update_drain().await);
+    assert!(handle.post_message_update_drain_reason().await.is_none());
 }
 
 #[tokio::test]
@@ -171,7 +174,7 @@ async fn begin_update_drain_route_defaults_reason_and_owner() {
 
     assert!(result.acquired);
     assert_eq!(
-        post_message_update_drain_reason(&state).await.as_deref(),
+        handle.post_message_update_drain_reason().await.as_deref(),
         Some("daemon_update")
     );
 }
@@ -180,7 +183,8 @@ async fn begin_update_drain_route_defaults_reason_and_owner() {
 async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
     let (_data_dir, state) = test_state().await;
     let handle = crate::daemon::route_handles_from_state(&state).update_drain;
-    begin_update_drain(&state, "existing".to_string(), "unit_test".to_string())
+    handle
+        .begin_update_drain("existing".to_string(), "unit_test".to_string())
         .await
         .expect("acquire initial drain");
 
@@ -209,7 +213,7 @@ async fn begin_update_drain_route_rejects_queued_turns() {
         error.message(),
         "daemon has queued or running turns; update drain was not acquired"
     );
-    assert!(post_message_update_drain_reason(&state).await.is_none());
+    assert!(handle.post_message_update_drain_reason().await.is_none());
 }
 
 #[tokio::test]
@@ -304,11 +308,14 @@ async fn shutdown_route_tolerates_running_sessions_without_scheduler_sender() {
 #[tokio::test]
 async fn execution_reject_uses_update_drain_owner() {
     let (_data_dir, state) = test_state().await;
-    begin_update_drain(&state, "test_update".to_string(), "unit_test".to_string())
+    let handle = crate::daemon::route_handles_from_state(&state).update_drain;
+    handle
+        .begin_update_drain("test_update".to_string(), "unit_test".to_string())
         .await
         .expect("acquire drain");
 
-    let error = reject_new_execution_during_maintenance(&state)
+    let error = handle
+        .reject_new_execution_during_maintenance()
         .await
         .expect_err("drain should reject new execution");
     assert!(error.to_string().contains("test_update"));
@@ -317,11 +324,18 @@ async fn execution_reject_uses_update_drain_owner() {
 #[tokio::test]
 async fn linux_sandbox_prepare_drain_conflicts_with_existing_drain() {
     let (_data_dir, state) = test_state().await;
-    begin_update_drain(&state, "test_update".to_string(), "unit_test".to_string())
+    let handles = crate::daemon::route_handles_from_state(&state);
+    handles
+        .update_drain
+        .begin_update_drain("test_update".to_string(), "unit_test".to_string())
         .await
         .expect("acquire drain");
 
-    let error = match acquire_linux_sandbox_prepare_drain(&state).await {
+    let error = match handles
+        .linux_sandbox_runtime
+        .acquire_linux_sandbox_prepare_drain()
+        .await
+    {
         Ok(_) => panic!("active maintenance drain should reject sandbox prepare"),
         Err(error) => error,
     };
@@ -331,18 +345,30 @@ async fn linux_sandbox_prepare_drain_conflicts_with_existing_drain() {
 #[tokio::test]
 async fn linux_sandbox_prepare_drain_drop_releases_drain() {
     let (_data_dir, state) = test_state().await;
-    let permit = acquire_linux_sandbox_prepare_drain(&state)
+    let handles = crate::daemon::route_handles_from_state(&state);
+    let permit = handles
+        .linux_sandbox_runtime
+        .acquire_linux_sandbox_prepare_drain()
         .await
         .expect("idle daemon should acquire sandbox prepare drain");
     assert_eq!(
-        post_message_update_drain_reason(&state).await.as_deref(),
+        handles
+            .update_drain
+            .post_message_update_drain_reason()
+            .await
+            .as_deref(),
         Some("linux_sandbox_runtime_prepare")
     );
 
     drop(permit);
 
     for _ in 0..20 {
-        if post_message_update_drain_reason(&state).await.is_none() {
+        if handles
+            .update_drain
+            .post_message_update_drain_reason()
+            .await
+            .is_none()
+        {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

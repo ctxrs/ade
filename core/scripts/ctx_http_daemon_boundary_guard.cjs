@@ -71,8 +71,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon.rs",
   "core/crates/ctx-daemon/src/daemon/activity/collect.rs",
   "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs",
-  "core/crates/ctx-daemon/src/daemon/activity/sandbox.rs",
-  "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
   "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
   "core/crates/ctx-daemon/src/daemon/execution_effective/execution_effective_test/mod.rs",
   "core/crates/ctx-daemon/src/daemon/handle.rs",
@@ -80,7 +78,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
-  "core/crates/ctx-daemon/src/daemon/maintenance.rs",
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
@@ -89,7 +86,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
-  "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs",
   daemonRouteBuildersRelativePath,
@@ -104,7 +100,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/model_catalog/loader.rs",
-  "core/crates/ctx-daemon/src/daemon/settings.rs",
   "core/crates/ctx-daemon/src/daemon/state.rs",
   "core/crates/ctx-daemon/src/daemon/state/builder.rs",
   "core/crates/ctx-daemon/src/daemon/state/cache.rs",
@@ -128,7 +123,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs",
   "core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs",
   "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
-  "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
@@ -140,10 +134,6 @@ const daemonStateBoundaryAllowedAppStatePaths = new Set([]);
 const daemonStateBucketAccessBaseline = new Map(
   `
 1 core/crates/ctx-daemon/src/daemon/activity/collect.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|execution|state.execution
-1 core/crates/ctx-daemon/src/daemon/activity/sandbox.rs|transport|state.transport
-2 core/crates/ctx-daemon/src/daemon/activity/turns.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs|core|state.core
 2 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs|providers|state.providers
@@ -152,9 +142,6 @@ const daemonStateBucketAccessBaseline = new Map(
 2 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|execution|state.execution
 1 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|providers|state.providers
-7 core/crates/ctx-daemon/src/daemon/maintenance.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/maintenance.rs|execution|state.execution
-1 core/crates/ctx-daemon/src/daemon/maintenance.rs|transport|state.transport
 2 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|self.state.core
 1 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|state.core
 3 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|core|state.core
@@ -166,9 +153,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|transport|state.transport
 2 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/mobile_startup.rs|transport|state.transport
-1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|providers|state.providers
-4 core/crates/ctx-daemon/src/daemon/resource_governance.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/resource_governance.rs|transport|state.transport
 3 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|providers|state.providers
 2 core/crates/ctx-daemon/src/daemon/resource_telemetry.rs|telemetry|state.telemetry
@@ -185,7 +169,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/session_control_effects.rs|workspaces|state.workspaces
 4 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/sessions/ask_user.rs|task_session_cleanup|state.task_session_cleanup
-2 core/crates/ctx-daemon/src/daemon/settings.rs|telemetry|state.telemetry
 5 core/crates/ctx-daemon/src/daemon/storage_guard.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs|sessions|state.sessions
@@ -193,7 +176,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|core|state.core
 2 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|sessions|state.sessions
 1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|telemetry|state.telemetry
-2 core/crates/ctx-daemon/src/daemon/tool_cgroup.rs|telemetry|state.telemetry
 1 core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs|workspaces|state.workspaces
 2 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|execution|state.execution
@@ -514,6 +496,15 @@ const sessionTitleCommandBroadApiDeletedPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/command_dispatch.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation.rs",
   "core/crates/ctx-daemon/src/daemon/sessions/title_generation/persistence.rs",
+]);
+
+const maintenanceActivitySettingsBroadApiDeletedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/activity/sandbox.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
+  "core/crates/ctx-daemon/src/daemon/maintenance.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
+  "core/crates/ctx-daemon/src/daemon/settings.rs",
+  "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
 ]);
 
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
@@ -13615,6 +13606,106 @@ function scanSessionTitleCommandBroadApiRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanMaintenanceActivitySettingsBroadApiRatchet({ filePath, contents }) {
+  const isProductionPath =
+    maintenanceActivitySettingsBroadApiDeletedPaths.has(filePath);
+  const isDaemonMaintenanceActivityTestPath = [
+    "core/crates/ctx-daemon/src/daemon/maintenance/tests.rs",
+    "core/crates/ctx-daemon/src/daemon/tests/reconcile.rs",
+    "core/crates/ctx-daemon/src/daemon/tests/sandbox_work_activity.rs",
+  ].includes(filePath);
+  if (!isProductionPath && !isDaemonMaintenanceActivityTestPath) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const addViolation = ({ index, name, text }) => {
+    const line = contents.slice(0, index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text,
+    });
+  };
+
+  if (isProductionPath) {
+    const broadStateRegex =
+      /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonState\s*>|\bArc\s*::\s*clone\s*\(\s*&\s*(?:self\s*\.\s*)?state\s*\)|\buse\s+super\s*::\s*\*\s*;/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "maintenance/activity/settings implementation uses broad daemon state",
+        text: match[0],
+      });
+    }
+
+    const deletedBroadSignaturesByPath = new Map([
+      [
+        "core/crates/ctx-daemon/src/daemon/activity/turns.rs",
+        /\bpub\s+async\s+fn\s+daemon_turn_activity_summary\s*\(\s*state\s*:\s*&\s*Arc\s*<\s*DaemonState\s*>/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/activity/sandbox.rs",
+        /\bpub\s+async\s+fn\s+daemon_sandbox_work_activity_summary\s*\(\s*state\s*:\s*&\s*Arc\s*<\s*DaemonState\s*>/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/maintenance.rs",
+        /\bpub\s+async\s+fn\s+(?:begin_update_drain|release_update_drain|reject_new_execution_during_maintenance|post_message_update_drain_reason|acquire_linux_sandbox_prepare_drain)\s*\(\s*state\s*:\s*&\s*(?:Arc\s*<\s*)?DaemonState/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/settings.rs",
+        /\bpub\s+async\s+fn\s+(?:load_settings|save_settings|public_settings_for_response)\s*\(\s*state\s*:\s*&\s*DaemonState/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/resource_governance.rs",
+        /\bpub\s+async\s+fn\s+(?:apply_settings|build_public_settings)\s*\(\s*state\s*:\s*&\s*DaemonState/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
+        /\bpub\s+async\s+fn\s+(?:apply_settings|build_public_settings)\s*\(\s*state\s*:\s*&\s*DaemonState/gu,
+      ],
+    ]);
+    const deletedBroadSignatures = deletedBroadSignaturesByPath.get(filePath);
+    if (deletedBroadSignatures) {
+      for (
+        let match = deletedBroadSignatures.exec(contents);
+        match;
+        match = deletedBroadSignatures.exec(contents)
+      ) {
+        addViolation({
+          index: match.index,
+          name: "deleted broad maintenance/activity/settings API reintroduced",
+          text: match[0],
+        });
+      }
+    }
+  }
+
+  if (isDaemonMaintenanceActivityTestPath) {
+    const staleTestCallRegex =
+      /\b(?:daemon_turn_activity_summary|daemon_sandbox_work_activity_summary|begin_update_drain|release_update_drain|reject_new_execution_during_maintenance|post_message_update_drain_reason|acquire_linux_sandbox_prepare_drain)\s*\(\s*&state\b/gu;
+    for (
+      let match = staleTestCallRegex.exec(contents);
+      match;
+      match = staleTestCallRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "daemon maintenance/activity test calls broad state API",
+        text: match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
   if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
@@ -18956,6 +19047,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanMaintenanceActivitySettingsBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -19151,6 +19246,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionTitleCommandBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanMaintenanceActivitySettingsBroadApiRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19863,6 +19962,7 @@ module.exports = {
   scanSessionTitleModelModeHandleRatchet,
   scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionTitleCommandBroadApiRatchet,
+  scanMaintenanceActivitySettingsBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,

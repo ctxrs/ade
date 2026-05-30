@@ -17,8 +17,7 @@ use crate::daemon::activity::{
 };
 use crate::daemon::{
     spawn_deferred_daemon_shutdown, DaemonSandboxWorkActivitySummary, DaemonShutdownHandle,
-    DaemonShutdownHost, DaemonState, DaemonTurnActivitySummary, LinuxSandboxRuntimeHandle,
-    UpdateDrainHandle,
+    DaemonShutdownHost, DaemonTurnActivitySummary, LinuxSandboxRuntimeHandle, UpdateDrainHandle,
 };
 
 pub struct MaintenanceDrainPermit {
@@ -80,21 +79,6 @@ pub enum DaemonShutdownError {
     Reconcile(Error),
 }
 
-pub async fn begin_update_drain(
-    state: &Arc<DaemonState>,
-    reason: String,
-    owner: String,
-) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
-    begin_update_drain_parts(
-        state.global_store(),
-        &state.core.stores,
-        state.core.update_drain.as_ref(),
-        reason,
-        owner,
-    )
-    .await
-}
-
 pub(in crate::daemon) async fn begin_update_drain_parts(
     global_store: &Store,
     stores: &StoreManager,
@@ -121,18 +105,10 @@ pub(in crate::daemon) async fn begin_update_drain_parts(
     Ok(activity)
 }
 
-pub async fn release_update_drain(state: &DaemonState) -> bool {
-    release_update_drain_parts(state.core.update_drain.as_ref()).await
-}
-
 pub(in crate::daemon) async fn release_update_drain_parts(
     update_drain: &UpdateDrainCoordinator,
 ) -> bool {
     update_drain.release().await
-}
-
-pub async fn reject_new_execution_during_maintenance(state: &DaemonState) -> Result<(), Error> {
-    reject_new_execution_during_maintenance_parts(state.core.update_drain.as_ref()).await
 }
 
 pub(in crate::daemon) async fn reject_new_execution_during_maintenance_parts(
@@ -141,26 +117,11 @@ pub(in crate::daemon) async fn reject_new_execution_during_maintenance_parts(
     update_drain.reject_if_draining().await
 }
 
-pub async fn post_message_update_drain_reason(state: &DaemonState) -> Option<String> {
-    state
-        .core
-        .update_drain
-        .snapshot()
-        .await
-        .map(|drain| drain.reason)
-}
-
-pub async fn acquire_linux_sandbox_prepare_drain(
-    state: &Arc<DaemonState>,
-) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
-    acquire_linux_sandbox_prepare_drain_parts(
-        Arc::clone(&state.core.update_drain),
-        state.global_store(),
-        &state.core.stores,
-        state.transport.terminals.as_ref(),
-        state.execution.harness.as_ref(),
-    )
-    .await
+#[cfg(test)]
+pub(in crate::daemon) async fn post_message_update_drain_reason_parts(
+    update_drain: &UpdateDrainCoordinator,
+) -> Option<String> {
+    update_drain.snapshot().await.map(|drain| drain.reason)
 }
 
 pub(in crate::daemon) async fn acquire_linux_sandbox_prepare_drain_parts(
@@ -315,6 +276,12 @@ impl UpdateDrainHandle {
         release_update_drain_parts(update_drain.as_ref()).await
     }
 
+    #[cfg(test)]
+    pub(in crate::daemon) async fn post_message_update_drain_reason(&self) -> Option<String> {
+        let update_drain = self.update_drain();
+        post_message_update_drain_reason_parts(update_drain.as_ref()).await
+    }
+
     pub async fn reject_new_execution_during_maintenance(&self) -> Result<(), Error> {
         let update_drain = self.update_drain();
         reject_new_execution_during_maintenance_parts(update_drain.as_ref()).await
@@ -337,6 +304,19 @@ impl LinuxSandboxRuntimeHandle {
     ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
         acquire_linux_sandbox_prepare_drain_parts(
             self.update_drain(),
+            self.global_store(),
+            self.stores(),
+            self.terminals(),
+            self.harness(),
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) async fn daemon_sandbox_work_activity_summary(
+        &self,
+    ) -> Result<DaemonSandboxWorkActivitySummary, Error> {
+        daemon_sandbox_work_activity_summary_parts(
             self.global_store(),
             self.stores(),
             self.terminals(),

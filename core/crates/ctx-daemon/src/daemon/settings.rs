@@ -3,26 +3,8 @@ use ctx_settings_model::{PublicSettings, Settings};
 use ctx_settings_service::route_contract::SettingsRouteError;
 
 use crate::daemon::{
-    provider_guard, provider_restart, resource_governance, tool_cgroup, DaemonState, SettingsHandle,
+    provider_guard, provider_restart, resource_governance, tool_cgroup, SettingsHandle,
 };
-
-pub async fn load_settings(state: &DaemonState) -> anyhow::Result<Settings> {
-    ctx_settings_service::load_settings(state.global_store()).await
-}
-
-pub async fn save_settings(state: &DaemonState, settings: &Settings) -> anyhow::Result<()> {
-    ctx_settings_service::save_settings(state.global_store(), settings).await
-}
-
-pub async fn public_settings_for_response(
-    state: &DaemonState,
-    settings: &Settings,
-) -> PublicSettings {
-    let mut public = ctx_settings_service::to_public(settings);
-    public.resource_governance = resource_governance::build_public_settings(state, settings).await;
-    public.tool_limits = tool_cgroup::build_public_settings(state, settings).await;
-    public
-}
 
 impl SettingsHandle {
     pub async fn settings_snapshot_for_response(

@@ -1,19 +1,9 @@
 use super::collect::collect_turns_by_statuses_parts;
 use super::types::{active_turn_record, DaemonTurnActivitySummary};
-use super::*;
+use anyhow::Result;
+use ctx_core::models::SessionTurnStatus;
 use ctx_store::{Store, StoreManager};
 use ctx_update_service::UpdateDrainCoordinator;
-
-pub async fn daemon_turn_activity_summary(
-    state: &Arc<DaemonState>,
-) -> Result<DaemonTurnActivitySummary> {
-    daemon_turn_activity_summary_parts(
-        state.global_store(),
-        &state.core.stores,
-        state.core.update_drain.as_ref(),
-    )
-    .await
-}
 
 pub(in crate::daemon) async fn daemon_turn_activity_summary_parts(
     global_store: &Store,
