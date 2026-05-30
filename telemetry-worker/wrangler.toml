@@ -13,6 +13,9 @@ POSTHOG_HOST = "https://t.ctx.rs"
 
 [env.prod]
 name = "ctx-telemetry"
+routes = [
+  { pattern = "https://telemetry.example.invalid/*", zone_name = "example.invalid" }
+]
 
 [env.prod.vars]
 POSTHOG_HOST = "https://t.ctx.rs"
