@@ -11,11 +11,11 @@ async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {
     drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
-    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
+    let host = spawn_test_merge_queue_runner(state.as_ref());
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
-    activate_workspace_merge_queue(&state, workspace.id).await;
+    ctx_merge_queue::activate_workspace_merge_queue(&host, workspace.id).await;
     let stored = wait_for_entry_status(
         &state,
         workspace.id,
@@ -60,7 +60,8 @@ async fn cancel_for_disabled_workspace_noops_if_queue_was_reenabled() {
     .await
     .unwrap();
 
-    cancel_queued_entries_for_disabled_workspace(&state, &store, workspace.id)
+    let host = merge_queue_host(state.as_ref());
+    ctx_merge_queue::cancel_queued_entries_for_disabled_workspace(&host, &store, workspace.id)
         .await
         .unwrap();
 
@@ -96,8 +97,14 @@ async fn disabled_drain_stays_dormant_without_reopening_workspace() {
     drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
+    let host = merge_queue_host(state.as_ref());
     assert!(
-        !reschedule_workspace_after_drain(&state, workspace.id, WorkspaceDrainStop::Disabled).await
+        !ctx_merge_queue::reschedule_workspace_after_drain(
+            &host,
+            workspace.id,
+            WorkspaceDrainStop::Disabled,
+        )
+        .await
     );
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 }

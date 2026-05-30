@@ -13,6 +13,8 @@ use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 
+use crate::daemon::{merge_queue_route_host_from_state, DaemonState};
+
 async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -25,6 +27,16 @@ async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>) {
         None,
     ));
     (data_dir, state)
+}
+
+fn merge_queue_host(state: &DaemonState) -> Arc<MergeQueueRouteHost> {
+    merge_queue_route_host_from_state(state)
+}
+
+fn spawn_test_merge_queue_runner(state: &DaemonState) -> Arc<MergeQueueRouteHost> {
+    let host = merge_queue_host(state);
+    spawn_merge_queue_runner(Arc::clone(&host));
+    host
 }
 
 async fn create_workspace(

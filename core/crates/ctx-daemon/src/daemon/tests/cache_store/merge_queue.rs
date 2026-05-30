@@ -28,7 +28,7 @@ async fn merge_queue_startup_runner_does_not_cache_historical_workspace_stores()
     }
 
     crate::daemon::merge_queue::spawn_merge_queue_runner(
-        crate::daemon::merge_queue::route_host_from_state(state.as_ref()),
+        crate::daemon::merge_queue_route_host_from_state(state.as_ref()),
     );
     tokio::time::sleep(Duration::from_millis(50)).await;
 

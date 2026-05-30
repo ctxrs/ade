@@ -113,7 +113,7 @@ pub async fn bootstrap_daemon_runtime(
     );
     background::spawn_operational_background_services(
         storage_guard_host_from_state(state.as_ref()),
-        merge_queue::route_host_from_state(state.as_ref()),
+        merge_queue_route_host_from_state(state.as_ref()),
         managed_daemon_auto_update_host_from_state(state.as_ref()),
         daemon_shutdown_host_from_state(state.as_ref()),
         saved_mobile_tunnel_reconnect_host_from_state(state.as_ref()),

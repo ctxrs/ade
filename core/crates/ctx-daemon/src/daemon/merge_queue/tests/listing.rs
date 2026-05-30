@@ -76,21 +76,28 @@ async fn list_queued_entries_and_entry_lookup_are_workspace_scoped() {
     store_b.create_merge_queue_entry(&passed_b).await.unwrap();
     store_b.create_merge_queue_entry(&queued_b).await.unwrap();
 
-    let looked_up = get_workspace_merge_queue_entry(state.as_ref(), workspace_b.id, queued_b.id)
-        .await
-        .unwrap();
+    let host = merge_queue_host(state.as_ref());
+    let looked_up = ctx_merge_queue::get_workspace_merge_queue_entry(
+        host.as_ref(),
+        workspace_b.id,
+        queued_b.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(looked_up.id.0, queued_b.id.0);
     assert_eq!(looked_up.workspace_id.0, workspace_b.id.0);
 
-    let queued_a_entries = list_queued_entries_for_workspace(state.as_ref(), workspace_a.id)
-        .await
-        .unwrap();
+    let queued_a_entries =
+        ctx_merge_queue::list_queued_entries_for_workspace(host.as_ref(), workspace_a.id)
+            .await
+            .unwrap();
     assert_eq!(queued_a_entries.len(), 1);
     assert_eq!(queued_a_entries[0].id.0, queued_a.id.0);
 
-    let queued_b_entries = list_queued_entries_for_workspace(state.as_ref(), workspace_b.id)
-        .await
-        .unwrap();
+    let queued_b_entries =
+        ctx_merge_queue::list_queued_entries_for_workspace(host.as_ref(), workspace_b.id)
+            .await
+            .unwrap();
     assert_eq!(queued_b_entries.len(), 1);
     assert_eq!(queued_b_entries[0].id.0, queued_b.id.0);
 }

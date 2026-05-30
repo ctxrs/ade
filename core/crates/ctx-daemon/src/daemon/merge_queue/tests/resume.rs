@@ -24,7 +24,7 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
     drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
-    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
+    let host = spawn_test_merge_queue_runner(state.as_ref());
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let cold_store = state.core.stores.workspace(workspace.id).await.unwrap();
@@ -38,7 +38,7 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
     state.core.stores.evict_workspace(workspace.id).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
-    activate_workspace_merge_queue(&state, workspace.id).await;
+    ctx_merge_queue::activate_workspace_merge_queue(&host, workspace.id).await;
     let resumed = wait_for_entry_status(
         &state,
         workspace.id,
@@ -72,12 +72,12 @@ async fn enabled_workspace_queued_rows_resume_when_reopened_from_draining_store(
     let entry = queued_entry(workspace.id, "draining-queued");
     store.create_merge_queue_entry(&entry).await.unwrap();
 
-    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
+    let host = spawn_test_merge_queue_runner(state.as_ref());
     state.core.stores.evict_workspace(workspace.id).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
     let reopened = state.store_for_workspace(workspace.id).await.unwrap();
-    activate_workspace_merge_queue(&state, workspace.id).await;
+    ctx_merge_queue::activate_workspace_merge_queue(&host, workspace.id).await;
     let resumed = wait_for_entry_status(
         &state,
         workspace.id,
@@ -100,7 +100,7 @@ async fn enabling_queue_reschedules_existing_queued_workspace() {
     let entry = queued_entry(workspace.id, "reenable-queued");
     store.create_merge_queue_entry(&entry).await.unwrap();
 
-    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
+    let host = spawn_test_merge_queue_runner(state.as_ref());
 
     update_merge_queue_config(
         &store,
@@ -117,7 +117,7 @@ async fn enabling_queue_reschedules_existing_queued_workspace() {
     .await
     .unwrap();
     assert!(
-        schedule_workspace_if_enabled_and_queued(&state, workspace.id)
+        ctx_merge_queue::schedule_workspace_if_enabled_and_queued(&host, workspace.id)
             .await
             .unwrap()
     );
@@ -140,10 +140,10 @@ async fn pending_wakeup_restarts_disabled_drain_after_reenable() {
     let store = state.core.stores.workspace(workspace.id).await.unwrap();
     let entry = queued_entry(workspace.id, "reenable-race-entry");
     store.create_merge_queue_entry(&entry).await.unwrap();
-    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
+    let host = spawn_test_merge_queue_runner(state.as_ref());
 
     assert!(
-        begin_workspace_drain(state.as_ref(), workspace.id).await,
+        ctx_merge_queue::begin_workspace_drain(host.as_ref(), workspace.id).await,
         "test should start with a simulated disabled drain already running"
     );
 
@@ -162,13 +162,13 @@ async fn pending_wakeup_restarts_disabled_drain_after_reenable() {
     .await
     .unwrap();
 
-    schedule_workspace_drain(&state, workspace.id).await;
+    ctx_merge_queue::schedule_workspace_drain(&host, workspace.id).await;
     assert!(
         state.transport.merge_queue.is_pending(workspace.id).await,
         "wakeups that land during an in-flight drain should be preserved"
     );
 
-    if finish_workspace_drain(state.as_ref(), workspace.id).await {
+    if ctx_merge_queue::finish_workspace_drain(host.as_ref(), workspace.id).await {
         state.transport.merge_queue.schedule(workspace.id);
     }
 

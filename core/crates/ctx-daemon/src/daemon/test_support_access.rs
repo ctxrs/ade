@@ -20,7 +20,10 @@ use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use crate::daemon::git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
-use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
+use crate::daemon::{
+    merge_queue::spawn_merge_queue_runner, merge_queue_route_host_from_state, DaemonState,
+    ProtectedWorkspaceStoreLookup,
+};
 use ctx_worktree_vcs_service::WorktreeVcsDirtyBits;
 
 impl DaemonState {
@@ -46,6 +49,10 @@ impl DaemonState {
 
     pub fn test_request_shutdown(&self) {
         let _ = self.core.shutdown_tx.send(());
+    }
+
+    pub fn test_spawn_merge_queue_runner(&self) {
+        spawn_merge_queue_runner(merge_queue_route_host_from_state(self));
     }
 
     pub fn test_publish_storage_guard(&self, status: StorageGuardStatus) {

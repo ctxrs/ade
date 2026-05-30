@@ -318,6 +318,7 @@ const {
   scanMaintenanceActivitySettingsBroadApiRatchet,
   scanAuthBroadApiRatchet,
   scanAuthBroadApiDeletedPathRatchet,
+  scanMergeQueueBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
@@ -5282,6 +5283,92 @@ test("appstate guard rejects deleted broad MCP and mobile auth APIs", () => {
       relativePath === "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
   }).map((violation) => violation.name);
   assert.deepEqual(deletedFileViolations, ["deleted broad auth file reintroduced"]);
+});
+
+test("appstate guard rejects deleted broad merge queue APIs", () => {
+  const rootViolations = scanMergeQueueBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub(in crate::daemon) fn route_host_from_state(state: &DaemonState) {}
+      pub(crate) fn spawn_merge_queue_runner_for_test(state: &DaemonState) {}
+      pub async fn submit_merge_queue_entry(state: &Arc<DaemonState>) {}
+      pub async fn activate_workspace_merge_queue(state: &Arc<DaemonState>) {}
+      pub async fn begin_workspace_drain(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert(rootViolations.includes("merge queue implementation uses broad daemon state"));
+  assert.equal(
+    rootViolations.filter((name) => name === "deleted broad merge queue API reintroduced").length,
+    5,
+  );
+
+  const staleCallerViolations = scanMergeQueueBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/runtime.rs",
+    contents: `
+      crate::daemon::merge_queue::route_host_from_state(state.as_ref());
+      merge_queue::spawn_merge_queue_runner_for_test(self.state.as_ref());
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(staleCallerViolations, [
+    "merge queue caller uses broad state helper",
+    "merge queue caller uses broad state helper",
+  ]);
+
+  const testSupportAllowed = scanMergeQueueBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
+    contents: `
+      use crate::daemon::{
+        merge_queue::spawn_merge_queue_runner, merge_queue_route_host_from_state, DaemonState,
+        ProtectedWorkspaceStoreLookup,
+      };
+
+      pub fn test_spawn_merge_queue_runner(&self) {
+        spawn_merge_queue_runner(merge_queue_route_host_from_state(self));
+      }
+    `,
+  });
+  assert.deepEqual(testSupportAllowed, []);
+
+  const testSupportBackdoor = scanMergeQueueBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
+    contents: `
+      pub fn test_spawn_merge_queue_runner(&self) {
+        spawn_merge_queue_runner(merge_queue_route_host_from_state(self));
+      }
+
+      pub async fn test_activate_merge_queue(&self, workspace_id: WorkspaceId) {
+        let host = merge_queue_route_host_from_state(self);
+        ctx_merge_queue::activate_workspace_merge_queue(&host, workspace_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(testSupportBackdoor), new Set([
+    "daemon test-support exposes unapproved merge queue helper",
+  ]));
+
+  const testSupportAliasBackdoor = scanMergeQueueBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
+    contents: `
+      use crate::daemon::{
+        merge_queue::spawn_merge_queue_runner,
+        merge_queue_route_host_from_state as build_merge_queue_host,
+      };
+      use ctx_merge_queue::activate_workspace_merge_queue as activate_merge_queue;
+
+      pub fn test_spawn_merge_queue_runner(&self) {
+        spawn_merge_queue_runner(merge_queue_route_host_from_state(self));
+      }
+
+      pub async fn test_activate_merge_queue(&self, workspace_id: WorkspaceId) {
+        let host = build_merge_queue_host(self);
+        activate_merge_queue(&host, workspace_id).await;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(testSupportAliasBackdoor), new Set([
+    "daemon test-support exposes unapproved merge queue helper",
+  ]));
 });
 
 test("appstate guard rejects session message command broad route handles", () => {

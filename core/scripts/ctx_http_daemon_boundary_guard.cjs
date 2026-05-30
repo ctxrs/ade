@@ -79,7 +79,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
-  "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
   "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
@@ -509,6 +508,9 @@ const authBroadApiDeletedPaths = new Set([
 const authBroadApiDeletedFilePaths = [
   "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
 ];
+
+const mergeQueueBroadApiDeletedPath =
+  "core/crates/ctx-daemon/src/daemon/merge_queue.rs";
 
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
@@ -13808,6 +13810,103 @@ function scanAuthBroadApiDeletedPathRatchet({
   return violations;
 }
 
+function scanMergeQueueBroadApiRatchet({ filePath, contents }) {
+  const isRootMergeQueuePath = filePath === mergeQueueBroadApiDeletedPath;
+  const isDaemonTestSupportAccessPath =
+    filePath === "core/crates/ctx-daemon/src/daemon/test_support_access.rs";
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const addViolation = ({ index, name, text }) => {
+    const line = contents.slice(0, index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text,
+    });
+  };
+
+  if (isRootMergeQueuePath) {
+    const broadStateRegex =
+      /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonState\s*>/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "merge queue implementation uses broad daemon state",
+        text: match[0],
+      });
+    }
+
+    const deletedBroadSignatureRegex =
+      /\b(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(?:route_host_from_state|spawn_merge_queue_runner_for_test|get_workspace_merge_queue_entry|submit_merge_queue_entry|cancel_merge_queue_entry|retry_merge_queue_entry|schedule_workspace_if_enabled_and_queued|activate_workspace_merge_queue|cancel_queued_entries_for_disabled_workspace|list_queued_entries_for_workspace|begin_workspace_drain|finish_workspace_drain|schedule_workspace_drain|reschedule_workspace_after_drain)\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu;
+    for (
+      let match = deletedBroadSignatureRegex.exec(contents);
+      match;
+      match = deletedBroadSignatureRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "deleted broad merge queue API reintroduced",
+        text: match[0],
+      });
+    }
+  }
+
+  if (isDaemonTestSupportAccessPath) {
+    let searchableContents = contents;
+    searchableContents = searchableContents
+      .replace(/\bmerge_queue\s*::\s*spawn_merge_queue_runner\s*,/gu, (match) =>
+        " ".repeat(match.length),
+      )
+      .replace(/\bmerge_queue_route_host_from_state\s*,/gu, (match) =>
+        " ".repeat(match.length),
+      );
+    const allowedBlock = rustFunctionBlockForName({
+      contents,
+      fnName: "test_spawn_merge_queue_runner",
+    });
+    if (allowedBlock) {
+      searchableContents =
+        searchableContents.slice(0, allowedBlock.index)
+        + " ".repeat(allowedBlock.text.length)
+        + searchableContents.slice(allowedBlock.index + allowedBlock.text.length);
+    }
+    const disallowedTestSupportHelperRegex =
+      /\b(?:merge_queue_route_host_from_state|ctx_merge_queue|spawn_merge_queue_runner)\b/gu;
+    for (
+      let match = disallowedTestSupportHelperRegex.exec(searchableContents);
+      match;
+      match = disallowedTestSupportHelperRegex.exec(searchableContents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "daemon test-support exposes unapproved merge queue helper",
+        text: match[0],
+      });
+    }
+  }
+
+  const staleDirectStateCallRegex =
+    /\b(?:crate\s*::\s*daemon\s*::\s*)?merge_queue\s*::\s*(?:route_host_from_state|spawn_merge_queue_runner_for_test)\s*\([^;\n]*(?:state|self\s*\.\s*state)/gu;
+  for (
+    let match = staleDirectStateCallRegex.exec(contents);
+    match;
+    match = staleDirectStateCallRegex.exec(contents)
+  ) {
+    addViolation({
+      index: match.index,
+      name: "merge queue caller uses broad state helper",
+      text: match[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
   if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
@@ -19158,6 +19257,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanMergeQueueBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -19361,6 +19464,10 @@ function scanRepo() {
         contents,
       }),
       ...scanAuthBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanMergeQueueBroadApiRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -20076,6 +20183,7 @@ module.exports = {
   scanMaintenanceActivitySettingsBroadApiRatchet,
   scanAuthBroadApiRatchet,
   scanAuthBroadApiDeletedPathRatchet,
+  scanMergeQueueBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,

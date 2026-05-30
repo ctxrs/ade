@@ -6,13 +6,11 @@ use ctx_core::models::{
     MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, MergeQueueRun, Worktree,
 };
 
-use crate::daemon;
-
 use super::TestDaemon;
 
 impl TestDaemon {
     pub fn spawn_merge_queue_runner(&self) {
-        daemon::merge_queue::spawn_merge_queue_runner_for_test(self.state.as_ref());
+        self.state.test_spawn_merge_queue_runner();
     }
 
     pub async fn configure_merge_queue_for_test(
