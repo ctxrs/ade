@@ -2,22 +2,40 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use ctx_core::ids::WorkspaceId;
+use ctx_core::models::Workspace;
 use ctx_store::Store;
 use ctx_worktree_data_plane::WorktreeDataPlaneHost;
 
-use crate::daemon::DaemonState;
+use crate::daemon::ProtectedWorkspaceStoreLookup;
+
+#[derive(Clone)]
+pub(in crate::daemon) struct DaemonWorktreeDataPlaneHost {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+}
+
+impl DaemonWorktreeDataPlaneHost {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_stores,
+        }
+    }
+}
 
 #[async_trait]
-impl WorktreeDataPlaneHost for DaemonState {
-    async fn get_workspace(
-        state: &Self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Option<ctx_core::models::Workspace>> {
-        state.global_store().get_workspace(workspace_id).await
+impl WorktreeDataPlaneHost for DaemonWorktreeDataPlaneHost {
+    async fn get_workspace(host: &Self, workspace_id: WorkspaceId) -> Result<Option<Workspace>> {
+        host.global_store.get_workspace(workspace_id).await
     }
 
-    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store> {
-        state.store_for_workspace(workspace_id).await
+    async fn workspace_store(host: &Self, workspace_id: WorkspaceId) -> Result<Store> {
+        host.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
     }
 }
 
@@ -31,7 +49,9 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
-    use crate::daemon::DaemonState;
+    use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup};
+
+    use super::DaemonWorktreeDataPlaneHost;
 
     #[tokio::test]
     async fn resolve_worktree_data_plane_rejects_sandbox_session_without_binding() {
@@ -104,12 +124,15 @@ mod tests {
             .await
             .expect("create sandbox session");
 
-        let err = ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(
-            state.as_ref(),
-            &worktree,
-        )
-        .await
-        .expect_err("sandbox session without binding must fail closed");
+        let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+            state.core.stores.clone(),
+            Arc::clone(&state.sessions),
+            Arc::clone(&state.transport.merge_queue),
+        );
+        let host = DaemonWorktreeDataPlaneHost::new(state.global_store().clone(), workspace_stores);
+        let err = ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(&host, &worktree)
+            .await
+            .expect_err("sandbox session without binding must fail closed");
 
         assert!(err
             .to_string()

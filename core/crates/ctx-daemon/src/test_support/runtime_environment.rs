@@ -58,7 +58,9 @@ impl TestDaemon {
     }
 
     pub fn spawn_provider_monitoring_for_test(&self) {
-        daemon::resource_telemetry::spawn_resource_telemetry(Arc::clone(&self.state));
+        daemon::resource_telemetry::spawn_resource_telemetry(Arc::clone(
+            &self.state.provider_lifecycle_background,
+        ));
         daemon::provider_guard::spawn_provider_guard(Arc::clone(
             &self.state.provider_lifecycle_background,
         ));

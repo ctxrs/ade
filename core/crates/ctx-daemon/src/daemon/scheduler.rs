@@ -15,9 +15,12 @@ mod worker;
 
 pub(in crate::daemon) use host::{SessionSchedulerWorkerHost, SessionSchedulerWorkerHostParts};
 pub use lifecycle::TurnStartProgress;
+#[cfg(test)]
+pub(in crate::daemon) use persistence::DaemonSchedulerPersistenceHost;
 pub use reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
 pub(in crate::daemon) use reconcile::{
-    reconcile_turn_terminal_state_with_host, TerminalStateReconcileHost,
+    reconcile_turn_terminal_state_with_host, DaemonTerminalStateReconcileHost,
+    TerminalStateReconcileHost,
 };
 
 pub(in crate::daemon) async fn session_worker(

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 
 const DEFAULT_ENDPOINT_MODEL_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60 * 6);
 
@@ -14,16 +14,18 @@ fn endpoint_model_sweep_interval() -> Duration {
         .unwrap_or(DEFAULT_ENDPOINT_MODEL_SWEEP_INTERVAL)
 }
 
-pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(state: Arc<DaemonState>) {
+pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(
+    host: Arc<ProviderLifecycleBackgroundHost>,
+) {
     let interval = endpoint_model_sweep_interval();
     tokio::spawn(async move {
-        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+        let mut shutdown_rx = host.shutdown_tx().subscribe();
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(interval) => {
-                    let result = state
-                        .providers
-                        .refresh_stale_selected_endpoint_model_catalogs(&state.core.data_root)
+                    let result = host
+                        .providers()
+                        .refresh_stale_selected_endpoint_model_catalogs(host.data_root())
                         .await;
 
                     if result.has_activity() {

@@ -21,6 +21,11 @@ pub(in crate::daemon) fn route_host_from_state(state: &DaemonState) -> Arc<Merge
     merge_queue_route_host_from_state(state)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn spawn_merge_queue_runner_for_test(state: &DaemonState) {
+    spawn_merge_queue_runner(route_host_from_state(state));
+}
+
 pub async fn get_workspace_merge_queue_entry(
     state: &DaemonState,
     workspace_id: WorkspaceId,
@@ -63,8 +68,7 @@ pub async fn retry_merge_queue_entry(
         .await
 }
 
-pub fn spawn_merge_queue_runner(state: Arc<DaemonState>) {
-    let host = route_host_from_state(state.as_ref());
+pub(in crate::daemon) fn spawn_merge_queue_runner(host: Arc<MergeQueueRouteHost>) {
     ctx_merge_queue::spawn_merge_queue_runner::<MergeQueueRouteHost>(host);
 }
 

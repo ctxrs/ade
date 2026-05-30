@@ -6,7 +6,7 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_worktree_vcs_service::matching_managed_worktree_path;
 use ctx_worktree_vcs_service::VcsHooksHost;
 
-use crate::daemon::DaemonState;
+use crate::daemon::{workspace_vcs_hook_host_from_state, DaemonState};
 use branches::{cleanup_collected_worktree_branches, WorktreeBranchCleanup};
 use managed::cleanup_managed_worktree_target;
 use sandbox::{cleanup_sandbox_materialization, SandboxCleanupOutcome};
@@ -60,9 +60,10 @@ pub async fn cleanup_task_worktrees(
     targets: &[TaskWorktreeCleanupTarget],
     branch_cleanup_error_mode: BranchCleanupErrorMode,
 ) -> Vec<anyhow::Error> {
+    let hooks_host = workspace_vcs_hook_host_from_state(state);
     cleanup_task_worktrees_with_host(
         &state.core.data_root,
-        state,
+        &hooks_host,
         workspace,
         task_id,
         targets,

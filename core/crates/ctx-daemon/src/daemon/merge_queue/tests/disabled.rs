@@ -11,7 +11,7 @@ async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {
     drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
-    spawn_merge_queue_runner(state.clone());
+    spawn_merge_queue_runner(route_host_from_state(state.as_ref()));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 

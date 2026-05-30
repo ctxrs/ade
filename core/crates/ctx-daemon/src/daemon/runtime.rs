@@ -87,8 +87,11 @@ pub async fn bootstrap_daemon_runtime(
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
     lifecycle::spawn_cache_sweeper(state.clone());
-    lifecycle::spawn_provider_worker_sweeper(state.clone());
-    lifecycle::spawn_endpoint_model_catalog_sweeper(state.clone());
+    memleak_debug::spawn_memleak_debug(state.clone());
+    lifecycle::spawn_provider_worker_sweeper(Arc::clone(&state.provider_lifecycle_background));
+    lifecycle::spawn_endpoint_model_catalog_sweeper(Arc::clone(
+        &state.provider_lifecycle_background,
+    ));
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
@@ -99,11 +102,19 @@ pub async fn bootstrap_daemon_runtime(
         .apply_settings_side_effects(&settings)
         .await;
     let shutdown_signal = DaemonShutdownSignal::new(state.core.shutdown_tx.clone());
-    background::spawn_daemon_background_services(
-        state,
-        requested_binds,
+    background::spawn_provider_background_services(
+        Arc::clone(&state.provider_lifecycle_background),
+        Arc::new(provider_child_reclassifier_host_from_state(state.as_ref())),
         route_handles.provider_status.clone(),
         route_handles.provider_usage.clone(),
+    );
+    background::spawn_operational_background_services(
+        storage_guard_host_from_state(state.as_ref()),
+        merge_queue::route_host_from_state(state.as_ref()),
+        managed_daemon_auto_update_host_from_state(state.as_ref()),
+        daemon_shutdown_host_from_state(state.as_ref()),
+        saved_mobile_tunnel_reconnect_host_from_state(state.as_ref()),
+        requested_binds,
     );
     Ok(DaemonRuntime {
         _daemon_lock: daemon_lock,

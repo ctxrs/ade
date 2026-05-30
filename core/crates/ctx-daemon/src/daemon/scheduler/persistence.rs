@@ -1,10 +1,15 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use ctx_core::ids::{RunId, TurnId};
+use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType};
 use ctx_store::Store;
 
-use crate::daemon::DaemonState;
+#[cfg(test)]
+use crate::daemon::state::StoreLookup;
+#[cfg(test)]
+use crate::daemon::task_session_effects::SessionPublicationEffects;
+#[cfg(test)]
+use crate::daemon::SessionStoreLookup;
 
 mod retry;
 
@@ -14,15 +19,42 @@ pub use retry::{is_transient_store_error, sleep_store_write_retry, STORE_WRITE_R
 pub(in crate::daemon::scheduler) trait SchedulerPersistenceHost:
     Send + Sync
 {
-    async fn store_for_session(&self, session_id: ctx_core::ids::SessionId) -> Result<Store>;
+    async fn store_for_session(&self, session_id: SessionId) -> Result<Store>;
 
     async fn publish_event(&self, event: SessionEvent);
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+pub(in crate::daemon) struct DaemonSchedulerPersistenceHost {
+    session_stores: SessionStoreLookup,
+    session_publication: SessionPublicationEffects,
+}
+
+#[cfg(test)]
+impl DaemonSchedulerPersistenceHost {
+    pub(in crate::daemon) fn new(
+        session_stores: SessionStoreLookup,
+        session_publication: SessionPublicationEffects,
+    ) -> Self {
+        Self {
+            session_stores,
+            session_publication,
+        }
+    }
+}
+
+#[cfg(test)]
 #[async_trait]
-impl SchedulerPersistenceHost for std::sync::Arc<DaemonState> {
-    async fn store_for_session(&self, session_id: ctx_core::ids::SessionId) -> Result<Store> {
-        self.as_ref().store_for_session(session_id).await
+impl SchedulerPersistenceHost for DaemonSchedulerPersistenceHost {
+    async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
+        match self.session_stores.lookup_session_store(session_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace missing for session {}", session_id.0)
+            }
+            StoreLookup::Unavailable(err) => Err(err),
+        }
     }
 
     async fn publish_event(&self, event: SessionEvent) {

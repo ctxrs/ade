@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use ctx_providers::adapters::ProviderSessionSweepConfig;
 
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 
-pub(in crate::daemon) fn spawn_provider_worker_sweeper(state: Arc<DaemonState>) {
+pub(in crate::daemon) fn spawn_provider_worker_sweeper(host: Arc<ProviderLifecycleBackgroundHost>) {
     let config = ProviderSessionSweepConfig::from_env();
     tokio::spawn(async move {
-        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+        let mut shutdown_rx = host.shutdown_tx().subscribe();
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(config.interval) => {
-                    let stats = state.providers.sweep_provider_workers_once(config).await;
+                    let stats = host.providers().sweep_provider_workers_once(config).await;
                     if stats.total_actions() > 0 || stats.skipped_busy > 0 || stats.status_errors > 0 {
                         tracing::info!(
                             reaped = stats.reaped,

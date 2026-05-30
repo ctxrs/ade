@@ -15,9 +15,11 @@ use ctx_settings_model::{
 use ctx_workspace_container::workspace_container_name;
 use ctx_worktree_vcs_service::managed_worktree_path;
 use ctx_worktree_vcs_service::{
-    cleanup_worktree_hooks, ensure_task_commit_hook, get_git_config, set_git_config,
-    worktree_hooks_dir, CORE_HOOKS_PATH_KEY, CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
+    get_git_config, set_git_config, worktree_hooks_dir, CORE_HOOKS_PATH_KEY,
+    CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
 };
+
+use super::super::{cleanup_worktree_hooks, ensure_task_commit_hook};
 
 #[tokio::test]
 async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_config() {

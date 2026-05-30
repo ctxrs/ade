@@ -8,7 +8,7 @@ use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{Workspace, Worktree};
 use ctx_worktree_vcs_service::VcsHooksHost;
 
-use crate::daemon::DaemonState;
+use crate::daemon::{workspace_vcs_hook_host_from_state, DaemonState};
 
 pub(in crate::daemon) use host::WorkspaceVcsHookHost;
 
@@ -18,7 +18,8 @@ pub async fn ensure_task_commit_hook(
     worktree: &Worktree,
     task_id: TaskId,
 ) -> Result<()> {
-    ctx_worktree_vcs_service::ensure_task_commit_hook(state, workspace, worktree, task_id).await
+    let host = workspace_vcs_hook_host_from_state(state);
+    ctx_worktree_vcs_service::ensure_task_commit_hook(&host, workspace, worktree, task_id).await
 }
 
 pub async fn cleanup_worktree_hooks(
@@ -26,7 +27,8 @@ pub async fn cleanup_worktree_hooks(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<()> {
-    ctx_worktree_vcs_service::cleanup_worktree_hooks(state, workspace, worktree).await
+    let host = workspace_vcs_hook_host_from_state(state);
+    ctx_worktree_vcs_service::cleanup_worktree_hooks(&host, workspace, worktree).await
 }
 
 pub async fn cleanup_worktree_hooks_with_host<H: VcsHooksHost>(

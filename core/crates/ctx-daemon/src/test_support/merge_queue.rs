@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId, WorktreeId};
@@ -13,7 +12,7 @@ use super::TestDaemon;
 
 impl TestDaemon {
     pub fn spawn_merge_queue_runner(&self) {
-        daemon::merge_queue::spawn_merge_queue_runner(Arc::clone(&self.state));
+        daemon::merge_queue::spawn_merge_queue_runner_for_test(self.state.as_ref());
     }
 
     pub async fn configure_merge_queue_for_test(

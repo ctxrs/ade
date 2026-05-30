@@ -1,19 +1,35 @@
 use std::sync::Arc;
 
+use ctx_provider_runtime::ProviderRuntime;
 use tokio::sync::broadcast;
 
-use super::DaemonState;
+pub(super) fn spawn_provider_child_reclassifier(host: Arc<ProviderChildReclassifierHost>) {
+    ctx_provider_runtime::provider_child_reclassifier::spawn_provider_child_reclassifier(host);
+}
 
-pub(super) fn spawn_provider_child_reclassifier(state: Arc<DaemonState>) {
-    ctx_provider_runtime::provider_child_reclassifier::spawn_provider_child_reclassifier(state);
+pub(in crate::daemon) struct ProviderChildReclassifierHost {
+    shutdown_tx: broadcast::Sender<()>,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl ProviderChildReclassifierHost {
+    pub(in crate::daemon) fn new(
+        shutdown_tx: broadcast::Sender<()>,
+        providers: Arc<ProviderRuntime>,
+    ) -> Self {
+        Self {
+            shutdown_tx,
+            providers,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifierHost
-    for DaemonState
+    for ProviderChildReclassifierHost
 {
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
-        self.core.shutdown_tx.subscribe()
+        self.shutdown_tx.subscribe()
     }
 
     async fn provider_process_pids(&self) -> Vec<u32> {

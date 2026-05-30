@@ -1079,8 +1079,12 @@ const checkDaemonHandleStoreLookupOwnership = (rootDir) => {
 const checkDaemonStateMergeQueueHost = (rootDir) => {
   const violations = [];
   const daemonSrcRoot = path.join(rootDir, "core", "crates", "ctx-daemon", "src");
+  const daemonStateTypePattern = String.raw`(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonState`;
   const daemonStateMergeQueueHostPattern =
-    /\bimpl(?:\s*<[^>]*>)?\s+(?:ctx_merge_queue\s*::\s*)?MergeQueueHost\s+for\s+DaemonState\b/gu;
+    new RegExp(
+      String.raw`\bimpl(?:\s*<[^>]*>)?\s+(?:ctx_merge_queue\s*::\s*)?MergeQueueHost\s+for\s+${daemonStateTypePattern}(?![A-Za-z0-9_])`,
+      "gu",
+    );
 
   for (const absolutePath of walkFiles(daemonSrcRoot).filter((entry) => entry.endsWith(".rs"))) {
     const relativePath = toPosix(path.relative(rootDir, absolutePath));
@@ -1103,6 +1107,131 @@ const checkDaemonStateMergeQueueHost = (rootDir) => {
   return violations;
 };
 
+const DAEMON_STATE_TYPE_PATTERN = String.raw`(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonState`;
+const ARC_DAEMON_STATE_TYPE_PATTERN = String.raw`(?:std\s*::\s*sync\s*::\s*)?Arc\s*<\s*${DAEMON_STATE_TYPE_PATTERN}\s*>`;
+
+const DAEMON_STATE_OPERATIONAL_HOST_IMPLS = [
+  {
+    kind: "daemon_state_worktree_data_plane_host",
+    traitPattern: String.raw`(?:ctx_worktree_data_plane\s*::\s*)?WorktreeDataPlaneHost`,
+    targetPattern: DAEMON_STATE_TYPE_PATTERN,
+    message:
+      "WorktreeDataPlaneHost must be implemented by a narrow data-plane host, not DaemonState.",
+  },
+  {
+    kind: "daemon_state_vcs_hooks_host",
+    traitPattern: String.raw`(?:ctx_worktree_vcs_service\s*::\s*)?VcsHooksHost`,
+    targetPattern: DAEMON_STATE_TYPE_PATTERN,
+    message: "VcsHooksHost must be implemented by WorkspaceVcsHookHost, not DaemonState.",
+  },
+  {
+    kind: "daemon_state_scheduler_persistence_host",
+    traitPattern: String.raw`SchedulerPersistenceHost`,
+    targetPattern: ARC_DAEMON_STATE_TYPE_PATTERN,
+    message:
+      "SchedulerPersistenceHost must be implemented by scheduler worker hosts, not Arc<DaemonState>.",
+  },
+  {
+    kind: "daemon_state_terminal_reconcile_host",
+    traitPattern: String.raw`TerminalStateReconcileHost`,
+    targetPattern: ARC_DAEMON_STATE_TYPE_PATTERN,
+    message:
+      "TerminalStateReconcileHost must be implemented by a narrow reconcile host, not Arc<DaemonState>.",
+  },
+  {
+    kind: "daemon_state_provider_child_reclassifier_host",
+    traitPattern: String.raw`(?:ctx_provider_runtime\s*::\s*provider_child_reclassifier\s*::\s*)?ProviderChildReclassifierHost`,
+    targetPattern: DAEMON_STATE_TYPE_PATTERN,
+    message:
+      "ProviderChildReclassifierHost must be implemented by a narrow provider-child host, not DaemonState.",
+  },
+];
+
+const checkDaemonStateOperationalHostImpls = (rootDir) => {
+  const violations = [];
+  const daemonSrcRoot = path.join(rootDir, "core", "crates", "ctx-daemon", "src");
+
+  for (const absolutePath of walkFiles(daemonSrcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (const rule of DAEMON_STATE_OPERATIONAL_HOST_IMPLS) {
+      const pattern = new RegExp(
+        String.raw`\bimpl(?:\s*<[^>]*>)?\s+${rule.traitPattern}\s+for\s+${rule.targetPattern}(?![A-Za-z0-9_])`,
+        "gu",
+      );
+      for (let match = pattern.exec(contents); match; match = pattern.exec(contents)) {
+        violations.push({
+          kind: rule.kind,
+          line: lineForOffset(contents, match.index),
+          path: relativePath,
+          message: rule.message,
+        });
+      }
+    }
+  }
+
+  return violations;
+};
+
+const DAEMON_OPERATIONAL_STATE_BLIND_FILES = [
+  "core/crates/ctx-daemon/src/daemon/serve/background.rs",
+  "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
+  "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/resource_telemetry/providers.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs",
+  "core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
+  "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
+  "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
+];
+
+const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
+  const violations = [];
+  const broadStatePattern =
+    /\b(?:Arc|Weak)\s*<\s*DaemonState\s*>|&\s*DaemonState\b|\bDaemonState\b/gu;
+
+  for (const relativePath of DAEMON_OPERATIONAL_STATE_BLIND_FILES) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = broadStatePattern.exec(contents);
+      match;
+      match = broadStatePattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Operational background entrypoints must receive narrow hosts/handles, not DaemonState.",
+      });
+    }
+  }
+
+  const mergeQueuePath = "core/crates/ctx-daemon/src/daemon/merge_queue.rs";
+  const mergeQueueAbsolutePath = path.join(rootDir, mergeQueuePath);
+  if (fs.existsSync(mergeQueueAbsolutePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(mergeQueueAbsolutePath, "utf8"));
+    const runnerPattern =
+      /\bfn\s+spawn_merge_queue_runner\s*\([^)]*(?:\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu;
+    for (let match = runnerPattern.exec(contents); match; match = runnerPattern.exec(contents)) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: mergeQueuePath,
+        message:
+          "spawn_merge_queue_runner must receive MergeQueueRouteHost, not DaemonState.",
+      });
+    }
+  }
+
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
@@ -1115,6 +1244,8 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkDaemonRootRouteFacades(rootDir),
     ...checkDaemonHandleStoreLookupOwnership(rootDir),
     ...checkDaemonStateMergeQueueHost(rootDir),
+    ...checkDaemonStateOperationalHostImpls(rootDir),
+    ...checkDaemonOperationalEntrypointsStateBlind(rootDir),
   ];
   return { violations };
 };
@@ -1177,6 +1308,8 @@ module.exports = {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkDaemonStateMergeQueueHost,
+  checkDaemonStateOperationalHostImpls,
+  checkDaemonOperationalEntrypointsStateBlind,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,

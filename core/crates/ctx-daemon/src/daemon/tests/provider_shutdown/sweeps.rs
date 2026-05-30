@@ -81,7 +81,9 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
     );
     let _sandbox_cli_override = EnvGuard::remove(CTX_HARNESS_SANDBOX_CLI_PATH_ENV);
 
-    let record = crate::daemon::lifecycle::shutdown_shared_substrate(&state, "test shutdown")
+    let host = crate::daemon::daemon_shutdown_host_from_state(state.as_ref());
+    let record = host
+        .save_or_stop_selected_shared_substrate()
         .await
         .expect("shared substrate shutdown")
         .expect("shared substrate record");

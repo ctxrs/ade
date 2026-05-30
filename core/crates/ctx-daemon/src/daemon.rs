@@ -141,9 +141,17 @@ pub use sessions::subagents::SessionSubagentMcpControlHandle;
 pub use sessions::title_generation::TitleGenerationLocalHandle;
 pub use sessions::DemoSeedTranscriptHandle;
 pub use settings_route_handles::SettingsHandle;
+#[cfg(test)]
+pub(in crate::daemon) use state::scheduler_persistence_host_from_state;
 pub(in crate::daemon) use state::{
-    merge_queue_route_host_from_state, session_store_access_anyhow, ProtectedWorkspaceStoreLookup,
-    SessionStoreLookup, WeakSessionStoreLookup,
+    daemon_shutdown_host_from_state, managed_daemon_auto_update_host_from_state,
+    provider_child_reclassifier_host_from_state, saved_mobile_tunnel_reconnect_host_from_state,
+    storage_guard_host_from_state, terminal_state_reconcile_host_from_state,
+    workspace_vcs_hook_host_from_state, worktree_data_plane_host_from_state,
+};
+pub(in crate::daemon) use state::{
+    merge_queue_route_host_from_state, session_store_access_anyhow, DaemonWorktreeDataPlaneHost,
+    ProtectedWorkspaceStoreLookup, SessionStoreLookup, WeakSessionStoreLookup,
 };
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{

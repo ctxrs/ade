@@ -8,7 +8,7 @@ use ctx_core::models::{RunStatus, SessionEventType};
 use ctx_providers::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
 #[cfg(test)]
-use crate::daemon::DaemonState;
+use crate::daemon::{scheduler_persistence_host_from_state, DaemonState};
 
 use super::super::persistence::SchedulerPersistenceHost;
 use super::persistence::persist_terminal_events_with_host;
@@ -28,7 +28,8 @@ pub async fn finalize_completed_turn(
     turn_id: TurnId,
     message_id: MessageId,
 ) -> Result<()> {
-    finalize_completed_turn_with_host(state, session_id, run_id, turn_id, message_id).await
+    let host = scheduler_persistence_host_from_state(state.as_ref());
+    finalize_completed_turn_with_host(&host, session_id, run_id, turn_id, message_id).await
 }
 
 pub(in crate::daemon::scheduler) async fn finalize_completed_turn_with_host<H>(
@@ -92,7 +93,8 @@ pub async fn finalize_failed_turn(
     message_id: MessageId,
     failure: FailedTurnTerminalization<'_>,
 ) -> Result<()> {
-    finalize_failed_turn_with_host(state, session_id, run_id, turn_id, message_id, failure).await
+    let host = scheduler_persistence_host_from_state(state.as_ref());
+    finalize_failed_turn_with_host(&host, session_id, run_id, turn_id, message_id, failure).await
 }
 
 pub(in crate::daemon::scheduler) async fn finalize_failed_turn_with_host<H>(

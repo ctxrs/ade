@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ctx_core::ids::SessionId;
 use ctx_observability::ops_events::OpsEvent;
 use ctx_storage_admission::{
@@ -7,26 +5,26 @@ use ctx_storage_admission::{
 };
 use serde_json::json;
 
+use super::StorageGuardHost;
 use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::DaemonState;
 
 pub(super) async fn publish_storage_guard_snapshot(
-    state: &Arc<DaemonState>,
+    host: &StorageGuardHost,
     previous: &StorageGuardStatus,
     snapshot: &StorageGuardStatus,
 ) {
     let should_interrupt = previous.level != StorageGuardLevel::Emergency
         && snapshot.level == StorageGuardLevel::Emergency;
     if !snapshot.same_meaningful_state(previous) {
-        emit_storage_guard_transition(state, snapshot);
+        emit_storage_guard_transition(host, snapshot);
     }
-    state.core.storage_guard.publish(snapshot.clone());
+    host.storage_guard.publish(snapshot.clone());
     if should_interrupt {
-        dispatch_storage_emergency_interrupts(state, snapshot).await;
+        dispatch_storage_emergency_interrupts(host, snapshot).await;
     }
 }
 
-fn emit_storage_guard_transition(state: &DaemonState, snapshot: &StorageGuardStatus) {
+fn emit_storage_guard_transition(host: &StorageGuardHost, snapshot: &StorageGuardStatus) {
     let mut event = OpsEvent::new(
         match snapshot.level {
             StorageGuardLevel::Emergency => "error",
@@ -40,7 +38,7 @@ fn emit_storage_guard_transition(state: &DaemonState, snapshot: &StorageGuardSta
         "reserve_file_active": snapshot.reserve_file_active,
         "active": snapshot.active,
     }));
-    state.telemetry.ops_events.emit(event);
+    host.ops_events.emit(event);
 }
 
 pub(super) fn emit_reserve_warnings(warnings: Vec<StorageGuardReserveWarning>) {
@@ -65,13 +63,13 @@ pub(super) fn emit_reserve_warnings(warnings: Vec<StorageGuardReserveWarning>) {
 }
 
 async fn dispatch_storage_emergency_interrupts(
-    state: &Arc<DaemonState>,
+    host: &StorageGuardHost,
     snapshot: &StorageGuardStatus,
 ) {
-    let running_sessions = state.sessions.list_running_sessions().await;
+    let running_sessions = host.sessions.list_running_sessions().await;
     let mut interrupted = 0usize;
     for session_id in running_sessions {
-        if dispatch_storage_emergency_interrupt(state, session_id).await {
+        if dispatch_storage_emergency_interrupt(host, session_id).await {
             interrupted += 1;
         }
     }
@@ -85,10 +83,10 @@ async fn dispatch_storage_emergency_interrupts(
 }
 
 pub(super) async fn dispatch_storage_emergency_interrupt(
-    state: &Arc<DaemonState>,
+    host: &StorageGuardHost,
     session_id: SessionId,
 ) -> bool {
-    let Some(tx) = state.sessions.scheduler_sender(session_id).await else {
+    let Some(tx) = host.sessions.scheduler_sender(session_id).await else {
         return false;
     };
     tx.send(SchedulerCommand::StorageEmergency).await.is_ok()

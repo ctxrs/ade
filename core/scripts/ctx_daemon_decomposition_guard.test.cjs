@@ -31,6 +31,8 @@ const {
   checkDaemonRootRouteFacades,
   checkDaemonHandleStoreLookupOwnership,
   checkDaemonStateMergeQueueHost,
+  checkDaemonStateOperationalHostImpls,
+  checkDaemonOperationalEntrypointsStateBlind,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,
@@ -1139,12 +1141,80 @@ test("DaemonState cannot be reintroduced as the merge queue host", () => {
     impl MergeQueueHost for DaemonState {}
 
     impl ctx_merge_queue::MergeQueueHost for DaemonState {}
+    impl MergeQueueHost for crate::daemon::DaemonState {}
+    impl ctx_merge_queue::MergeQueueHost for crate::daemon::state::DaemonState {}
   `);
 
   const violations = checkDaemonStateMergeQueueHost(rootDir);
 
-  assert.equal(violations.length, 2);
+  assert.equal(violations.length, 4);
   assert(violations.every((violation) => violation.kind === "daemon_state_merge_queue_host"));
+});
+
+test("DaemonState cannot be reintroduced as operational daemon hosts", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/worktree_data_plane.rs", `
+    impl WorktreeDataPlaneHost for DaemonState {}
+    impl ctx_worktree_data_plane::WorktreeDataPlaneHost for DaemonState {}
+    impl WorktreeDataPlaneHost for crate::daemon::DaemonState {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks/host.rs", `
+    impl VcsHooksHost for crate::daemon::state::DaemonState {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/persistence.rs", `
+    impl SchedulerPersistenceHost for std::sync::Arc<crate::daemon::DaemonState> {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/terminal_state.rs", `
+    impl TerminalStateReconcileHost for Arc<crate::daemon::state::DaemonState> {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs", `
+    impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifierHost
+      for crate::daemon::DaemonState
+    {}
+  `);
+
+  const violations = checkDaemonStateOperationalHostImpls(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind).sort(),
+    [
+      "daemon_state_provider_child_reclassifier_host",
+      "daemon_state_scheduler_persistence_host",
+      "daemon_state_terminal_reconcile_host",
+      "daemon_state_vcs_hooks_host",
+      "daemon_state_worktree_data_plane_host",
+      "daemon_state_worktree_data_plane_host",
+      "daemon_state_worktree_data_plane_host",
+    ],
+  );
+});
+
+test("operational daemon background entrypoints stay state-blind", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/serve/background.rs", `
+    use std::sync::Arc;
+    use crate::daemon::DaemonState;
+
+    pub(super) fn spawn_daemon_background_services(state: Arc<DaemonState>) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/storage_guard.rs", `
+    pub(in crate::daemon) fn spawn_storage_guard(state: &DaemonState) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/merge_queue.rs", `
+    pub(in crate::daemon) fn spawn_merge_queue_runner(state: Arc<DaemonState>) {}
+  `);
+
+  const violations = checkDaemonOperationalEntrypointsStateBlind(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    [
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+    ],
+  );
 });
 
 test("full evaluator aggregates all static decomposition violations", () => {

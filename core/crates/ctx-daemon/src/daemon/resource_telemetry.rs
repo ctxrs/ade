@@ -12,7 +12,7 @@ use ctx_resource_utilization::{
     resource_utilization_disabled_from_env, trim_resource_processes, ResourceTelemetryConfig,
 };
 
-use crate::daemon::DaemonState;
+use crate::daemon::provider_capability_hosts::ProviderLifecycleBackgroundHost;
 use ctx_observability::logs;
 
 mod event;
@@ -23,7 +23,7 @@ use event::ResourceTelemetryEvent;
 use providers::provider_session_counts;
 use remote_metrics::export_remote_metrics;
 
-pub fn spawn_resource_telemetry(state: Arc<DaemonState>) {
+pub(crate) fn spawn_resource_telemetry(host: Arc<ProviderLifecycleBackgroundHost>) {
     if resource_utilization_disabled_from_env() {
         return;
     }
@@ -32,10 +32,10 @@ pub fn spawn_resource_telemetry(state: Arc<DaemonState>) {
         return;
     }
 
-    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+    let mut shutdown_rx = host.shutdown_tx().subscribe();
     tokio::spawn(async move {
         let mut last_cleanup = None::<String>;
-        if let Err(err) = sample_once(&state, &cfg, &mut last_cleanup).await {
+        if let Err(err) = sample_once(&host, &cfg, &mut last_cleanup).await {
             tracing::warn!("resource telemetry sample failed: {err:#}");
         }
 
@@ -46,7 +46,7 @@ pub fn spawn_resource_telemetry(state: Arc<DaemonState>) {
             tokio::select! {
                 _ = shutdown_rx.recv() => break,
                 _ = ticker.tick() => {
-                    if let Err(err) = sample_once(&state, &cfg, &mut last_cleanup).await {
+                    if let Err(err) = sample_once(&host, &cfg, &mut last_cleanup).await {
                         tracing::warn!("resource telemetry sample failed: {err:#}");
                     }
                 }
@@ -56,22 +56,22 @@ pub fn spawn_resource_telemetry(state: Arc<DaemonState>) {
 }
 
 async fn sample_once(
-    state: &Arc<DaemonState>,
+    host: &Arc<ProviderLifecycleBackgroundHost>,
     cfg: &ResourceTelemetryConfig,
     last_cleanup: &mut Option<String>,
 ) -> Result<()> {
-    let provider_processes = state.providers.list_provider_processes().await;
+    let provider_processes = host.providers().list_provider_processes().await;
     let (system, cache_age_ms, processes, provider_memory_rollups) = {
-        let mut sampler = state.telemetry.resource_sampler.lock().await;
+        let mut sampler = host.resource_sampler().lock().await;
         let (system, _disks, cache_age_ms) = sampler.system_snapshot();
         let processes = sampler.processes_snapshot_light(std::process::id(), &provider_processes);
         let provider_memory_rollups = sampler.provider_memory_rollups(&provider_processes);
         (system, cache_age_ms, processes, provider_memory_rollups)
     };
 
-    let provider_sessions = provider_session_counts(state).await;
+    let provider_sessions = provider_session_counts(host).await;
     let shared_substrate_lifecycle =
-        ctx_harness_runtime::selected_shared_substrate_lifecycle(&state.core.data_root)
+        ctx_harness_runtime::selected_shared_substrate_lifecycle(host.data_root())
             .ok()
             .flatten();
     let processes = trim_resource_processes(processes, cfg.child_limit);
@@ -85,7 +85,7 @@ async fn sample_once(
         shared_substrate_lifecycle: shared_substrate_lifecycle.clone(),
     };
 
-    let logs_dir = logs::logs_dir(&state.core.data_root);
+    let logs_dir = logs::logs_dir(host.data_root());
     append_resource_telemetry_log(&logs_dir, event.occurred_at, &event, cfg.local_max_bytes)
         .await?;
     if cfg.local_retention_days > 0 {
@@ -102,7 +102,7 @@ async fn sample_once(
     }
 
     export_remote_metrics(
-        &state.telemetry.perf_telemetry,
+        host.perf_telemetry(),
         &system,
         &processes,
         &provider_sessions,

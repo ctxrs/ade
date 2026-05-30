@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::daemon::DaemonState;
+use crate::daemon::state::StoreLookup;
+use crate::daemon::task_session_effects::{SessionPublicationEffects, TaskSessionCleanupHost};
+use crate::daemon::{terminal_state_reconcile_host_from_state, DaemonState, SessionStoreLookup};
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEvent, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
@@ -21,10 +23,37 @@ pub(in crate::daemon) trait TerminalStateReconcileHost: Send + Sync {
     async fn set_running(&self, session_id: SessionId, running: bool);
 }
 
+#[derive(Clone)]
+pub(in crate::daemon) struct DaemonTerminalStateReconcileHost {
+    session_stores: SessionStoreLookup,
+    session_publication: SessionPublicationEffects,
+    task_session_cleanup: TaskSessionCleanupHost,
+}
+
+impl DaemonTerminalStateReconcileHost {
+    pub(in crate::daemon) fn new(
+        session_stores: SessionStoreLookup,
+        session_publication: SessionPublicationEffects,
+        task_session_cleanup: TaskSessionCleanupHost,
+    ) -> Self {
+        Self {
+            session_stores,
+            session_publication,
+            task_session_cleanup,
+        }
+    }
+}
+
 #[async_trait::async_trait]
-impl TerminalStateReconcileHost for Arc<DaemonState> {
+impl TerminalStateReconcileHost for DaemonTerminalStateReconcileHost {
     async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
-        DaemonState::store_for_session(self.as_ref(), session_id).await
+        match self.session_stores.lookup_session_store(session_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace missing for session {}", session_id.0)
+            }
+            StoreLookup::Unavailable(err) => Err(err),
+        }
     }
 
     async fn publish_event(&self, event: SessionEvent) {
@@ -45,7 +74,8 @@ pub async fn reconcile_turn_terminal_state(
     turn_id: TurnId,
     fallback_reason: &str,
 ) -> Result<()> {
-    reconcile_turn_terminal_state_with_host(state, session_id, run_id, turn_id, fallback_reason)
+    let host = terminal_state_reconcile_host_from_state(state.as_ref());
+    reconcile_turn_terminal_state_with_host(&host, session_id, run_id, turn_id, fallback_reason)
         .await
 }
 
