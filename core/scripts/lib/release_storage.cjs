@@ -20,7 +20,7 @@ function requireValue(name, value) {
 }
 
 function normalizeProvider(value) {
-  const provider = trimValue(value || "supabase").toLowerCase();
+  const provider = trimValue(value || "r2").toLowerCase();
   if (provider !== "supabase" && provider !== "r2") {
     throw new Error(`unsupported RELEASE_STORAGE_PROVIDER '${value}' (expected supabase or r2)`);
   }
@@ -32,7 +32,7 @@ function resolveStorageProvider(env = process.env) {
     env.RELEASE_STORAGE_PROVIDER
       || env.CTX_RELEASE_STORAGE_PROVIDER
       || env.CTX_RELEASE_STORAGE_BACKEND
-      || "supabase",
+      || "r2",
   );
 }
 

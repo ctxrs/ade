@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 release_storage_provider() {
-  local provider="${RELEASE_STORAGE_PROVIDER:-${CTX_RELEASE_STORAGE_PROVIDER:-${CTX_RELEASE_STORAGE_BACKEND:-supabase}}}"
+  local provider="${RELEASE_STORAGE_PROVIDER:-${CTX_RELEASE_STORAGE_PROVIDER:-${CTX_RELEASE_STORAGE_BACKEND:-r2}}}"
   printf '%s' "$provider" | tr 'A-Z' 'a-z'
 }
 
