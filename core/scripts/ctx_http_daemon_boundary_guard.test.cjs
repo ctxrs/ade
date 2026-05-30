@@ -316,6 +316,8 @@ const {
   scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionTitleCommandBroadApiRatchet,
   scanMaintenanceActivitySettingsBroadApiRatchet,
+  scanAuthBroadApiRatchet,
+  scanAuthBroadApiDeletedPathRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
@@ -5225,6 +5227,61 @@ test("appstate guard rejects deleted broad maintenance activity and settings API
   assert.deepEqual(new Set(testViolations), new Set([
     "daemon maintenance/activity test calls broad state API",
   ]));
+});
+
+test("appstate guard rejects deleted broad MCP and mobile auth APIs", () => {
+  const mcpViolations = scanAuthBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub async fn issue_provider_session_mcp_token(state: &DaemonState) {}
+      pub async fn issue_provider_session_mcp_token_with_capabilities(state: &DaemonState) {}
+      pub async fn revoke_provider_session_mcp_token(state: &DaemonState) {}
+      pub async fn verify_mcp_auth_token(state: &DaemonState) {}
+      pub async fn require_scoped_mcp_session_context(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    mcpViolations.filter((name) => name === "deleted broad auth API reintroduced").length,
+    5,
+  );
+  assert(mcpViolations.includes("auth implementation uses broad daemon state"));
+
+  const eventViolations = scanAuthBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
+    contents: `
+      pub fn emit_mcp_token_denied(state: &DaemonState) {}
+    `,
+  }).map((violation) => violation.name);
+  assert(eventViolations.includes("deleted broad auth API reintroduced"));
+
+  const testSupportViolations = scanAuthBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/test_support/providers.rs",
+    contents: `
+      daemon::issue_provider_session_mcp_token(&self.state, session_id, workspace_id, worktree_id);
+      revoke_provider_session_mcp_token(&state, token);
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(testSupportViolations), new Set([
+    "auth test/support calls broad state API",
+  ]));
+
+  const handleAllowed = scanAuthBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_handles.rs",
+    contents: `
+      impl AuthHandle {
+        pub async fn issue_provider_session_mcp_token(&self) {}
+        pub async fn revoke_provider_session_mcp_token(&self) {}
+      }
+    `,
+  });
+  assert.deepEqual(handleAllowed, []);
+
+  const deletedFileViolations = scanAuthBroadApiDeletedPathRatchet({
+    pathExists: (relativePath) =>
+      relativePath === "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
+  }).map((violation) => violation.name);
+  assert.deepEqual(deletedFileViolations, ["deleted broad auth file reintroduced"]);
 });
 
 test("appstate guard rejects session message command broad route handles", () => {

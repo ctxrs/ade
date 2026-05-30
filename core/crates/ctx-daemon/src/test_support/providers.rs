@@ -98,7 +98,9 @@ impl TestDaemon {
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
     ) -> String {
-        daemon::issue_provider_session_mcp_token(&self.state, session_id, workspace_id, worktree_id)
+        daemon::route_handles_from_state(&self.state)
+            .auth
+            .issue_provider_session_mcp_token(session_id, workspace_id, worktree_id)
             .await
     }
 
@@ -109,18 +111,22 @@ impl TestDaemon {
         worktree_id: WorktreeId,
         capabilities: ctx_mcp_auth::McpAuthCapabilities,
     ) -> String {
-        daemon::issue_provider_session_mcp_token_with_capabilities(
-            &self.state,
-            session_id,
-            workspace_id,
-            worktree_id,
-            capabilities,
-        )
-        .await
+        daemon::route_handles_from_state(&self.state)
+            .auth
+            .issue_provider_session_mcp_token_with_capabilities(
+                session_id,
+                workspace_id,
+                worktree_id,
+                capabilities,
+            )
+            .await
     }
 
     pub async fn revoke_provider_session_mcp_token(&self, token: &str) -> bool {
-        daemon::revoke_provider_session_mcp_token(&self.state, token).await
+        daemon::route_handles_from_state(&self.state)
+            .auth
+            .revoke_provider_session_mcp_token(token)
+            .await
     }
 
     pub async fn test_with_provider_usage_cache<R>(

@@ -1,4 +1,3 @@
-mod auth;
 mod control_plane;
 mod handle;
 mod lifecycle;
@@ -7,9 +6,10 @@ mod runtime;
 mod secure_proxy;
 mod types;
 
-pub use auth::{
+pub use ctx_mobile_access_service::{
     default_mobile_profile_scopes, load_mobile_auth_context_for_profile,
     mobile_scope_set_from_strings, resolve_mobile_auth_context, verify_mobile_api_token_hash,
+    MobileAuthContext, MobileAuthContextError,
 };
 pub use lifecycle::mobile_public_url_is_allowed;
 pub use runtime::{

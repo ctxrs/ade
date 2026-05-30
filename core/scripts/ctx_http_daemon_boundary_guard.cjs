@@ -79,11 +79,8 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/lifecycle/provider_workers.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
-  "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
-  "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
   "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
   "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
-  "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
   "core/crates/ctx-daemon/src/daemon/resource_telemetry.rs",
@@ -144,9 +141,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs|providers|state.providers
 2 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|self.state.core
 1 core/crates/ctx-daemon/src/daemon/managed_auto_update.rs|core|state.core
-3 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|core|state.core
-2 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs|telemetry|state.telemetry
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|session_publication|state.session_publication
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|telemetry|state.telemetry
@@ -506,6 +500,15 @@ const maintenanceActivitySettingsBroadApiDeletedPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/settings.rs",
   "core/crates/ctx-daemon/src/daemon/tool_cgroup.rs",
 ]);
+
+const authBroadApiDeletedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
+  "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
+]);
+
+const authBroadApiDeletedFilePaths = [
+  "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
+];
 
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
@@ -13706,6 +13709,105 @@ function scanMaintenanceActivitySettingsBroadApiRatchet({ filePath, contents }) 
   return violations;
 }
 
+function scanAuthBroadApiRatchet({ filePath, contents }) {
+  const isProductionPath = authBroadApiDeletedPaths.has(filePath);
+  const isDaemonMcpAuthTestPath = [
+    "core/crates/ctx-daemon/src/daemon/mcp_auth/tests/scope.rs",
+    "core/crates/ctx-daemon/src/test_support/providers.rs",
+  ].includes(filePath);
+  if (!isProductionPath && !isDaemonMcpAuthTestPath) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const addViolation = ({ index, name, text }) => {
+    const line = contents.slice(0, index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text,
+    });
+  };
+
+  if (isProductionPath) {
+    const broadStateRegex =
+      /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonState\s*>|\bArc\s*::\s*clone\s*\(\s*&\s*(?:self\s*\.\s*)?state\s*\)/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "auth implementation uses broad daemon state",
+        text: match[0],
+      });
+    }
+
+    const deletedBroadSignaturesByPath = new Map([
+      [
+        "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
+        /\bpub\s+(?:async\s+)?fn\s+(?:issue_provider_session_mcp_token(?:_with_capabilities)?|revoke_provider_session_mcp_token|verify_mcp_auth_token|require_scoped_mcp_session_context)\s*\(\s*state\s*:\s*&\s*DaemonState/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
+        /\bpub\s+(?:\([^)]*\)\s+)?fn\s+emit_mcp_token_denied\s*\(\s*state\s*:\s*&\s*DaemonState/gu,
+      ],
+    ]);
+    const deletedBroadSignatures = deletedBroadSignaturesByPath.get(filePath);
+    if (deletedBroadSignatures) {
+      for (
+        let match = deletedBroadSignatures.exec(contents);
+        match;
+        match = deletedBroadSignatures.exec(contents)
+      ) {
+        addViolation({
+          index: match.index,
+          name: "deleted broad auth API reintroduced",
+          text: match[0],
+        });
+      }
+    }
+  }
+
+  if (isDaemonMcpAuthTestPath) {
+    const staleTestCallRegex =
+      /\b(?:daemon\s*::\s*)?(?:issue_provider_session_mcp_token(?:_with_capabilities)?|revoke_provider_session_mcp_token|require_scoped_mcp_session_context)\s*\(\s*&(?:self\s*\.\s*)?state\b/gu;
+    for (
+      let match = staleTestCallRegex.exec(contents);
+      match;
+      match = staleTestCallRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "auth test/support calls broad state API",
+        text: match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanAuthBroadApiDeletedPathRatchet({
+  pathExists = (relativePath) => fs.existsSync(path.join(repoRoot, relativePath)),
+} = {}) {
+  const violations = [];
+  for (const relativePath of authBroadApiDeletedFilePaths) {
+    if (pathExists(relativePath)) {
+      violations.push({
+        filePath: relativePath,
+        line: 1,
+        name: "deleted broad auth file reintroduced",
+        text: relativePath,
+      });
+    }
+  }
+  return violations;
+}
+
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
   if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
@@ -18398,6 +18500,7 @@ function scanRepo() {
     });
   }
   violations.push(...scanWorkspaceCompositionDeletedPathRatchet());
+  violations.push(...scanAuthBroadApiDeletedPathRatchet());
   violations.push(...scanDeletedBroadDomainMacroSourceRatchet());
 
   const hasWorkspaceVcsStreamCapability = workspaceVcsStreamCapabilityPresent();
@@ -19051,6 +19154,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanAuthBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -19250,6 +19357,10 @@ function scanRepo() {
         contents,
       }),
       ...scanMaintenanceActivitySettingsBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanAuthBroadApiRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19963,6 +20074,8 @@ module.exports = {
   scanSessionTitleModelModeTitleImplementationRatchet,
   scanSessionTitleCommandBroadApiRatchet,
   scanMaintenanceActivitySettingsBroadApiRatchet,
+  scanAuthBroadApiRatchet,
+  scanAuthBroadApiDeletedPathRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,

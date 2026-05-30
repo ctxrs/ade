@@ -4,15 +4,18 @@ use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
 use ctx_store::StoreManager;
 
-use super::super::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
-use super::fixtures::{block_workspace_store_for_session, context_for, seeded_state};
+use super::super::ScopedMcpSessionAccessError;
+use super::fixtures::{
+    block_workspace_store_for_session, context_for, seeded_state, session_store_lookup,
+};
 use crate::daemon::DaemonState;
 
 #[tokio::test]
 async fn scoped_mcp_session_context_accepts_bound_session_scope() {
     let (_data_dir, state, session) = seeded_state().await;
 
-    require_scoped_mcp_session_context(state.as_ref(), context_for(&session), session.id)
+    session_store_lookup(state.as_ref())
+        .require_scoped_mcp_session_context(context_for(&session), session.id)
         .await
         .expect("matching session scope should be accepted");
 }
@@ -20,10 +23,10 @@ async fn scoped_mcp_session_context_accepts_bound_session_scope() {
 #[tokio::test]
 async fn scoped_mcp_session_context_rejects_wrong_route_session_before_store_lookup() {
     let (_data_dir, state, session) = seeded_state().await;
-    let error =
-        require_scoped_mcp_session_context(state.as_ref(), context_for(&session), SessionId::new())
-            .await
-            .expect_err("wrong route session should be unauthorized");
+    let error = session_store_lookup(state.as_ref())
+        .require_scoped_mcp_session_context(context_for(&session), SessionId::new())
+        .await
+        .expect_err("wrong route session should be unauthorized");
 
     match error {
         ScopedMcpSessionAccessError::Unauthorized(message) => assert_eq!(
@@ -40,7 +43,8 @@ async fn scoped_mcp_session_context_rejects_loaded_scope_mismatch() {
     let mut context = context_for(&session);
     context.workspace_id = WorkspaceId::new();
 
-    let error = require_scoped_mcp_session_context(state.as_ref(), context, session.id)
+    let error = session_store_lookup(state.as_ref())
+        .require_scoped_mcp_session_context(context, session.id)
         .await
         .expect_err("loaded scope mismatch should be unauthorized");
 
@@ -74,7 +78,8 @@ async fn scoped_mcp_session_context_reports_missing_session() {
         capabilities: McpAuthCapabilities::provider_session(),
     };
 
-    let error = require_scoped_mcp_session_context(&state, context, session_id)
+    let error = session_store_lookup(&state)
+        .require_scoped_mcp_session_context(context, session_id)
         .await
         .expect_err("missing session should be reported as not found");
 
@@ -89,10 +94,10 @@ async fn scoped_mcp_session_context_reports_store_unavailable() {
     let (data_dir, state, session) = seeded_state().await;
     block_workspace_store_for_session(&data_dir, &state, &session).await;
 
-    let error =
-        require_scoped_mcp_session_context(state.as_ref(), context_for(&session), session.id)
-            .await
-            .expect_err("blocked workspace store should report unavailable");
+    let error = session_store_lookup(state.as_ref())
+        .require_scoped_mcp_session_context(context_for(&session), session.id)
+        .await
+        .expect_err("blocked workspace store should report unavailable");
 
     assert!(
         matches!(error, ScopedMcpSessionAccessError::StoreUnavailable(_)),
@@ -135,7 +140,8 @@ async fn scoped_mcp_session_context_rejects_archived_subagents() {
         "child should transition to archived"
     );
 
-    let error = require_scoped_mcp_session_context(state.as_ref(), context_for(&child), child.id)
+    let error = session_store_lookup(state.as_ref())
+        .require_scoped_mcp_session_context(context_for(&child), child.id)
         .await
         .expect_err("archived subagent should be hidden from MCP scope checks");
 

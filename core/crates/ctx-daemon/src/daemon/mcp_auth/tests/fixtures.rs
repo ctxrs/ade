@@ -5,7 +5,7 @@ use ctx_core::models::{ExecutionEnvironment, Session, VcsKind};
 use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
 use ctx_store::StoreManager;
 
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProtectedWorkspaceStoreLookup, SessionStoreLookup};
 
 pub(super) async fn seeded_state() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
     let data_dir = tempfile::tempdir().expect("create tempdir");
@@ -117,6 +117,15 @@ pub(super) async fn block_workspace_store_for_session(
     tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
         .await
         .expect("block workspace store");
+}
+
+pub(super) fn session_store_lookup(state: &DaemonState) -> SessionStoreLookup {
+    let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+        state.core.stores.clone(),
+        Arc::clone(&state.sessions),
+        Arc::clone(&state.transport.merge_queue),
+    );
+    SessionStoreLookup::new(state.global_store().clone(), workspace_stores)
 }
 
 pub(super) fn context_for(session: &Session) -> McpAuthContext {

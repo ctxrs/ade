@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
-use ctx_mcp_auth::McpAuthRegistry;
-use ctx_observability::ops_events::{OpsEvent, OpsEvents};
+use ctx_mcp_auth::{McpAuthCapabilities, McpAuthRegistry};
+use ctx_observability::ops_events::OpsEvents;
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
 use ctx_provider_runtime::ProviderRuntime;
@@ -80,6 +81,48 @@ impl AuthHandle {
         self.auth_token.is_some()
     }
 
+    pub async fn issue_provider_session_mcp_token(
+        &self,
+        session_id: SessionId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    ) -> String {
+        self.issue_provider_session_mcp_token_with_capabilities(
+            session_id,
+            workspace_id,
+            worktree_id,
+            McpAuthCapabilities::provider_session(),
+        )
+        .await
+    }
+
+    pub async fn issue_provider_session_mcp_token_with_capabilities(
+        &self,
+        session_id: SessionId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        capabilities: McpAuthCapabilities,
+    ) -> String {
+        crate::daemon::mcp_auth::issue_provider_session_mcp_token_with_capabilities_parts(
+            self.mcp_auth.as_ref(),
+            &self.ops_events,
+            session_id,
+            workspace_id,
+            worktree_id,
+            capabilities,
+        )
+        .await
+    }
+
+    pub async fn revoke_provider_session_mcp_token(&self, token: &str) -> bool {
+        crate::daemon::mcp_auth::revoke_provider_session_mcp_token_parts(
+            self.mcp_auth.as_ref(),
+            &self.ops_events,
+            token,
+        )
+        .await
+    }
+
     pub async fn verify_mcp_auth_token(&self, token: &str) -> Option<ctx_mcp_auth::McpAuthContext> {
         self.mcp_auth.verify_token(token).await
     }
@@ -91,19 +134,13 @@ impl AuthHandle {
         path: &str,
         reason: &str,
     ) {
-        let mut event = OpsEvent::new("warn", "mcp_token_denied");
-        event.session_id = Some(mcp_auth.session_id.0.to_string());
-        event.worktree_id = Some(mcp_auth.worktree_id.0.to_string());
-        event.meta = Some(serde_json::json!({
-            "workspace_id": mcp_auth.workspace_id.0.to_string(),
-            "capabilities": mcp_auth.capabilities.names(),
-            "detail": {
-                "method": method,
-                "path": path,
-                "reason": reason,
-            },
-        }));
-        self.ops_events.emit(event);
+        crate::daemon::mcp_auth::emit_mcp_token_denied_with_ops(
+            &self.ops_events,
+            mcp_auth,
+            method,
+            path,
+            reason,
+        );
     }
 
     pub async fn verify_mobile_api_token_hash(
