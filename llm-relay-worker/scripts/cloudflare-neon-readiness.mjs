@@ -104,6 +104,28 @@ const RELEASE_API_REQUIRED_ENV = [
   },
 ];
 
+const TELEMETRY_REQUIRED_ENV = [
+  ...COMMON_REQUIRED_ENV,
+  {
+    group: "telemetry_storage",
+    name: "TELEMETRY_DATABASE_URL",
+    aliases: ["CTX_TELEMETRY_DATABASE_URL", "CTX_NEON_PROD_TELEMETRY_DATABASE_URL"],
+    secret: true,
+  },
+  {
+    group: "telemetry_storage",
+    name: "INSTALL_ID_HASH_SALT",
+    aliases: [],
+    secret: true,
+  },
+  {
+    group: "telemetry_mirror",
+    name: "POSTHOG_CANARY_PROJECT_API_KEY",
+    aliases: [],
+    secret: true,
+  },
+];
+
 const RELAY_REQUIRED_WORKER_VARS = [
   "AUTHORITY_BASE_URL",
   "ENVIRONMENT",
@@ -115,6 +137,10 @@ const RELEASE_API_REQUIRED_WORKER_VARS = [
   "RELEASE_ARTIFACT_REDIRECT_BASE_URL",
 ];
 
+const TELEMETRY_REQUIRED_WORKER_VARS = [
+  "POSTHOG_HOST",
+];
+
 const RELAY_REQUIRED_WORKER_SECRETS = [
   "AUTHORITY_BEARER_TOKEN",
   "CONTROL_PLANE_JWKS",
@@ -122,6 +148,13 @@ const RELAY_REQUIRED_WORKER_SECRETS = [
 ];
 
 const RELEASE_API_REQUIRED_WORKER_SECRETS = [];
+
+const TELEMETRY_REQUIRED_WORKER_SECRETS = [
+  "INSTALL_ID_HASH_SALT",
+  "POSTHOG_CANARY_PROJECT_API_KEY",
+  "POSTHOG_PROJECT_API_KEY",
+  "TELEMETRY_DATABASE_URL",
+];
 
 const AUTHORITY_TABLES = [
   "billing_spend_limits",
@@ -151,7 +184,7 @@ Default behavior is read-only:
 
 Options:
   --environment <name>       Worker environment to evaluate (repeatable; default: staging, prod)
-  --profile <name>           Readiness profile: relay or release-api (default: relay)
+  --profile <name>           Readiness profile: relay, release-api, or telemetry (default: relay)
   --worker-name <name>       Cloudflare Worker script name (default: wrangler.toml name)
   --wrangler-config <path>   Wrangler config path (default: llm-relay-worker/wrangler.toml)
   --infisical-env <env>      Infisical environment for local fallback (default: INFISICAL_ENV or prod)
@@ -251,7 +284,7 @@ function parseArgs(argv) {
   options.environments = normalizeList(options.environments.length > 0 ? options.environments : ["staging", "prod"]);
   options.infisicalEnv = options.infisicalEnv || process.env.INFISICAL_ENV || DEFAULT_INFISICAL_ENV;
   options.infisicalPath = options.infisicalPath || process.env.INFISICAL_PATH || DEFAULT_INFISICAL_PATH;
-  if (options.profile !== "relay" && options.profile !== "release-api") {
+  if (!["relay", "release-api", "telemetry"].includes(options.profile)) {
     throw new Error(`unsupported --profile '${options.profile}'`);
   }
   if (options.ensureNeonRoles && !options.mutate) {
@@ -367,6 +400,14 @@ function readinessProfile(profile) {
       requiredEnv: RELEASE_API_REQUIRED_ENV,
       requiredWorkerSecrets: RELEASE_API_REQUIRED_WORKER_SECRETS,
       requiredWorkerVars: RELEASE_API_REQUIRED_WORKER_VARS,
+    };
+  }
+  if (profile === "telemetry") {
+    return {
+      inspectNeonDatabase: false,
+      requiredEnv: TELEMETRY_REQUIRED_ENV,
+      requiredWorkerSecrets: TELEMETRY_REQUIRED_WORKER_SECRETS,
+      requiredWorkerVars: TELEMETRY_REQUIRED_WORKER_VARS,
     };
   }
   return {

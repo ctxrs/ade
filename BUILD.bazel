@@ -36,6 +36,28 @@ filegroup(
 )
 
 filegroup(
+    name = "ctx_pack_spec_sources",
+    srcs = glob(
+        [
+            ".ctx/ctx-pack/specs/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ctx_exec_plan_sources",
+    srcs = glob(
+        [
+            ".ctx/exec-plans/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "ci_script_sources",
     srcs = glob(
         [
@@ -50,9 +72,7 @@ filegroup(
     name = "repo_script_sources",
     srcs = glob(
         [
-            "scripts/*.sh",
-            "scripts/lib/**",
-            "scripts/tests/**",
+            "scripts/**",
         ],
         allow_empty = True,
     ),
@@ -64,6 +84,56 @@ filegroup(
     srcs = glob(
         [
             "supabase/functions/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "supabase_migration_sources",
+    srcs = glob(
+        [
+            "supabase/migrations/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "neon_migration_sources",
+    srcs = glob(
+        [
+            "neon/migrations/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "release_api_worker_sources",
+    srcs = glob(
+        [
+            "release-api-worker/**",
+        ],
+        exclude = [
+            "release-api-worker/node_modules/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "llm_relay_worker_sources",
+    srcs = glob(
+        [
+            "llm-relay-worker/**",
+        ],
+        exclude = [
+            "llm-relay-worker/node_modules/**",
         ],
         allow_empty = True,
     ),

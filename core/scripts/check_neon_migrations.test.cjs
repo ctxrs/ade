@@ -105,3 +105,18 @@ test("missing required domain index fails validation", () => {
     assert.match(result.errors.join("\n"), /missing required index: usage_ledger_events_request_idx/);
   });
 });
+
+test("missing telemetry ingest returning grant fails validation", () => {
+  withTempMigrations((migrationsDir) => {
+    replaceInMigration(
+      migrationsDir,
+      "0003_telemetry_event_foundation.sql",
+      "GRANT INSERT, SELECT (event_id) ON ctx.telemetry_event TO ctx_telemetry_ingest;",
+      "GRANT INSERT ON ctx.telemetry_event TO ctx_telemetry_ingest;",
+    );
+
+    const result = checkMigrationDirectory(migrationsDir);
+
+    assert.match(result.errors.join("\n"), /missing required SQL contract: telemetry ingest role can return idempotent inserted event ids/);
+  });
+});

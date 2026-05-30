@@ -87,6 +87,13 @@ const REQUIRED_INDEXES = Object.freeze([
   "provider_invoice_lines_request_idx",
 ]);
 
+const REQUIRED_SQL_PATTERNS = Object.freeze([
+  {
+    label: "telemetry ingest role can return idempotent inserted event ids",
+    pattern: /\bgrant\s+insert\s*,\s*select\s*\(\s*event_id\s*\)\s+on\s+ctx\s*\.\s*telemetry_event\s+to\s+ctx_telemetry_ingest\b/i,
+  },
+]);
+
 const LEGACY_LEDGER_NAME = "supa" + "base_migrations";
 
 const FORBIDDEN_PATTERNS = Object.freeze([
@@ -254,6 +261,12 @@ function checkRequiredDomainObjects(normalizedSql) {
     }
   });
 
+  REQUIRED_SQL_PATTERNS.forEach(({ label, pattern }) => {
+    if (!pattern.test(normalizedSql)) {
+      errors.push(`missing required SQL contract: ${label}`);
+    }
+  });
+
   return errors;
 }
 
@@ -330,6 +343,7 @@ if (require.main === module) {
 
 module.exports = {
   REQUIRED_INDEXES,
+  REQUIRED_SQL_PATTERNS,
   REQUIRED_ROLES,
   REQUIRED_TABLES,
   checkMigrationDirectory,

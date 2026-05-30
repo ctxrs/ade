@@ -49,6 +49,55 @@ describe("cloudflare neon readiness script", () => {
     });
   });
 
+  test("telemetry profile requires Worker secrets and Neon telemetry storage without serializing values", async () => {
+    const env = {
+      CLOUDFLARE_ACCOUNT_ID: "account-id",
+      CLOUDFLARE_API_TOKEN: "cf-secret-token",
+      NEON_API_KEY: "neon-secret-token",
+      NEON_PROJECT_ID: "neon-project",
+      TELEMETRY_DATABASE_URL: "postgresql://ctx_telemetry_ingest:db-secret@db.example.test/neondb?sslmode=require",
+      INSTALL_ID_HASH_SALT: "install-salt",
+      POSTHOG_CANARY_PROJECT_API_KEY: "posthog-canary-secret",
+    };
+
+    const report = await buildReadinessReport({
+      argv: [
+        "--profile",
+        "telemetry",
+        "--wrangler-config",
+        "../telemetry-worker/wrangler.toml",
+        "--worker-name",
+        "ctx-telemetry",
+        "--no-infisical",
+        "--skip-cloudflare",
+        "--skip-neon-api",
+      ],
+      env,
+      spawnSync: unavailableSpawn,
+    });
+    const serialized = stableJson(report);
+
+    expect(report.env.missing).toEqual([]);
+    expect(report.mode.profile).toBe("telemetry");
+    expect(report.neon.database).toMatchObject({
+      checked: false,
+      skip_reason: "disabled_by_profile",
+    });
+    expect(serialized).not.toContain("cf-secret-token");
+    expect(serialized).not.toContain("neon-secret-token");
+    expect(serialized).not.toContain("db-secret");
+    expect(serialized).not.toContain("install-salt");
+    expect(serialized).not.toContain("posthog-canary-secret");
+    expect(report.failures).toEqual([]);
+    expect(report.wrangler.environments).toContainEqual(
+      expect.objectContaining({
+        missing_vars: [],
+        name: "prod",
+        required_vars: ["POSTHOG_HOST"],
+      }),
+    );
+  });
+
   test("wrangler parser reports env-specific vars instead of inheriting root vars", () => {
     const wrangler = parseWranglerToml(`
 name = "ctx-llm-relay"

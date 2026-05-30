@@ -51,6 +51,8 @@ const TELEMETRY_COLUMNS = [
 
 type TelemetryColumn = typeof TELEMETRY_COLUMNS[number];
 
+export const TELEMETRY_INSERT_TABLE = "ctx.telemetry_event";
+
 export async function createNeonTelemetryDatabase(
   databaseUrl: string,
 ): Promise<TelemetryDatabase> {
@@ -76,7 +78,7 @@ class NeonTelemetryDatabase implements TelemetryDatabase {
       return `(${placeholders.join(", ")})`;
     });
     const query = `
-      INSERT INTO telemetry_event (${TELEMETRY_COLUMNS.join(", ")})
+      INSERT INTO ${TELEMETRY_INSERT_TABLE} (${TELEMETRY_COLUMNS.join(", ")})
       VALUES ${valuesSql.join(", ")}
       ON CONFLICT (event_id) DO NOTHING
       RETURNING event_id

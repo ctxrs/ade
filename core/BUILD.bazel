@@ -58,3 +58,27 @@ filegroup(
     srcs = glob(["crates/ctx-http/src/api/auth/**"], allow_empty = True),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "ctx_http_sources",
+    srcs = glob(["crates/ctx-http/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ctx_client_sources",
+    srcs = glob(["crates/ctx-client/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ctx_mobile_access_service_sources",
+    srcs = glob(["crates/ctx-mobile-access-service/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ctx_daemon_mobile_access_sources",
+    srcs = glob(["crates/ctx-daemon/src/daemon/mobile_access/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)

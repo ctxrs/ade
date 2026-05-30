@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local --port 8793",
+    "readiness:check": "node ../llm-relay-worker/scripts/cloudflare-neon-readiness.mjs --profile telemetry --wrangler-config wrangler.toml --worker-name ctx-telemetry",
+    "readiness:check:local": "node ../llm-relay-worker/scripts/cloudflare-neon-readiness.mjs --profile telemetry --wrangler-config wrangler.toml --worker-name ctx-telemetry --no-infisical --skip-cloudflare --skip-neon-api",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "deploy": "wrangler deploy",

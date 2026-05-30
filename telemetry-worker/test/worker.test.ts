@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import type { TelemetryDatabase } from "../src/database";
+import { TELEMETRY_INSERT_TABLE, type TelemetryDatabase } from "../src/database";
 import { capturePostHogEvent } from "../src/posthog";
 import type { TelemetryPostHogCapture, TelemetryRow } from "../src/telemetry-ingest";
 import { createTelemetryWorker, type Env } from "../src/worker";
@@ -10,6 +10,10 @@ afterEach(() => {
 });
 
 describe("telemetry worker", () => {
+  test("writes to the canonical ctx telemetry schema", () => {
+    expect(TELEMETRY_INSERT_TABLE).toBe("ctx.telemetry_event");
+  });
+
   test("handles telemetry CORS preflight", async () => {
     const database = new FakeTelemetryDatabase();
     const worker = createTestWorker(database);

@@ -42,6 +42,6 @@ CREATE INDEX IF NOT EXISTS telemetry_event_env_ts_idx
 CREATE INDEX IF NOT EXISTS telemetry_event_properties_gin_idx
   ON ctx.telemetry_event USING gin (properties);
 
-GRANT INSERT ON ctx.telemetry_event TO ctx_telemetry_ingest;
+GRANT INSERT, SELECT (event_id) ON ctx.telemetry_event TO ctx_telemetry_ingest;
 GRANT SELECT ON ctx.telemetry_event TO ctx_analytics_readonly;
 GRANT SELECT ON ctx.telemetry_event TO ctx_control_plane;
