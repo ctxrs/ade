@@ -24,13 +24,8 @@ const productFiles = [
   "core/crates/ctx-provider-accounts/src/provider_matrix.json",
   "core/scripts/lib/release_bom.cjs",
   "scripts/lib/tauri_tools_lock.mjs",
-  "scripts/release_e2e_with_infisical.sh",
-  "scripts/release_promote_supabase_latest.sh",
+  "scripts/release_promote_storage_latest.sh",
   "scripts/run_mobile_e2e.sh",
-  "scripts/supabase_prod_env.sh",
-  "supabase/functions/download/index.ts",
-  "supabase/functions/provider-matrix/index.ts",
-  "supabase/functions/releases/index.ts",
 ];
 
 const executableArtifactMetadataFiles = [

@@ -147,15 +147,13 @@ export default defineConfig(({ command }) => {
   const auth = command === "serve" ? loadDaemonAuth() : null;
   const daemonUrl =
     process.env.CTX_DAEMON_URL ?? auth?.daemon_url ?? "http://127.0.0.1:4399";
-  const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? "").trim();
-  const supabaseProxyTarget = String(process.env.CTX_SUPABASE_PROXY_TARGET ?? "").trim();
   const devPort = Number(process.env.CTX_WEB_PORT ?? 5173);
   const useHttps =
     process.env.CTX_DEV_HTTPS === "1"
       ? true
       : process.env.CTX_DEV_HTTP === "1"
         ? false
-        : !supabaseUrl.startsWith("http://");
+        : true;
   const appVersion = String(process.env.VITE_CTX_APP_VERSION ?? packageJson.version ?? "0.0.0");
   const isCi = ["1", "true", "yes", "on"].includes(
     String(process.env.CI ?? "").trim().toLowerCase(),
@@ -193,18 +191,6 @@ export default defineConfig(({ command }) => {
       },
     };
   };
-
-  const supabaseProxy =
-    supabaseProxyTarget.length > 0
-      ? {
-          "/auth": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
-          "/rest": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
-          "/storage": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
-          "/functions": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
-          "/realtime": { target: supabaseProxyTarget, changeOrigin: true, secure: false, ws: true },
-          "/graphql": { target: supabaseProxyTarget, changeOrigin: true, secure: false },
-        }
-      : {};
 
   return {
     define: {
@@ -256,7 +242,6 @@ export default defineConfig(({ command }) => {
           ws: true,
           xfwd: true,
         }),
-        ...supabaseProxy,
       },
     },
     preview: {

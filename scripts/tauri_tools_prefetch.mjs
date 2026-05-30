@@ -28,7 +28,7 @@ Options:
 Required env:
   TAURI_TOOLS_MIRROR_BASE_URL
 or
-  SUPABASE_URL (+ optional SUPABASE_STORAGE_BUCKET, default: releases)
+  RELEASE_PUBLIC_STORAGE_ORIGIN (+ optional RELEASE_PUBLIC_STORAGE_BUCKET, default: releases)
 `);
 };
 
@@ -73,7 +73,7 @@ if (!platform) {
 const mirrorBaseUrl = resolveMirrorBaseUrl();
 if (!mirrorBaseUrl) {
   throw new Error(
-    "missing mirror base URL: set TAURI_TOOLS_MIRROR_BASE_URL or SUPABASE_URL (optional SUPABASE_STORAGE_BUCKET)",
+    "missing mirror base URL: set TAURI_TOOLS_MIRROR_BASE_URL or RELEASE_PUBLIC_STORAGE_ORIGIN (optional RELEASE_PUBLIC_STORAGE_BUCKET)",
   );
 }
 

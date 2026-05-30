@@ -13,8 +13,8 @@ run_verify() {
   local channel="$1"
   local out_file="$tmp/out_${channel}.log"
   set +e
-  SUPABASE_FUNCTIONS_URL="$functions_base" RELEASE_CHANNEL="$channel" RELEASE_SOURCE_COMMIT="test-commit" \
-    ./scripts/release_verify_supabase.sh >"$out_file" 2>&1
+  RELEASE_FUNCTIONS_URL="$functions_base" RELEASE_CHANNEL="$channel" RELEASE_SOURCE_COMMIT="test-commit" \
+    ./scripts/release_verify_storage.sh >"$out_file" 2>&1
   local code=$?
   set -e
   printf '%s' "$out_file"

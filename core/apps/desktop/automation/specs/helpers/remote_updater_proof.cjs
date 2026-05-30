@@ -19,7 +19,7 @@ const SSH_CONFIG_PATH = String(
 ).trim();
 const SSH_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_SSH_PORT || "0"), 10) || 0;
 const DOWNLOAD_BASE_URL = String(
-  process.env.CTX_UPDATER_E2E_DOWNLOAD_BASE_URL || process.env.SUPABASE_FUNCTIONS_URL || "https://api.ctx.rs/functions/v1",
+  process.env.CTX_UPDATER_E2E_DOWNLOAD_BASE_URL || process.env.RELEASE_FUNCTIONS_URL || "https://api.ctx.rs/functions/v1",
 ).trim().replace(/\/+$/u, "");
 const BOOTSTRAP_CHANNEL = String(process.env.CTX_UPDATER_E2E_BOOTSTRAP_CHANNEL || "stable").trim() || "stable";
 const TARGET_CHANNEL = String(

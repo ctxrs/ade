@@ -7,6 +7,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
+const {
+  buildStorageClientFromEnv,
+  readFileBytes,
+} = require("./lib/release_storage.cjs");
 
 const CORE_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_LOCK_PATH = path.join(CORE_ROOT, "crates", "ctx-managed-installs", "src", "runtime_lock.rs");
@@ -32,9 +36,11 @@ Options:
   --verify-after-publish Verify mirror SHA-256 after publish.
 
 Publish env:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
-  SUPABASE_STORAGE_BUCKET (optional, defaults to ${DEFAULT_BUCKET}; must match lock bucket)
+  RELEASE_STORAGE_PROVIDER=r2
+  RELEASE_STORAGE_BUCKET or CTX_RELEASES_R2_BUCKET
+  RELEASE_R2_ENDPOINT or RELEASE_R2_ACCOUNT_ID
+  RELEASE_R2_ACCESS_KEY_ID
+  RELEASE_R2_SECRET_ACCESS_KEY
 `;
 }
 
@@ -259,32 +265,17 @@ async function checkPresence(entry) {
 }
 
 function assertPublishEnv(env, entries) {
-  const supabaseUrl = String(env.SUPABASE_URL || "").trim();
-  const token = String(env.SUPABASE_SERVICE_ROLE_KEY || "");
-  const bucket = String(env.SUPABASE_STORAGE_BUCKET || DEFAULT_BUCKET);
-  if (!supabaseUrl || !token) {
-    throw new Error("publishing requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
-  }
-  const parsedUrl = new URL(supabaseUrl);
-  const rootPath = parsedUrl.pathname === "" || parsedUrl.pathname === "/";
-  if (
-    parsedUrl.protocol !== "https:"
-    || parsedUrl.hostname !== MIRROR_HOST
-    || parsedUrl.port !== ""
-    || parsedUrl.username !== ""
-    || parsedUrl.password !== ""
-    || parsedUrl.search !== ""
-    || parsedUrl.hash !== ""
-    || !rootPath
-  ) {
-    throw new Error(`publishing requires SUPABASE_URL=https://${MIRROR_HOST}`);
+  const client = buildStorageClientFromEnv(env);
+  const publicOrigin = String(client.config.publicOrigin || "").replace(/\/+$/, "");
+  if (publicOrigin !== `https://${MIRROR_HOST}`) {
+    throw new Error(`publishing requires RELEASE_PUBLIC_STORAGE_ORIGIN=https://${MIRROR_HOST}`);
   }
   for (const entry of entries) {
-    if (entry.bucket !== bucket) {
-      throw new Error(`SUPABASE_STORAGE_BUCKET=${bucket} does not match lock bucket ${entry.bucket}`);
+    if (entry.bucket !== client.config.publicBucket) {
+      throw new Error(`RELEASE_PUBLIC_STORAGE_BUCKET=${client.config.publicBucket} does not match lock bucket ${entry.bucket}`);
     }
   }
-  return { supabaseUrl: `https://${MIRROR_HOST}`, token, bucket };
+  return { client };
 }
 
 async function verifyExistingObjectMatches(entry, localPath) {
@@ -293,45 +284,19 @@ async function verifyExistingObjectMatches(entry, localPath) {
   await fs.promises.rm(actualPath, { force: true });
 }
 
-async function uploadObject({ entry, localPath, supabaseUrl, token, bucket }) {
-  const sizeBytes = fs.statSync(localPath).size;
-  const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${entry.objectPath}`;
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      apikey: token,
-      "content-type": contentTypeForArchive(entry.archiveName),
-      "content-length": String(sizeBytes),
-      "x-upsert": "false",
-    },
-    body: fs.createReadStream(localPath),
-    duplex: "half",
+async function uploadObject({ entry, localPath, client }) {
+  const result = await client.putObject({
+    body: readFileBytes(localPath),
+    contentType: contentTypeForArchive(entry.archiveName),
+    objectPath: entry.objectPath,
+    upsert: false,
+    verifyExisting: true,
   });
-  if (response.ok) {
-    return "uploaded";
-  }
-  const body = await response.text().catch(() => "");
-  if (response.status === 400 || response.status === 409) {
-    await verifyExistingObjectMatches(entry, localPath);
-    return "already-present";
-  }
-  throw new Error(`upload failed for ${entry.objectPath}: HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ""}`);
+  return result.existing ? "already-present" : "uploaded";
 }
 
-async function deleteObject({ entry, supabaseUrl, token, bucket }) {
-  const deleteUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${entry.objectPath}`;
-  const response = await fetch(deleteUrl, {
-    method: "DELETE",
-    headers: {
-      authorization: `Bearer ${token}`,
-      apikey: token,
-    },
-  });
-  if (!response.ok && response.status !== 404) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`delete failed for ${entry.objectPath}: HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ""}`);
-  }
+async function deleteObject({ entry, client }) {
+  await client.deleteObject(entry.objectPath);
 }
 
 async function publishObject({ entry, localPath, publishEnv, repairMismatched }) {

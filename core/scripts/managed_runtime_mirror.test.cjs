@@ -72,11 +72,7 @@ test("managed runtime mirror CLI supports dry-run publish without credentials", 
   ], {
     cwd: path.resolve(__dirname, ".."),
     encoding: "utf8",
-    env: {
-      ...process.env,
-      SUPABASE_URL: "",
-      SUPABASE_SERVICE_ROLE_KEY: "",
-    },
+    env: { ...process.env },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /publish-plan\tnode\tlinux-x64\thttps:\/\/nodejs\.org\//);
@@ -84,8 +80,8 @@ test("managed runtime mirror CLI supports dry-run publish without credentials", 
   assert.match(result.stdout, /https:\/\/api\.ctx\.rs\/storage\/v1\/object\/public\/releases\/artifacts\/managed-runtimes\//);
 });
 
-test("managed runtime mirror publish rejects non-ctx upload bases before using credentials", () => {
-  for (const supabaseUrl of [
+test("managed runtime mirror publish rejects non-ctx public origins before uploading", () => {
+  for (const publicOrigin of [
     "http://api.ctx.rs",
     "https://api.ctx.rs:444",
     "https://api.ctx.rs?x=1",
@@ -104,29 +100,33 @@ test("managed runtime mirror publish rejects non-ctx upload bases before using c
       encoding: "utf8",
       env: {
         ...process.env,
-        SUPABASE_URL: supabaseUrl,
-        SUPABASE_SERVICE_ROLE_KEY: "test-service-role",
+        RELEASE_PUBLIC_STORAGE_ORIGIN: publicOrigin,
+        RELEASE_PUBLIC_STORAGE_BUCKET: "releases",
+        RELEASE_R2_ACCESS_KEY_ID: "access",
+        RELEASE_R2_ENDPOINT: "https://r2.example.test",
+        RELEASE_R2_SECRET_ACCESS_KEY: "secret",
+        RELEASE_STORAGE_BUCKET: "ade-releases",
       },
     });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /publishing requires SUPABASE_URL=https:\/\/api\.ctx\.rs/);
+    assert.match(result.stderr, /publishing requires RELEASE_PUBLIC_STORAGE_ORIGIN=https:\/\/api\.ctx\.rs/);
   }
 });
 
-test("managed runtime mirror publish accepts only the ctx root upload base", () => {
+test("managed runtime mirror publish accepts the ctx public origin", () => {
   const entries = parseRuntimeLock(DEFAULT_LOCK_PATH);
-  for (const supabaseUrl of ["https://api.ctx.rs", "https://api.ctx.rs/"]) {
-    assert.deepEqual(
-      assertPublishEnv({
-        SUPABASE_URL: supabaseUrl,
-        SUPABASE_SERVICE_ROLE_KEY: "test-service-role",
-      }, entries),
-      {
-        supabaseUrl: "https://api.ctx.rs",
-        token: "test-service-role",
-        bucket: "releases",
-      },
-    );
+  for (const publicOrigin of ["https://api.ctx.rs", "https://api.ctx.rs/"]) {
+    const { client } = assertPublishEnv({
+      RELEASE_PUBLIC_STORAGE_BUCKET: "releases",
+      RELEASE_PUBLIC_STORAGE_ORIGIN: publicOrigin,
+      RELEASE_R2_ACCESS_KEY_ID: "access",
+      RELEASE_R2_ENDPOINT: "https://r2.example.test",
+      RELEASE_R2_SECRET_ACCESS_KEY: "secret",
+      RELEASE_STORAGE_BUCKET: "ade-releases",
+    }, entries);
+    assert.equal(client.config.publicOrigin, "https://api.ctx.rs");
+    assert.equal(client.config.publicBucket, "releases");
+    assert.equal(client.config.bucket, "ade-releases");
   }
 });
 

@@ -21,8 +21,8 @@ function requireValue(name, value) {
 
 function normalizeProvider(value) {
   const provider = trimValue(value || "r2").toLowerCase();
-  if (provider !== "supabase" && provider !== "r2") {
-    throw new Error(`unsupported RELEASE_STORAGE_PROVIDER '${value}' (expected supabase or r2)`);
+  if (provider !== "r2") {
+    throw new Error(`unsupported RELEASE_STORAGE_PROVIDER '${value}' (expected r2)`);
   }
   return provider;
 }
@@ -37,31 +37,25 @@ function resolveStorageProvider(env = process.env) {
 }
 
 function resolveStorageBucket(env = process.env, provider = resolveStorageProvider(env)) {
-  if (provider === "r2") {
-    return trimValue(
-      env.RELEASE_STORAGE_BUCKET
-        || env.CTX_RELEASES_R2_BUCKET
-        || env.CTX_RELEASE_R2_BUCKET
-        || env.RELEASE_R2_BUCKET,
-    );
+  if (provider !== "r2") {
+    throw new Error(`unsupported release storage provider '${provider}'`);
   }
   return trimValue(
     env.RELEASE_STORAGE_BUCKET
-      || env.SUPABASE_STORAGE_BUCKET,
+      || env.CTX_RELEASES_R2_BUCKET
+      || env.CTX_RELEASE_R2_BUCKET
+      || env.RELEASE_R2_BUCKET,
   );
 }
 
 function resolvePublicStorageOrigin(env = process.env) {
-  return trimValue(env.RELEASE_PUBLIC_STORAGE_ORIGIN || env.SUPABASE_PUBLIC_URL || DEFAULT_PUBLIC_STORAGE_ORIGIN)
+  return trimValue(env.RELEASE_PUBLIC_STORAGE_ORIGIN || DEFAULT_PUBLIC_STORAGE_ORIGIN)
     .replace(/\/+$/, "");
 }
 
-function resolvePublicStorageBucket(env = process.env, provider = resolveStorageProvider(env), bucket = "") {
+function resolvePublicStorageBucket(env = process.env) {
   if (env.RELEASE_PUBLIC_STORAGE_BUCKET != null && trimValue(env.RELEASE_PUBLIC_STORAGE_BUCKET)) {
     return trimValue(env.RELEASE_PUBLIC_STORAGE_BUCKET);
-  }
-  if (provider === "supabase" && trimValue(bucket)) {
-    return trimValue(bucket);
   }
   return DEFAULT_PUBLIC_STORAGE_BUCKET;
 }
@@ -83,18 +77,6 @@ function resolveStorageConfigFromEnv(env = process.env) {
   const bucket = requireValue("RELEASE_STORAGE_BUCKET", resolveStorageBucket(env, provider));
   const publicOrigin = resolvePublicStorageOrigin(env);
   const publicBucket = requireValue("RELEASE_PUBLIC_STORAGE_BUCKET", resolvePublicStorageBucket(env, provider, bucket));
-  if (provider === "supabase") {
-    return {
-      provider,
-      bucket,
-      publicBucket,
-      publicOrigin,
-      supabase: {
-        serviceRoleKey: requireValue("SUPABASE_SERVICE_ROLE_KEY", env.SUPABASE_SERVICE_ROLE_KEY),
-        url: requireValue("SUPABASE_URL", env.SUPABASE_URL).replace(/\/+$/, ""),
-      },
-    };
-  }
   return {
     provider,
     bucket,
@@ -135,10 +117,6 @@ function normalizeObjectPath(objectPath) {
 function buildPublicObjectUrl(config, objectPath) {
   const publicBucket = config.publicBucket || config.bucket;
   return `${config.publicOrigin}/storage/v1/object/public/${publicBucket}/${normalizeObjectPath(objectPath)}`;
-}
-
-function buildSupabaseObjectUrl(config, objectPath) {
-  return `${config.supabase.url}/storage/v1/object/${config.bucket}/${normalizeObjectPath(objectPath)}`;
 }
 
 function buildR2ObjectRequestUrl(config, objectPath) {
@@ -236,10 +214,6 @@ function buildStorageClientFromEnv(env = process.env, { fetchImpl = globalThis.f
   return new ReleaseStorageClient(resolveStorageConfigFromEnv(env), { fetchImpl });
 }
 
-function isSupabaseDuplicate(status, text) {
-  return status === 409 || (status === 400 && /duplicate|already exists|exists/i.test(text));
-}
-
 function isMissingObject(status, text) {
   return status === 404 || (status === 400 && /not[_ -]?found|does not exist|no such|NoSuchKey/i.test(text));
 }
@@ -266,34 +240,12 @@ class ReleaseStorageClient {
   }
 
   async getObjectBuffer(objectPath, { allowMissing = false } = {}) {
-    if (this.config.provider === "r2") {
-      return this.getR2ObjectBuffer(objectPath, { allowMissing });
-    }
-    return this.getSupabaseObjectBuffer(objectPath, { allowMissing });
+    return this.getR2ObjectBuffer(objectPath, { allowMissing });
   }
 
   async getObjectText(objectPath, options = {}) {
     const bytes = await this.getObjectBuffer(objectPath, options);
     return bytes === null ? null : bytes.toString("utf8");
-  }
-
-  async getSupabaseObjectBuffer(objectPath, { allowMissing = false } = {}) {
-    const response = await this.fetchImpl(`${buildSupabaseObjectUrl(this.config, objectPath)}?cb=${Date.now()}`, {
-      headers: {
-        apikey: this.config.supabase.serviceRoleKey,
-        authorization: `Bearer ${this.config.supabase.serviceRoleKey}`,
-      },
-      method: "GET",
-    });
-    const arrayBuffer = response.ok ? await response.arrayBuffer() : null;
-    if (response.ok) {
-      return Buffer.from(arrayBuffer);
-    }
-    const text = await responseText(response);
-    if (allowMissing && isMissingObject(response.status, text)) {
-      return null;
-    }
-    throw new Error(`failed to read ${normalizeObjectPath(objectPath)} (HTTP ${response.status}): ${text.slice(0, 500)}`);
   }
 
   async getR2ObjectBuffer(objectPath, { allowMissing = false } = {}) {
@@ -323,32 +275,7 @@ class ReleaseStorageClient {
     verifyExisting = false,
   }) {
     const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
-    if (this.config.provider === "r2") {
-      return this.putR2Object({ body: bytes, contentType, objectPath, upsert, verifyExisting });
-    }
-    return this.putSupabaseObject({ body: bytes, contentType, objectPath, upsert, verifyExisting });
-  }
-
-  async putSupabaseObject({ body, contentType, objectPath, upsert, verifyExisting }) {
-    const response = await this.fetchImpl(buildSupabaseObjectUrl(this.config, objectPath), {
-      body,
-      headers: {
-        apikey: this.config.supabase.serviceRoleKey,
-        authorization: `Bearer ${this.config.supabase.serviceRoleKey}`,
-        "content-type": contentType,
-        "x-upsert": upsert ? "true" : "false",
-      },
-      method: "POST",
-    });
-    if (response.ok) {
-      return { existing: false, objectPath: normalizeObjectPath(objectPath), uploaded: true };
-    }
-    const text = await responseText(response);
-    if (!upsert && verifyExisting && isSupabaseDuplicate(response.status, text)) {
-      await this.verifyExistingObject(objectPath, body);
-      return { existing: true, objectPath: normalizeObjectPath(objectPath), uploaded: false };
-    }
-    throw new Error(`failed to upload ${normalizeObjectPath(objectPath)} (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    return this.putR2Object({ body: bytes, contentType, objectPath, upsert, verifyExisting });
   }
 
   async putR2Object({ body, contentType, objectPath, upsert, verifyExisting }) {
@@ -390,25 +317,7 @@ class ReleaseStorageClient {
   }
 
   async deleteObject(objectPath) {
-    if (this.config.provider === "r2") {
-      return this.deleteR2Object(objectPath);
-    }
-    return this.deleteSupabaseObject(objectPath);
-  }
-
-  async deleteSupabaseObject(objectPath) {
-    const response = await this.fetchImpl(buildSupabaseObjectUrl(this.config, objectPath), {
-      headers: {
-        apikey: this.config.supabase.serviceRoleKey,
-        authorization: `Bearer ${this.config.supabase.serviceRoleKey}`,
-      },
-      method: "DELETE",
-    });
-    if (response.ok || response.status === 404) {
-      return { deleted: response.ok, objectPath: normalizeObjectPath(objectPath) };
-    }
-    const text = await responseText(response);
-    throw new Error(`failed to delete ${normalizeObjectPath(objectPath)} (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    return this.deleteR2Object(objectPath);
   }
 
   async deleteR2Object(objectPath) {
@@ -428,53 +337,8 @@ class ReleaseStorageClient {
   }
 
   async ensureBucket({ fileSizeLimitBytes = "5368709120" } = {}) {
-    if (this.config.provider === "r2") {
-      return { bucket: this.config.bucket, provider: "r2", skipped: true };
-    }
-    const payload = {
-      file_size_limit: Number(fileSizeLimitBytes),
-      id: this.config.bucket,
-      name: this.config.bucket,
-      public: true,
-    };
-    const headers = {
-      apikey: this.config.supabase.serviceRoleKey,
-      authorization: `Bearer ${this.config.supabase.serviceRoleKey}`,
-      "content-type": "application/json",
-    };
-    const read = await this.fetchImpl(`${this.config.supabase.url}/storage/v1/bucket/${this.config.bucket}`, {
-      headers,
-      method: "GET",
-    });
-    if (read.ok) {
-      const bucket = await read.json().catch(() => ({}));
-      const rawLimit = bucket && Object.prototype.hasOwnProperty.call(bucket, "file_size_limit")
-        ? bucket.file_size_limit
-        : null;
-      const limit = rawLimit == null || rawLimit === "" ? null : Number(rawLimit);
-      if (bucket?.public === true && (limit == null || limit >= payload.file_size_limit)) {
-        return { bucket: this.config.bucket, provider: "supabase", skipped: false };
-      }
-    }
-    const create = await this.fetchImpl(`${this.config.supabase.url}/storage/v1/bucket`, {
-      body: JSON.stringify(payload),
-      headers,
-      method: "POST",
-    });
-    if (create.ok) {
-      return { bucket: this.config.bucket, provider: "supabase", skipped: false };
-    }
-    for (const method of ["PUT", "PATCH"]) {
-      const update = await this.fetchImpl(`${this.config.supabase.url}/storage/v1/bucket/${this.config.bucket}`, {
-        body: JSON.stringify(payload),
-        headers,
-        method,
-      });
-      if (update.ok || update.status === 204) {
-        return { bucket: this.config.bucket, provider: "supabase", skipped: false };
-      }
-    }
-    throw new Error(`failed to ensure Supabase bucket '${this.config.bucket}' is public`);
+    void fileSizeLimitBytes;
+    return { bucket: this.config.bucket, provider: "r2", skipped: true };
   }
 }
 

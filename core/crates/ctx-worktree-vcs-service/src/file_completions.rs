@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn no_fuzzy_subsequence_matching() {
         let paths = vec![
-            "scripts/supabase_local_start.sh".to_string(),
+            "scripts/release_publish_storage.sh".to_string(),
             "src/earth_model.ts".to_string(),
         ];
 

@@ -29,12 +29,12 @@ resolve_download_base_url() {
     printf '%s\n' "${CTX_UPDATER_E2E_DOWNLOAD_BASE_URL%/}"
     return 0
   fi
-  if [[ -n "${SUPABASE_FUNCTIONS_URL:-}" ]]; then
-    printf '%s\n' "${SUPABASE_FUNCTIONS_URL%/}"
+  if [[ -n "${RELEASE_FUNCTIONS_URL:-}" ]]; then
+    printf '%s\n' "${RELEASE_FUNCTIONS_URL%/}"
     return 0
   fi
-  if [[ -n "${SUPABASE_URL:-}" ]]; then
-    printf '%s/functions/v1\n' "${SUPABASE_URL%/}"
+  if [[ -n "${RELEASE_PUBLIC_STORAGE_ORIGIN:-}" ]]; then
+    printf '%s/functions/v1\n' "${RELEASE_PUBLIC_STORAGE_ORIGIN%/}"
     return 0
   fi
   printf '%s\n' "https://api.ctx.rs/functions/v1"

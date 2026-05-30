@@ -1,4 +1,4 @@
-.PHONY: test dev dev-codex-crp-local web supabase-local supabase-functions dev-preflight
+.PHONY: test dev dev-codex-crp-local web dev-preflight
 
 ifeq ($(origin CTX_MAKE_SESSION_ID), undefined)
 CTX_MAKE_SESSION_ID := make-$(shell date +%s%N 2>/dev/null || date +%s)
@@ -19,10 +19,6 @@ CTX_DAEMON_STOP ?= 0
 CTX_DAEMON_FEATURES ?=
 CTX_DAEMON_MALLOC_CONF ?=
 CTX_DAEMON_DATA_DIR ?= $(if $(CTX_DATA_DIR),$(CTX_DATA_DIR),$(HOME)/.ctx)
-SUPABASE_LOCAL ?= 1
-SUPABASE_FUNCTIONS ?= 1
-SUPABASE_FUNCTIONS_BG ?= 1
-SUPABASE_PROD ?= 0
 CTX_WEB_PORT ?= 5173
 DEV_LOG ?= 1
 DEV_RUST_LOG ?= info
@@ -78,27 +74,12 @@ DEV_MALLOC_CONF_SETENV := $(if $(CTX_DAEMON_MALLOC_CONF),--setenv MALLOC_CONF=$(
 DEV_DAEMON_FEATURES := $(if $(CTX_DAEMON_FEATURES),--features $(CTX_DAEMON_FEATURES))
 LOCAL_CODEX_CRP_ENABLED = $(if $(filter 1 true TRUE yes YES on ON,$(CTX_INSTALL_LOCAL_CODEX_CRP)),1,0)
 
-ifeq ($(SUPABASE_PROD),1)
-  SUPABASE_LOCAL := 0
-  SUPABASE_FUNCTIONS := 0
-endif
-
 test:
 	@$(CTX_CACHE_EXPORT_CMD); \
 	$(CTX_CACHE_RUN) cargo test -q
 	pnpm -C apps/web test
 
-supabase-local:
-ifeq ($(SUPABASE_LOCAL),1)
-	@../scripts/supabase_local_ensure.sh
-endif
-
-supabase-functions: supabase-local
-ifeq ($(SUPABASE_FUNCTIONS),1)
-	@../scripts/supabase_local_functions.sh $(if $(filter 1,$(SUPABASE_FUNCTIONS_BG)),--background,)
-endif
-
-dev: dev-preflight supabase-local supabase-functions
+dev: dev-preflight
 	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm crp:claude
 	@if [ "$(LOCAL_CODEX_CRP_ENABLED)" = "1" ]; then CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm crp:codex; fi
 	@CTX_DATA_DIR=$(CTX_DAEMON_DATA_DIR) CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" CTX_INSTALL_LOCAL_CODEX_CRP="$(CTX_INSTALL_LOCAL_CODEX_CRP)" ../scripts/dev_install_crp_harnesses.sh
@@ -183,23 +164,5 @@ dev-preflight:
 		exit 1; \
 	fi
 
-web: supabase-local supabase-functions
-ifeq ($(SUPABASE_PROD),1)
-	@SUPABASE_ENV="$$(../scripts/supabase_prod_env.sh)"; \
-	if [ -z "$$SUPABASE_ENV" ]; then \
-		echo "error: SUPABASE_PROD=1 but prod Supabase env is missing." >&2; \
-		exit 1; \
-	fi; \
-	env CTX_WEB_PORT=$(CTX_WEB_PORT) $$SUPABASE_ENV pnpm -C apps/web dev
-else
-ifeq ($(SUPABASE_LOCAL),1)
-	@SUPABASE_ENV="$$(../scripts/supabase_local_env.sh)"; \
-	if [ -n "$$SUPABASE_ENV" ]; then \
-		env CTX_WEB_PORT=$(CTX_WEB_PORT) $$SUPABASE_ENV pnpm -C apps/web dev; \
-	else \
-		CTX_WEB_PORT=$(CTX_WEB_PORT) pnpm -C apps/web dev; \
-	fi
-else
+web:
 	CTX_WEB_PORT=$(CTX_WEB_PORT) pnpm -C apps/web dev
-endif
-endif

@@ -44,7 +44,7 @@ const pathAllowlist = new Map([
     },
   ],
   [
-    "scripts/publish_adapter_supabase.sh",
+    "scripts/publish_adapter_storage.sh",
     {
       owner: "provider-artifacts",
       category: "provider-artifact-packaging",
@@ -110,7 +110,7 @@ const allowedCargoLinePatterns = new Map([
     ],
   ],
   [
-    "scripts/publish_adapter_supabase.sh",
+    "scripts/publish_adapter_storage.sh",
     [
       /\(cd "\$ROOT_DIR\/harness-adapters\/\$dir" && CARGO_TARGET_DIR="\$target_dir" cargo build --release\)/,
     ],
@@ -395,7 +395,7 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
       rationale: "bundle builds export per-bundle CARGO_TARGET_DIR or container /target",
     },
     {
-      path: "scripts/publish_adapter_supabase.sh",
+      path: "scripts/publish_adapter_storage.sh",
       pattern: /CARGO_TARGET_DIR="\$target_dir" cargo build --release/,
       rationale: "legacy adapter publish stages into a temp target under STAGING",
     },

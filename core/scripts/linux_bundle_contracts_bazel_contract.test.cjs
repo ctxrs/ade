@@ -12,7 +12,7 @@ const linuxTauriBundleScript = fs.readFileSync(
   path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"),
   "utf8",
 );
-const releaseVerifier = fs.readFileSync(path.join(repoRoot, "scripts", "release_verify_supabase.sh"), "utf8");
+const releaseVerifier = fs.readFileSync(path.join(repoRoot, "scripts", "release_verify_storage.sh"), "utf8");
 const tauriConfig = JSON.parse(
   fs.readFileSync(
     path.join(repoRoot, "core", "apps", "desktop", "src-tauri", "tauri.conf.json"),

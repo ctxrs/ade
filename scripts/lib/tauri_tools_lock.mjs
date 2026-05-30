@@ -10,8 +10,8 @@ export const DEFAULT_LOCK_PATH = path.join(
 );
 
 export const SUPPORTED_PLATFORMS = new Set(["linux-x64", "linux-arm64"]);
-export const DEFAULT_SUPABASE_STORAGE_BUCKET = "releases";
-export const DEFAULT_SUPABASE_PUBLIC_URL = "https://api.ctx.rs";
+export const DEFAULT_RELEASE_STORAGE_BUCKET = "releases";
+export const DEFAULT_RELEASE_PUBLIC_STORAGE_ORIGIN = "https://api.ctx.rs";
 
 export const normalizePlatform = (value) => {
   const platform = String(value || "").trim();
@@ -64,15 +64,15 @@ export const mirrorUrlFor = (baseUrl, entry) => {
   return `${base}/${entry.owner}/${entry.repo}/releases/download/${entry.tag}/${entry.asset}`;
 };
 
-export const resolveSupabaseStorageBucket = () =>
-  String(process.env.SUPABASE_STORAGE_BUCKET || "").trim() || DEFAULT_SUPABASE_STORAGE_BUCKET;
+export const resolveReleasePublicStorageBucket = () =>
+  String(process.env.RELEASE_PUBLIC_STORAGE_BUCKET || "").trim() || DEFAULT_RELEASE_STORAGE_BUCKET;
 
 export const resolveMirrorBaseUrl = () => {
   const explicit = String(process.env.TAURI_TOOLS_MIRROR_BASE_URL || "").trim().replace(/\/+$/, "");
   if (explicit) return explicit;
-  const supabaseUrl = String(process.env.SUPABASE_PUBLIC_URL || DEFAULT_SUPABASE_PUBLIC_URL).trim().replace(/\/+$/, "");
-  const bucket = resolveSupabaseStorageBucket();
-  return `${supabaseUrl}/storage/v1/object/public/${bucket}/tauri-tools`;
+  const publicOrigin = String(process.env.RELEASE_PUBLIC_STORAGE_ORIGIN || DEFAULT_RELEASE_PUBLIC_STORAGE_ORIGIN).trim().replace(/\/+$/, "");
+  const bucket = resolveReleasePublicStorageBucket();
+  return `${publicOrigin}/storage/v1/object/public/${bucket}/tauri-tools`;
 };
 
 export const lockEntryLabel = (entry) => `${entry.id} (${entry.asset})`;

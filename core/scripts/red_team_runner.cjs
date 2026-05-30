@@ -122,7 +122,7 @@ function getLaneDefinitions() {
       description: "Validates stable latest promotion against a hermetic local Supabase-style store.",
       minPreset: "core",
       cwd: repoRoot,
-      command: "bash scripts/tests/release_promote_supabase_latest_smoke.sh",
+      command: "bash scripts/tests/release_promote_storage_latest_smoke.sh",
       tags: ["hermetic", "release", "medium"],
     },
     {

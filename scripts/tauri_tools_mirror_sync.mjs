@@ -2,7 +2,7 @@
 import process from "node:process";
 import {
   DEFAULT_LOCK_PATH,
-  DEFAULT_SUPABASE_STORAGE_BUCKET,
+  DEFAULT_RELEASE_STORAGE_BUCKET,
   ensureEntrySchema,
   fetchBufferWithRetry,
   loadLock,
@@ -11,11 +11,11 @@ import {
   mirrorUrlFor,
   normalizePlatform,
   resolveMirrorBaseUrl,
-  resolveSupabaseStorageBucket,
   selectEntries,
   sha256Hex,
   upstreamUrlFor,
 } from "./lib/tauri_tools_lock.mjs";
+import { buildStorageClientFromEnv } from "../core/scripts/lib/release_storage.cjs";
 
 const printUsage = () => {
   console.log(`Usage: node scripts/tauri_tools_mirror_sync.mjs [options]
@@ -27,9 +27,12 @@ Options:
   --help             Show this help
 
 Required env:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
-  SUPABASE_STORAGE_BUCKET (optional, default: ${DEFAULT_SUPABASE_STORAGE_BUCKET})
+  RELEASE_STORAGE_PROVIDER=r2
+  RELEASE_STORAGE_BUCKET or CTX_RELEASES_R2_BUCKET
+  RELEASE_R2_ENDPOINT or RELEASE_R2_ACCOUNT_ID
+  RELEASE_R2_ACCESS_KEY_ID
+  RELEASE_R2_SECRET_ACCESS_KEY
+  RELEASE_PUBLIC_STORAGE_BUCKET (optional, default: ${DEFAULT_RELEASE_STORAGE_BUCKET})
 `);
 };
 
@@ -61,21 +64,8 @@ for (let i = 0; i < args.length; i += 1) {
   throw new Error(`unknown argument: ${arg}`);
 }
 
-const supabaseUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
-const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-const storageBucket = resolveSupabaseStorageBucket();
-if (!supabaseUrl || !serviceRoleKey) {
-  throw new Error("missing required env (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)");
-}
-
+const storageClient = buildStorageClientFromEnv(process.env);
 const mirrorBaseUrl = resolveMirrorBaseUrl();
-const uploadBaseUrl = `${supabaseUrl}/storage/v1/object/${storageBucket}`;
-
-const storageHeaders = {
-  authorization: `Bearer ${serviceRoleKey}`,
-  apikey: serviceRoleKey,
-  "x-upsert": "true",
-};
 
 const { lock } = loadLock(lockPath);
 const selected = selectEntries(lock.entries, platform);
@@ -115,19 +105,12 @@ for (const entry of selected) {
     if (payload.length !== expectedSize) {
       throw new Error(`size mismatch for ${entry.id}: lock=${expectedSize} actual=${payload.length}`);
     }
-    const uploadUrl = `${uploadBaseUrl}/${mirrorPath}`;
-    const uploadResp = await fetch(uploadUrl, {
-      method: "POST",
-      headers: {
-        ...storageHeaders,
-        "content-type": "application/octet-stream",
-      },
+    await storageClient.putObject({
       body: payload,
+      contentType: "application/octet-stream",
+      objectPath: mirrorPath,
+      upsert: true,
     });
-    if (!uploadResp.ok) {
-      const text = await uploadResp.text();
-      throw new Error(`failed to upload ${entry.id} to mirror: HTTP ${uploadResp.status} ${text}`);
-    }
   }
 
   const verifyPayload = await fetchBufferWithRetry(mirrorUrl, 3);

@@ -76,16 +76,12 @@ commands:
   put             Upload --src to --object-path
   get             Download --object-path to --out
   delete          Delete --object-path
-  ensure-bucket   Ensure Supabase bucket policy, no-op for R2
+  ensure-bucket   Ensure the R2 bucket is reachable
   public-url      Print the public URL for --object-path
 
 common env:
-  RELEASE_STORAGE_PROVIDER=supabase|r2 (default: supabase)
-  RELEASE_STORAGE_BUCKET=<bucket> (fallback: SUPABASE_STORAGE_BUCKET, CTX_RELEASES_R2_BUCKET, or CTX_RELEASE_R2_BUCKET)
-
-Supabase env:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
+  RELEASE_STORAGE_PROVIDER=r2
+  RELEASE_STORAGE_BUCKET=<bucket> (fallback: CTX_RELEASES_R2_BUCKET, CTX_RELEASE_R2_BUCKET, or RELEASE_R2_BUCKET)
 
 R2 env:
   RELEASE_R2_ENDPOINT or RELEASE_R2_ACCOUNT_ID
