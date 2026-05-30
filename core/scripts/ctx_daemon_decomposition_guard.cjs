@@ -1194,6 +1194,12 @@ const DAEMON_OPERATIONAL_STATE_BLIND_FILES = [
   "core/crates/ctx-daemon/src/daemon/state/cache/sweep/workspaces.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_startup.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/shutdown.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/sessions.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/workspaces.rs",
+  "core/crates/ctx-daemon/src/daemon/memleak_debug/snapshot.rs",
 ];
 
 const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
@@ -1277,6 +1283,22 @@ const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
         path: runtimePath,
         message:
           "Daemon startup must assemble StartupTurnReconcileHost at the private state boundary instead of calling broad reconcile_running_turns(&state).",
+      });
+    }
+
+    const broadMemleakCallPattern =
+      /\bspawn_memleak_debug\s*\(\s*(?:state\b|state\s*\.\s*clone\s*\(\s*\)|Arc\s*::\s*clone\s*\(\s*&\s*state\b)/gu;
+    for (
+      let match = broadMemleakCallPattern.exec(contents);
+      match;
+      match = broadMemleakCallPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: runtimePath,
+        message:
+          "Daemon startup must assemble MemleakDebugHost at the private state boundary instead of passing broad state to spawn_memleak_debug.",
       });
     }
   }

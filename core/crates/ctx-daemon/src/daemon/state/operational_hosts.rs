@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
 use crate::daemon::managed_auto_update::ManagedDaemonAutoUpdateHost;
+use crate::daemon::memleak_debug::{MemleakDebugHost, MemleakDebugHostParts};
 use crate::daemon::mobile_startup::SavedMobileTunnelReconnectHost;
 use crate::daemon::provider_child_reclassifier::ProviderChildReclassifierHost;
 #[cfg(test)]
 use crate::daemon::scheduler::DaemonSchedulerPersistenceHost;
 use crate::daemon::scheduler::DaemonTerminalStateReconcileHost;
 use crate::daemon::storage_guard::{StorageGuardHost, StorageGuardHostParts};
-use crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost;
+use crate::daemon::workspaces::{
+    vcs_hooks::WorkspaceVcsHookHost, workspace_cache_debug_stats_host_from_runtime,
+};
 use crate::daemon::{
     CacheSweepHost, CacheSweepHostParts, DaemonShutdownHost, DaemonShutdownHostParts, DaemonState,
     DaemonWorktreeDataPlaneHost, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
@@ -142,6 +145,22 @@ pub(in crate::daemon) fn cache_sweep_host_from_state(state: &DaemonState) -> Cac
         workspace_stores: protected_workspace_store_lookup_from_state(state),
         perf_telemetry: state.telemetry.perf_telemetry.clone(),
         shutdown_tx: state.core.shutdown_tx.clone(),
+    })
+}
+
+pub(in crate::daemon) fn memleak_debug_host_from_state(state: &DaemonState) -> MemleakDebugHost {
+    MemleakDebugHost::new(MemleakDebugHostParts {
+        data_root: state.core.data_root.clone(),
+        shutdown_tx: state.core.shutdown_tx.clone(),
+        sessions: Arc::clone(&state.sessions),
+        workspaces: workspace_cache_debug_stats_host_from_runtime(&state.workspaces),
+        providers: Arc::clone(&state.providers),
+        active_snapshot: Arc::clone(&state.workspaces.workspace_active_snapshot),
+        terminals: Arc::clone(&state.transport.terminals),
+        perf_telemetry: state.telemetry.perf_telemetry.clone(),
+        web_sessions: Arc::clone(&state.transport.web_sessions),
+        harness_runtime: Arc::clone(&state.execution.harness),
+        stores: state.core.stores.clone(),
     })
 }
 

@@ -84,11 +84,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth.rs",
   "core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs",
-  "core/crates/ctx-daemon/src/daemon/memleak_debug.rs",
-  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats.rs",
-  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs",
-  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/sessions.rs",
-  "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/workspaces.rs",
   "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
   "core/crates/ctx-daemon/src/daemon/merge_queue/host.rs",
   "core/crates/ctx-daemon/src/daemon/mobile_access/auth.rs",
@@ -168,14 +163,6 @@ const daemonStateBucketAccessBaseline = new Map(
 3 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|core|state.core
 2 core/crates/ctx-daemon/src/daemon/mcp_auth.rs|telemetry|state.telemetry
 1 core/crates/ctx-daemon/src/daemon/mcp_auth/events.rs|telemetry|state.telemetry
-3 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|execution|state.execution
-1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|telemetry|state.telemetry
-2 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|transport|state.transport
-1 core/crates/ctx-daemon/src/daemon/memleak_debug.rs|workspaces|state.workspaces
-1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs|providers|state.providers
-1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/sessions.rs|sessions|state.sessions
-1 core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/workspaces.rs|workspaces|state.workspaces
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|core|state.core
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|session_publication|state.session_publication
 1 core/crates/ctx-daemon/src/daemon/merge_queue/host.rs|telemetry|state.telemetry

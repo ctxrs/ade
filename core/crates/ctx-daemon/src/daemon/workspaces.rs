@@ -31,6 +31,9 @@ mod worktrees;
 
 pub use active_snapshot_state::load_workspace_active_snapshot_state;
 pub use cache_stats::WorkspaceCacheDebugStats;
+pub(in crate::daemon) use cache_stats::{
+    workspace_cache_debug_stats_host_from_runtime, WorkspaceCacheDebugStatsHost,
+};
 pub use deletion::WorkspaceDeleteError;
 pub(in crate::daemon) use deletion::{WorkspaceDeletionRuntime, WorkspaceDeletionRuntimeDeps};
 pub(in crate::daemon) use diff_exec::{

@@ -1216,7 +1216,19 @@ test("operational daemon background entrypoints stay state-blind", () => {
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/runtime.rs", `
     async fn boot(state: Arc<DaemonState>) {
       reconcile_running_turns(&state).await.unwrap();
+      spawn_memleak_debug(state.clone());
     }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/memleak_debug.rs", `
+    use std::sync::Arc;
+    use crate::daemon::DaemonState;
+
+    pub fn spawn_memleak_debug(state: Arc<DaemonState>) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/memleak_debug/cache_stats/providers.rs", `
+    use crate::daemon::state::DaemonState;
+
+    pub async fn collect_provider_cache_stats(state: &DaemonState) {}
   `);
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/cache/sweep.rs", `
     impl crate::daemon::state::DaemonState {
@@ -1237,6 +1249,11 @@ test("operational daemon background entrypoints stay state-blind", () => {
   assert.deepEqual(
     violations.map((violation) => violation.kind),
     [
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
