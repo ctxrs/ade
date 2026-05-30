@@ -366,9 +366,11 @@ test("route builder split modules have line-cap ratchets", () => {
   const cappedPaths = [
     "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/core_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/execution.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/execution_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/maintenance_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/provider_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/session_deps.rs",
     "core/crates/ctx-daemon/src/daemon/route_builders/sessions.rs",

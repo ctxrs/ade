@@ -17446,6 +17446,252 @@ const routeBuilderDepsAssemblyAllowedPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
   "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
 ]);
+const routeBuilderBroadStateAllowedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
+]);
+const routeBuilderDepsReconstructionAllowedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+]);
+
+const coreRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/core_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+]);
+const coreRouteDepsDefinitionPath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/core_deps.rs";
+
+const maintenanceRouteBuilderAssemblyPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/route_builders/maintenance_deps.rs",
+  "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+]);
+const maintenanceRouteDepsDefinitionPath =
+  "core/crates/ctx-daemon/src/daemon/route_builders/maintenance_deps.rs";
+
+function scanCoreRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    filePath !== coreRouteDepsDefinitionPath
+  ) {
+    const childChecks = [
+      {
+        name: "core route child builder reconstructs core deps",
+        regex: /\bcore_route_deps\s*\(/gu,
+        allowedPaths: routeBuilderDepsAssemblyAllowedPaths,
+      },
+      {
+        name: "core route child builder constructs core deps directly",
+        regex: /\b(?:core_deps\s*::\s*)?CoreRouteDeps\s*::\s*new\s*\(/gu,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+      {
+        name: "core route child builder uses core deps struct literal",
+        regex: /\b(?:core_deps\s*::\s*)?CoreRouteDeps\s*\{/gu,
+        allowedText: /^impl\s+(?:core_deps\s*::\s*)?CoreRouteDeps\s*\{/u,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+      {
+        name: "core route child builder accesses core deps parts",
+        regex: /\b(?:core_deps\s*::\s*)?CoreRouteDepsParts\b/gu,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+    ];
+    for (const check of childChecks) {
+      if (check.allowedPaths?.has(filePath)) {
+        continue;
+      }
+      for (
+        let match = check.regex.exec(contents);
+        match;
+        match = check.regex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        const text = lines[line - 1]?.trim() ?? match[0];
+        if (check.allowedText?.test(text)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text,
+        });
+      }
+    }
+  }
+  if (!coreRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "core route builder uses broad daemon state",
+      regex:
+        /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "core route builder accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "core route builder uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanMaintenanceRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  if (
+    filePath.startsWith(daemonRouteBuildersRelativeRoot) &&
+    filePath !== maintenanceRouteDepsDefinitionPath
+  ) {
+    const childChecks = [
+      {
+        name: "maintenance route child builder reconstructs maintenance deps",
+        regex: /\bmaintenance_route_deps\s*\(/gu,
+        allowedPaths: routeBuilderDepsAssemblyAllowedPaths,
+      },
+      {
+        name: "maintenance route child builder constructs maintenance deps directly",
+        regex:
+          /\b(?:maintenance_deps\s*::\s*)?MaintenanceRouteDeps\s*::\s*new\s*\(/gu,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+      {
+        name: "maintenance route child builder uses maintenance deps struct literal",
+        regex: /\b(?:maintenance_deps\s*::\s*)?MaintenanceRouteDeps\s*\{/gu,
+        allowedText: /^impl\s+(?:maintenance_deps\s*::\s*)?MaintenanceRouteDeps\s*\{/u,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+      {
+        name: "maintenance route child builder accesses maintenance deps parts",
+        regex: /\b(?:maintenance_deps\s*::\s*)?MaintenanceRouteDepsParts\b/gu,
+        allowedPaths: routeBuilderDepsReconstructionAllowedPaths,
+      },
+    ];
+    for (const check of childChecks) {
+      if (check.allowedPaths?.has(filePath)) {
+        continue;
+      }
+      for (
+        let match = check.regex.exec(contents);
+        match;
+        match = check.regex.exec(contents)
+      ) {
+        const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+        const text = lines[line - 1]?.trim() ?? match[0];
+        if (check.allowedText?.test(text)) {
+          continue;
+        }
+        violations.push({
+          filePath,
+          line,
+          name: check.name,
+          text,
+        });
+      }
+    }
+  }
+  if (!maintenanceRouteBuilderAssemblyPaths.has(filePath)) {
+    return violations;
+  }
+  const checks = [
+    {
+      name: "maintenance route builder uses broad daemon state",
+      regex:
+        /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "maintenance route builder accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "maintenance route builder uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
+    },
+  ];
+  for (const check of checks) {
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
+
+function scanRouteBuilderChildStateBlindRatchet({ filePath, contents }) {
+  if (
+    !filePath.startsWith(daemonRouteBuildersRelativeRoot) ||
+    routeBuilderBroadStateAllowedPaths.has(filePath)
+  ) {
+    return [];
+  }
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "route-builder child uses broad daemon state",
+      regex:
+        /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>|\bWeak\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "route-builder child accesses broad route-builder state",
+      regex: /\bself\s*\.\s*state\b/gu,
+    },
+    {
+      name: "route-builder child uses broad route builder",
+      regex: /\bRouteBuilder\b/gu,
+      allowedPaths: new Set([daemonRouteBuildersRelativePath]),
+    },
+  ];
+  for (const check of checks) {
+    if (check.allowedPaths?.has(filePath)) {
+      continue;
+    }
+    for (
+      let match = check.regex.exec(contents);
+      match;
+      match = check.regex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+  return violations;
+}
 
 function scanExecutionRouteBuilderStateAssemblyRatchet({ filePath, contents }) {
   const violations = [];
@@ -18511,7 +18757,15 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanCoreRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanExecutionRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanMaintenanceRouteBuilderStateAssemblyRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -18532,6 +18786,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceRouteBuilderStateAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanRouteBuilderChildStateBlindRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -19412,12 +19670,15 @@ module.exports = {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanCoreRouteBuilderStateAssemblyRatchet,
   scanExecutionRouteBuilderStateAssemblyRatchet,
+  scanMaintenanceRouteBuilderStateAssemblyRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
   scanTaskRouteBuilderStateAssemblyRatchet,
   scanTransportRouteBuilderStateAssemblyRatchet,
   scanWorkspaceRouteBuilderStateAssemblyRatchet,
+  scanRouteBuilderChildStateBlindRatchet,
   scanDaemonTestRouteHandlesAggregateRatchet,
   scanRouteStateAggregateRatchet,
   scanDaemonShutdownHandleRatchet,

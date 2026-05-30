@@ -197,8 +197,11 @@ const {
   scanDeletedBroadDomainMacroSourceRatchet,
   scanDaemonStateBoundaryRatchet,
   scanDaemonStateBucketAccessRatchet,
+  scanCoreRouteBuilderStateAssemblyRatchet,
   scanExecutionRouteBuilderStateAssemblyRatchet,
+  scanMaintenanceRouteBuilderStateAssemblyRatchet,
   scanProviderRouteBuilderStateAssemblyRatchet,
+  scanRouteBuilderChildStateBlindRatchet,
   scanSessionRouteBuilderStateAssemblyRatchet,
   scanTaskRouteBuilderStateAssemblyRatchet,
   scanTransportRouteBuilderStateAssemblyRatchet,
@@ -827,6 +830,318 @@ test("daemon state bucket access ratchet allows private state graph internals", 
             let _ = Arc::clone(&state.providers);
           }
         `,
+      }),
+      [],
+    );
+  }
+});
+
+test("core route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn auth(&self) -> AuthHandle {
+          AuthHandle::new(
+            self.state.core.auth_token.clone(),
+            Arc::clone(&self.state.core.mcp_auth),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "core route builder uses broad daemon state",
+      "core route builder accesses broad route-builder state",
+      "core route builder accesses broad route-builder state",
+      "core route builder uses broad route builder",
+    ],
+  );
+});
+
+test("core route builder state assembly ratchet rejects cloning broad state", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    contents: "let state = Arc::clone(&self.state);",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["core route builder accesses broad route-builder state"],
+  );
+});
+
+test("core route builder state assembly ratchet rejects child core deps rebuilds", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    contents: "let core_routes = self.core_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["core route child builder reconstructs core deps"],
+  );
+});
+
+test("core route builder state assembly ratchet rejects direct core deps reconstruction", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    contents:
+      "let core_routes = core_deps::CoreRouteDeps::new(core_deps::CoreRouteDepsParts {}); let rebuilt = core_deps::CoreRouteDeps {};",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "core route child builder constructs core deps directly",
+      "core route child builder uses core deps struct literal",
+      "core route child builder accesses core deps parts",
+    ],
+  );
+});
+
+test("core route builder state assembly ratchet rejects mod.rs core deps reconstruction", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    contents:
+      "let core_routes = core_deps::CoreRouteDeps::new(core_deps::CoreRouteDepsParts {});",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "core route child builder constructs core deps directly",
+      "core route child builder accesses core deps parts",
+    ],
+  );
+});
+
+test("core route builder state assembly ratchet rejects same-module reconstruction", () => {
+  const violations = scanCoreRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    contents: `
+      impl core_deps::CoreRouteDeps {
+        fn rebuild(&self) {
+          let rebuilt = core_deps::CoreRouteDeps {};
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["core route child builder uses core deps struct literal"],
+  );
+});
+
+test("core route builder state assembly ratchet allows composition helper and definitions", () => {
+  assert.deepEqual(
+    scanCoreRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      contents:
+        "fn core_route_deps(&self) { core_deps::CoreRouteDeps::new(core_deps::CoreRouteDepsParts {}) }",
+    }),
+    [],
+  );
+  assert.deepEqual(
+    scanCoreRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core_deps.rs",
+      contents:
+        "pub(super) struct CoreRouteDepsParts; impl CoreRouteDeps { pub(super) fn new(parts: CoreRouteDepsParts) -> Self {} }",
+    }),
+    [],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects broad state reads", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      impl RouteBuilder {
+        pub fn settings(&self) -> SettingsHandle {
+          SettingsHandle::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.providers),
+          )
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "maintenance route builder uses broad daemon state",
+      "maintenance route builder accesses broad route-builder state",
+      "maintenance route builder accesses broad route-builder state",
+      "maintenance route builder uses broad route builder",
+    ],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects cloning broad state", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    contents: "let state = Arc::clone(&self.state);",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["maintenance route builder accesses broad route-builder state"],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects child maintenance deps rebuilds", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    contents: "let maintenance_routes = self.maintenance_route_deps();",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["maintenance route child builder reconstructs maintenance deps"],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects direct maintenance deps reconstruction", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/core.rs",
+    contents:
+      "let maintenance_routes = maintenance_deps::MaintenanceRouteDeps::new(maintenance_deps::MaintenanceRouteDepsParts {}); let rebuilt = maintenance_deps::MaintenanceRouteDeps {};",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "maintenance route child builder constructs maintenance deps directly",
+      "maintenance route child builder uses maintenance deps struct literal",
+      "maintenance route child builder accesses maintenance deps parts",
+    ],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects mod.rs maintenance deps reconstruction", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    contents:
+      "let maintenance_routes = maintenance_deps::MaintenanceRouteDeps::new(maintenance_deps::MaintenanceRouteDepsParts {});",
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "maintenance route child builder constructs maintenance deps directly",
+      "maintenance route child builder accesses maintenance deps parts",
+    ],
+  );
+});
+
+test("maintenance route builder state assembly ratchet rejects same-module reconstruction", () => {
+  const violations = scanMaintenanceRouteBuilderStateAssemblyRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance.rs",
+    contents: `
+      impl maintenance_deps::MaintenanceRouteDeps {
+        fn rebuild(&self) {
+          let rebuilt = maintenance_deps::MaintenanceRouteDeps {};
+        }
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["maintenance route child builder uses maintenance deps struct literal"],
+  );
+});
+
+test("maintenance route builder state assembly ratchet allows composition helper and definitions", () => {
+  assert.deepEqual(
+    scanMaintenanceRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+      contents:
+        "fn maintenance_route_deps(&self) { maintenance_deps::MaintenanceRouteDeps::new(maintenance_deps::MaintenanceRouteDepsParts {}) }",
+    }),
+    [],
+  );
+  assert.deepEqual(
+    scanMaintenanceRouteBuilderStateAssemblyRatchet({
+      filePath: "core/crates/ctx-daemon/src/daemon/route_builders/maintenance_deps.rs",
+      contents:
+        "pub(super) struct MaintenanceRouteDepsParts; impl MaintenanceRouteDeps { pub(super) fn new(parts: MaintenanceRouteDepsParts) -> Self {} }",
+    }),
+    [],
+  );
+});
+
+test("route-builder child state-blind ratchet rejects broad state outside assembly boundary", () => {
+  const violations = scanRouteBuilderChildStateBlindRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/tasks.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      impl RouteBuilder { fn task_listing(&self) { let _ = Arc::clone(&self.state); } }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route-builder child uses broad daemon state",
+      "route-builder child accesses broad route-builder state",
+      "route-builder child uses broad route builder",
+    ],
+  );
+});
+
+test("route-builder child state-blind ratchet rejects broad state in mod.rs", () => {
+  const violations = scanRouteBuilderChildStateBlindRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      fn route(&self) { let _ = self.state.core.data_root.clone(); }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route-builder child uses broad daemon state",
+      "route-builder child accesses broad route-builder state",
+    ],
+  );
+});
+
+test("route-builder child state-blind ratchet allows mod.rs route-builder orchestration", () => {
+  const violations = scanRouteBuilderChildStateBlindRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/route_builders/mod.rs",
+    contents: `
+      let handle = RouteBuilder::new(state);
+      let core_routes = handle.core_route_deps();
+      let maintenance_routes = handle.maintenance_route_deps(merge_queue_host);
+    `,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("route-builder child state-blind ratchet allows central state deps and test helpers", () => {
+  for (const filePath of [
+    "core/crates/ctx-daemon/src/daemon/route_builders/state_deps.rs",
+    "core/crates/ctx-daemon/src/daemon/route_builders/test_helpers.rs",
+  ]) {
+    assert.deepEqual(
+      scanRouteBuilderChildStateBlindRatchet({
+        filePath,
+        contents:
+          "impl RouteBuilder { fn route(&self) { let _ = self.state.core.data_root.clone(); } }",
       }),
       [],
     );

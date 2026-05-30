@@ -10,8 +10,6 @@ use ctx_provider_runtime::ProviderRuntime;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::Store;
 
-use super::state::TelemetryRuntime;
-
 #[derive(Clone)]
 pub struct TelemetryHandle {
     data_root: PathBuf,
@@ -20,11 +18,15 @@ pub struct TelemetryHandle {
 }
 
 impl TelemetryHandle {
-    pub(in crate::daemon) fn new(data_root: PathBuf, runtime: &TelemetryRuntime) -> Self {
+    pub(in crate::daemon) fn new(
+        data_root: PathBuf,
+        telemetry: Telemetry,
+        perf_telemetry: PerfTelemetry,
+    ) -> Self {
         Self {
             data_root,
-            perf_telemetry: runtime.perf_telemetry.clone(),
-            telemetry: runtime.telemetry.clone(),
+            perf_telemetry,
+            telemetry,
         }
     }
 

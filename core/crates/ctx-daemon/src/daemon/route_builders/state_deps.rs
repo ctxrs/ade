@@ -1,6 +1,126 @@
 use super::*;
+use crate::daemon::state::DaemonState;
+
+#[derive(Clone)]
+pub(crate) struct RouteBuilder {
+    state: Arc<DaemonState>,
+}
+
+pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
+    let handle = RouteBuilder::new(Arc::clone(state));
+    let core_routes = handle.core_route_deps();
+    let merge_queue_host = handle.merge_queue_route_host();
+    let provider_routes = handle.provider_route_deps();
+    let workspace_routes = handle.workspace_route_deps(Arc::clone(&merge_queue_host));
+    let session_routes = handle.session_route_deps(&workspace_routes);
+    let task_routes = handle.task_route_deps();
+    let transport_routes = handle.transport_route_deps(core_routes.health());
+    let execution_routes = handle.execution_route_deps();
+    let maintenance_routes = handle.maintenance_route_deps(merge_queue_host);
+    let session_title_model_mode = session_routes.session_title_model_mode();
+    let task_session_admission = task_routes.task_session_admission_with_route_deps(
+        &provider_routes,
+        &session_routes,
+        session_title_model_mode.clone(),
+    );
+    DaemonRouteHandles {
+        auth: core_routes.auth(),
+        health: core_routes.health(),
+        diagnostics: core_routes.diagnostics(),
+        blob: core_routes.blob(),
+        request_base: core_routes.request_base(),
+        repo_onboarding: core_routes.repo_onboarding(),
+        logs: core_routes.logs(),
+        org_policy: maintenance_routes.org_policy(),
+        workspace_org_policy: workspace_routes.workspace_org_policy(),
+        workspace_prompt_bootstrap_config: workspace_routes.workspace_prompt_bootstrap_config(),
+        workspace_execution_config: workspace_routes.workspace_execution_config(),
+        workspace_file_completions: workspace_routes.workspace_file_completions(),
+        workspace_harness_container: workspace_routes.workspace_harness_container(),
+        workspace_provider_model_preferences: workspace_routes
+            .workspace_provider_model_preferences_with_provider_routes(&provider_routes),
+        workspace_worktree: workspace_routes.workspace_worktree(),
+        workspace_registry: workspace_routes.workspace_registry(),
+        workspace_merge_queue_config: workspace_routes.workspace_merge_queue_config(),
+        merge_queue_api: maintenance_routes.merge_queue_api(),
+        workspace_attachments: workspace_routes.workspace_attachments(),
+        workspace_primary_branch: workspace_routes.workspace_primary_branch(),
+        dictation: core_routes.dictation(),
+        update_release: maintenance_routes.update_release(),
+        update_activity: maintenance_routes.update_activity(),
+        settings: maintenance_routes.settings(),
+        mobile_store: transport_routes.mobile_store(),
+        mobile_runtime: transport_routes.mobile_runtime(),
+        mobile_secure_proxy: transport_routes.mobile_secure_proxy(),
+        resource_utilization: maintenance_routes.resource_utilization(),
+        run_archive: maintenance_routes.run_archive(),
+        session_artifacts: session_routes.session_artifacts(),
+        session_control: session_routes.session_control_with_provider_routes(&provider_routes),
+        session_file_completions: session_routes.session_file_completions(),
+        session_message_command: session_routes.session_message_command(),
+        session_read_models: session_routes.session_read_models(),
+        session_subagent_mcp_read: session_routes.session_subagent_mcp_read(),
+        session_subagent_mcp_control: session_routes
+            .session_subagent_mcp_control_with_provider_routes(&provider_routes),
+        session_subagent_read: session_routes.session_subagent_read(),
+        session_title_model_mode,
+        session_vcs: session_routes.session_vcs(),
+        demo_seed_transcript: session_routes.demo_seed_transcript(),
+        title_generation_local: session_routes.title_generation_local(),
+        task_creation: task_routes
+            .task_creation_with_session_admission(task_session_admission.clone(), &session_routes),
+        task_lifecycle: task_routes.task_lifecycle_with_session_routes(&session_routes),
+        task_listing: task_routes.task_listing(),
+        task_read_state: task_routes.task_read_state_with_session_routes(&session_routes),
+        task_session_admission,
+        task_session_listing: task_routes.task_session_listing(),
+        task_title: task_routes.task_title_with_session_routes(&session_routes),
+        workspace_deletion: workspace_routes.workspace_deletion(),
+        workspace_active: workspace_routes.workspace_active(),
+        workspace_stream: workspace_routes.workspace_stream(),
+        workspace_vcs_stream: workspace_routes.workspace_vcs_stream(),
+        provider_accounts: provider_routes.provider_accounts(),
+        provider_auth_import: provider_routes.provider_auth_import(),
+        provider_status: provider_routes.provider_status(),
+        provider_admin: provider_routes.provider_admin(),
+        provider_install: provider_routes.provider_install(),
+        provider_usage: provider_routes.provider_usage(),
+        provider_harness_config: provider_routes.provider_harness_config(),
+        provider_bootstrap: provider_routes.provider_bootstrap(),
+        provider_options: provider_routes.provider_options(),
+        provider_workspace_auth: provider_routes.provider_workspace_auth(),
+        telemetry: maintenance_routes.telemetry(),
+        terminal_route: transport_routes.terminal_route(),
+        web_session_route: transport_routes.web_session_route(),
+        execution_launch: execution_routes.execution_launch(),
+        linux_sandbox_runtime: execution_routes.linux_sandbox_runtime(),
+        update_drain: maintenance_routes.update_drain(),
+        daemon_shutdown: maintenance_routes.daemon_shutdown_with_session_routes(&session_routes),
+    }
+}
 
 impl RouteBuilder {
+    pub(crate) fn new(state: Arc<DaemonState>) -> Self {
+        Self { state }
+    }
+}
+
+impl RouteBuilder {
+    pub(super) fn core_route_deps(&self) -> core_deps::CoreRouteDeps {
+        core_deps::CoreRouteDeps::new(core_deps::CoreRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            daemon_url: self.state.core.daemon_url.clone(),
+            public_base_url: self.state.core.public_base_url.clone(),
+            auth_token: self.state.core.auth_token.clone(),
+            mcp_auth: Arc::clone(&self.state.core.mcp_auth),
+            storage_guard: Arc::clone(&self.state.core.storage_guard),
+            global_store: self.state.global_store().clone(),
+            ops_events: self.state.telemetry.ops_events.clone(),
+            execution_setup: Arc::clone(&self.state.execution.setup),
+            providers: Arc::clone(&self.state.providers),
+        })
+    }
+
     pub(super) fn execution_route_deps(&self) -> execution_deps::ExecutionRouteDeps {
         execution_deps::ExecutionRouteDeps::new(execution_deps::ExecutionRouteDepsParts {
             data_root: self.state.core.data_root.clone(),
@@ -12,6 +132,36 @@ impl RouteBuilder {
             harness: Arc::clone(&self.state.execution.harness),
             terminals: Arc::clone(&self.state.transport.terminals),
         })
+    }
+
+    pub(super) fn maintenance_route_deps(
+        &self,
+        merge_queue_host: Arc<crate::daemon::merge_queue::MergeQueueRouteHost>,
+    ) -> maintenance_deps::MaintenanceRouteDeps {
+        maintenance_deps::MaintenanceRouteDeps::new(maintenance_deps::MaintenanceRouteDepsParts {
+            data_root: self.state.core.data_root.clone(),
+            global_store: self.state.global_store().clone(),
+            stores: self.state.core.stores.clone(),
+            workspace_stores: self.protected_workspace_store_lookup(),
+            merge_queue_host,
+            telemetry: self.state.telemetry.telemetry.clone(),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            resource_sampler: Arc::clone(&self.state.telemetry.resource_sampler),
+            resource_governance: Arc::clone(&self.state.telemetry.resource_governance),
+            providers: Arc::clone(&self.state.providers),
+            terminals: Arc::clone(&self.state.transport.terminals),
+            update_drain: Arc::clone(&self.state.core.update_drain),
+            sessions: Arc::clone(&self.state.sessions),
+            harness: Arc::clone(&self.state.execution.harness),
+            shutdown_tx: self.state.core.shutdown_tx.clone(),
+            local_shutdown_token: self.state.core.local_shutdown_token.clone(),
+        })
+    }
+
+    pub(super) fn merge_queue_route_host(
+        &self,
+    ) -> Arc<crate::daemon::merge_queue::MergeQueueRouteHost> {
+        crate::daemon::merge_queue_route_host_from_state(self.state.as_ref())
     }
 
     pub(super) fn provider_route_deps(&self) -> provider_deps::ProviderRouteDeps {
@@ -94,7 +244,10 @@ impl RouteBuilder {
         })
     }
 
-    pub(super) fn transport_route_deps(&self) -> transport_deps::TransportRouteDeps {
+    pub(super) fn transport_route_deps(
+        &self,
+        health: HealthHandle,
+    ) -> transport_deps::TransportRouteDeps {
         transport_deps::TransportRouteDeps::new(transport_deps::TransportRouteDepsParts {
             data_root: self.state.core.data_root.clone(),
             daemon_url: self.state.core.daemon_url.clone(),
@@ -106,13 +259,16 @@ impl RouteBuilder {
             web_sessions: Arc::clone(&self.state.transport.web_sessions),
             providers: Arc::clone(&self.state.providers),
             harness: Arc::clone(&self.state.execution.harness),
-            health: self.health(),
+            health,
             telemetry: self.state.telemetry.telemetry.clone(),
             ops_events: self.state.telemetry.ops_events.clone(),
         })
     }
 
-    pub(super) fn workspace_route_deps(&self) -> workspace_deps::WorkspaceRouteDeps {
+    pub(super) fn workspace_route_deps(
+        &self,
+        merge_queue_host: Arc<crate::daemon::merge_queue::MergeQueueRouteHost>,
+    ) -> workspace_deps::WorkspaceRouteDeps {
         let workspace_stores = self.protected_workspace_store_lookup();
         let session_stores =
             SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
@@ -141,7 +297,7 @@ impl RouteBuilder {
             harness: Arc::clone(&self.state.execution.harness),
             providers: Arc::clone(&self.state.providers),
             merge_queue: Arc::clone(&self.state.transport.merge_queue),
-            merge_queue_host: self.merge_queue_route_host(),
+            merge_queue_host,
             telemetry: self.state.telemetry.telemetry.clone(),
             perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
             worktree_vcs_runtime: WorktreeVcsRuntimeHost::from_workspace_runtime(
