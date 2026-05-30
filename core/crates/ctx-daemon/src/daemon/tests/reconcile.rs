@@ -85,6 +85,29 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
     };
     store.insert_session_turn(queued_turn).await.unwrap();
 
+    let starting_turn_id = TurnId::new();
+    let starting_turn = SessionTurn {
+        turn_id: starting_turn_id,
+        session_id: session.id,
+        run_id: Some(RunId::new()),
+        user_message_id: None,
+        status: SessionTurnStatus::Starting,
+        start_seq: Some(1),
+        end_seq: None,
+        started_at: now,
+        updated_at: now,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        failure: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    };
+    store.insert_session_turn(starting_turn).await.unwrap();
+
     let running_turn_id = TurnId::new();
     let running_turn = SessionTurn {
         turn_id: running_turn_id,
@@ -92,7 +115,7 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
         run_id: Some(RunId::new()),
         user_message_id: None,
         status: SessionTurnStatus::Running,
-        start_seq: Some(1),
+        start_seq: Some(2),
         end_seq: None,
         started_at: now,
         updated_at: now,
@@ -110,11 +133,14 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
 
     let activity = daemon_turn_activity_summary(&state).await.unwrap();
     assert!(!activity.idle);
-    assert_eq!(activity.active_turn_count, 1);
+    assert_eq!(activity.active_turn_count, 2);
     assert_eq!(activity.queued_turn_count, 1);
-    assert_eq!(activity.running_turn_count, 1);
+    assert_eq!(activity.running_turn_count, 2);
 
-    reconcile_running_turns(&state).await.unwrap();
+    startup_turn_reconcile_host_from_state(state.as_ref())
+        .reconcile_running_turns()
+        .await
+        .unwrap();
 
     let queued_after = store
         .get_session_turn(session.id, queued_turn_id)
@@ -125,6 +151,17 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
         queued_after.status,
         SessionTurnStatus::Queued,
         "queued turn must remain queued after reconcile_running_turns"
+    );
+
+    let starting_after = store
+        .get_session_turn(session.id, starting_turn_id)
+        .await
+        .unwrap()
+        .expect("starting turn must still exist");
+    assert_eq!(
+        starting_after.status,
+        SessionTurnStatus::Interrupted,
+        "starting turn must be interrupted after reconcile_running_turns"
     );
 
     let running_after = store

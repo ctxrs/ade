@@ -1174,6 +1174,8 @@ const checkDaemonStateOperationalHostImpls = (rootDir) => {
 };
 
 const DAEMON_OPERATIONAL_STATE_BLIND_FILES = [
+  "core/crates/ctx-daemon/src/daemon/activity/collect.rs",
+  "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs",
   "core/crates/ctx-daemon/src/daemon/serve/background.rs",
   "core/crates/ctx-daemon/src/daemon/provider_child_reclassifier.rs",
   "core/crates/ctx-daemon/src/daemon/managed_auto_update.rs",
@@ -1233,6 +1235,68 @@ const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
         path: mergeQueuePath,
         message:
           "spawn_merge_queue_runner must receive MergeQueueRouteHost, not DaemonState.",
+      });
+    }
+  }
+
+  const activityPath = "core/crates/ctx-daemon/src/daemon/activity.rs";
+  const activityAbsolutePath = path.join(rootDir, activityPath);
+  if (fs.existsSync(activityAbsolutePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(activityAbsolutePath, "utf8"));
+    const broadStartupExportPattern =
+      /\breconcile_running_turns(?:_with_reason)?\b/gu;
+    for (
+      let match = broadStartupExportPattern.exec(contents);
+      match;
+      match = broadStartupExportPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: activityPath,
+        message:
+          "Startup turn reconciliation must be exposed through StartupTurnReconcileHost, not broad reconcile_running_turns wrappers.",
+      });
+    }
+  }
+
+  const runtimePath = "core/crates/ctx-daemon/src/daemon/runtime.rs";
+  const runtimeAbsolutePath = path.join(rootDir, runtimePath);
+  if (fs.existsSync(runtimeAbsolutePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(runtimeAbsolutePath, "utf8"));
+    const broadStartupCallPattern =
+      /\breconcile_running_turns(?:_with_reason)?\s*\(\s*&\s*state\b/gu;
+    for (
+      let match = broadStartupCallPattern.exec(contents);
+      match;
+      match = broadStartupCallPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: runtimePath,
+        message:
+          "Daemon startup must assemble StartupTurnReconcileHost at the private state boundary instead of calling broad reconcile_running_turns(&state).",
+      });
+    }
+  }
+
+  const startupReconcilePath = "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs";
+  const startupReconcileAbsolutePath = path.join(rootDir, startupReconcilePath);
+  if (fs.existsSync(startupReconcileAbsolutePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(startupReconcileAbsolutePath, "utf8"));
+    const directAssemblyPattern = /\bterminal_state_reconcile_host_from_state\b/gu;
+    for (
+      let match = directAssemblyPattern.exec(contents);
+      match;
+      match = directAssemblyPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_entrypoint_state_blind",
+        line: lineForOffset(contents, match.index),
+        path: startupReconcilePath,
+        message:
+          "Startup turn reconciliation must receive a terminal-state host from the private state assembly boundary instead of assembling from DaemonState.",
       });
     }
   }

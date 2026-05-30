@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
 #[cfg(test)]
 use ctx_store::{StoreManager, StoreManagerConfig};
 
-use crate::daemon::scheduler::reconcile_turn_terminal_state;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
@@ -79,8 +78,7 @@ pub mod workspaces;
 
 #[cfg(test)]
 pub(in crate::daemon) use self::runtime::spawn_startup_provider_status_refresh;
-use activity::reconcile_running_turns;
-pub use activity::reconcile_running_turns_with_reason;
+pub(in crate::daemon) use activity::StartupTurnReconcileHost;
 pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
@@ -146,9 +144,9 @@ pub(in crate::daemon) use state::scheduler_persistence_host_from_state;
 pub(in crate::daemon) use state::{
     cache_sweep_host_from_state, daemon_shutdown_host_from_state,
     managed_daemon_auto_update_host_from_state, provider_child_reclassifier_host_from_state,
-    saved_mobile_tunnel_reconnect_host_from_state, storage_guard_host_from_state,
-    terminal_state_reconcile_host_from_state, workspace_vcs_hook_host_from_state,
-    worktree_data_plane_host_from_state,
+    saved_mobile_tunnel_reconnect_host_from_state, startup_turn_reconcile_host_from_state,
+    storage_guard_host_from_state, terminal_state_reconcile_host_from_state,
+    workspace_vcs_hook_host_from_state, worktree_data_plane_host_from_state,
 };
 pub(in crate::daemon) use state::{
     merge_queue_route_host_from_state, session_store_access_anyhow, CacheSweepHost,

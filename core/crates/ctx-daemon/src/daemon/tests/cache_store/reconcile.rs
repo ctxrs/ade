@@ -27,7 +27,10 @@ async fn reconcile_running_turns_does_not_cache_historical_workspace_stores() {
             .unwrap();
     }
 
-    reconcile_running_turns(&state).await.unwrap();
+    startup_turn_reconcile_host_from_state(state.as_ref())
+        .reconcile_running_turns()
+        .await
+        .unwrap();
 
     let stats = stores.stats().await;
     assert_eq!(stats.workspace_store_count, 0);
@@ -60,7 +63,10 @@ async fn reconcile_running_turns_keeps_cached_workspace_store_usable() {
         .await
         .unwrap();
 
-    reconcile_running_turns(&state).await.unwrap();
+    startup_turn_reconcile_host_from_state(state.as_ref())
+        .reconcile_running_turns()
+        .await
+        .unwrap();
 
     let reopened = state.store_for_workspace(workspace.id).await.unwrap();
     reopened

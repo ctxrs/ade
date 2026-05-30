@@ -92,7 +92,10 @@ pub async fn bootstrap_daemon_runtime(
     lifecycle::spawn_endpoint_model_catalog_sweeper(Arc::clone(
         &state.provider_lifecycle_background,
     ));
-    if let Err(err) = reconcile_running_turns(&state).await {
+    if let Err(err) = startup_turn_reconcile_host_from_state(state.as_ref())
+        .reconcile_running_turns()
+        .await
+    {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
     let route_handles = route_handles_from_state(&state);

@@ -11,6 +11,7 @@ use crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost;
 use crate::daemon::{
     CacheSweepHost, CacheSweepHostParts, DaemonShutdownHost, DaemonShutdownHostParts, DaemonState,
     DaemonWorktreeDataPlaneHost, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
+    StartupTurnReconcileHost,
 };
 
 pub(in crate::daemon) fn worktree_data_plane_host_from_state(
@@ -42,6 +43,16 @@ pub(in crate::daemon) fn terminal_state_reconcile_host_from_state(
         session_stores,
         state.session_publication.clone(),
         state.task_session_cleanup.clone(),
+    )
+}
+
+pub(in crate::daemon) fn startup_turn_reconcile_host_from_state(
+    state: &DaemonState,
+) -> StartupTurnReconcileHost {
+    StartupTurnReconcileHost::new(
+        state.global_store().clone(),
+        state.core.stores.clone(),
+        terminal_state_reconcile_host_from_state(state),
     )
 }
 

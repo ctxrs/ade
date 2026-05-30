@@ -1,12 +1,9 @@
-use super::*;
-use ctx_store::{Store, StoreManager};
+use std::collections::HashMap;
 
-pub(super) async fn collect_turns_by_statuses(
-    state: &Arc<DaemonState>,
-    statuses: &[SessionTurnStatus],
-) -> Result<(usize, Vec<(WorkspaceId, SessionTurn)>)> {
-    collect_turns_by_statuses_parts(state.global_store(), &state.core.stores, statuses).await
-}
+use anyhow::{Context, Result};
+use ctx_core::ids::{SessionId, WorkspaceId};
+use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
+use ctx_store::{Store, StoreManager};
 
 pub(in crate::daemon) async fn collect_turns_by_statuses_parts(
     global_store: &Store,
@@ -44,8 +41,8 @@ pub(in crate::daemon) async fn collect_turns_by_statuses_parts(
 
 pub(in crate::daemon) async fn session_execution_environment_parts(
     stores: &StoreManager,
-    cache: &mut HashMap<ctx_core::ids::SessionId, ExecutionEnvironment>,
-    session_id: ctx_core::ids::SessionId,
+    cache: &mut HashMap<SessionId, ExecutionEnvironment>,
+    session_id: SessionId,
 ) -> Result<ExecutionEnvironment> {
     if let Some(environment) = cache.get(&session_id).copied() {
         return Ok(environment);

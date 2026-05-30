@@ -1203,6 +1203,21 @@ test("operational daemon background entrypoints stay state-blind", () => {
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs", `
     pub(in crate::daemon) fn spawn_cache_sweeper(state: Arc<crate::daemon::DaemonState>) {}
   `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs", `
+    use crate::daemon::{terminal_state_reconcile_host_from_state, DaemonState};
+
+    pub async fn reconcile_running_turns(state: Arc<DaemonState>) {
+      let _host = terminal_state_reconcile_host_from_state(state.as_ref());
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/activity.rs", `
+    pub use reconcile::{reconcile_running_turns, reconcile_running_turns_with_reason};
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/runtime.rs", `
+    async fn boot(state: Arc<DaemonState>) {
+      reconcile_running_turns(&state).await.unwrap();
+    }
+  `);
   writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/cache/sweep.rs", `
     impl crate::daemon::state::DaemonState {
       pub async fn sweep_idle_caches(&self) {}
@@ -1222,6 +1237,13 @@ test("operational daemon background entrypoints stay state-blind", () => {
   assert.deepEqual(
     violations.map((violation) => violation.kind),
     [
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
+      "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
       "daemon_operational_entrypoint_state_blind",
