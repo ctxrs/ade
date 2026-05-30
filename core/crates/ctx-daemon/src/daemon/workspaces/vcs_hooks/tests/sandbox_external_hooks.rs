@@ -19,7 +19,7 @@ use ctx_worktree_vcs_service::{
     CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
 };
 
-use super::super::{cleanup_worktree_hooks, ensure_task_commit_hook};
+use crate::daemon::workspace_vcs_hook_host_from_state;
 
 #[tokio::test]
 async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_config() {
@@ -132,7 +132,8 @@ async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_c
         &sandbox_cli.to_string_lossy(),
     );
 
-    ensure_task_commit_hook(state.as_ref(), &workspace, &worktree, task_id)
+    let hooks_host = workspace_vcs_hook_host_from_state(state.as_ref());
+    ctx_worktree_vcs_service::ensure_task_commit_hook(&hooks_host, &workspace, &worktree, task_id)
         .await
         .expect("install sandbox task hook");
 
@@ -170,7 +171,7 @@ async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_c
         Some(original_hooks.to_string_lossy().to_string())
     );
 
-    cleanup_worktree_hooks(state.as_ref(), &workspace, &worktree)
+    ctx_worktree_vcs_service::cleanup_worktree_hooks(&hooks_host, &workspace, &worktree)
         .await
         .expect("cleanup sandbox task hook");
 

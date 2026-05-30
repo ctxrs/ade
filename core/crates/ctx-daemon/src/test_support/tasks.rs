@@ -205,8 +205,8 @@ impl TestDaemon {
                 .get_worktree(worktree_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("worktree {worktree_id:?} not found"))?;
-            let managed_root = daemon::workspaces::managed_worktree_root(
-                self.state.as_ref(),
+            let managed_root = daemon::workspaces::managed_worktree_root_for_data_root(
+                self.state.test_data_root(),
                 &workspace,
                 &worktree,
             )
@@ -431,12 +431,8 @@ impl TestDaemon {
         &self,
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<ExecutionSettings> {
-        crate::daemon::execution_effective::effective_execution_settings(
-            self.state.as_ref(),
-            workspace_id,
-        )
-        .await
-        .map_err(Into::into)
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        ctx_settings_service::effective_execution_settings(self.state.global_store(), &store).await
     }
 
     pub async fn restart_provider_for_auth_change_for_test(

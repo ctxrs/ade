@@ -71,8 +71,6 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon.rs",
   "core/crates/ctx-daemon/src/daemon/activity/collect.rs",
   "core/crates/ctx-daemon/src/daemon/activity/reconcile.rs",
-  "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
-  "core/crates/ctx-daemon/src/daemon/execution_effective/execution_effective_test/mod.rs",
   "core/crates/ctx-daemon/src/daemon/handle.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/cache_sweeper.rs",
   "core/crates/ctx-daemon/src/daemon/lifecycle/endpoint_catalog.rs",
@@ -119,12 +117,7 @@ const daemonStateBoundaryBroadPathBaseline = new Set([
   "core/crates/ctx-daemon/src/daemon/storage_guard/observations.rs",
   "core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs",
   "core/crates/ctx-daemon/src/daemon/test_support_access.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks/host.rs",
-  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
 ]);
 const daemonStateBoundaryAllowedAppStatePaths = new Set([]);
 const daemonStateBucketAccessBaseline = new Map(
@@ -169,11 +162,6 @@ const daemonStateBucketAccessBaseline = new Map(
 1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|core|state.core
 2 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|sessions|state.sessions
 1 core/crates/ctx-daemon/src/daemon/storage_guard/publication.rs|telemetry|state.telemetry
-1 core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs|workspaces|state.workspaces
-2 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|core|state.core
-1 core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs|execution|state.execution
-1 core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs|core|state.core
-2 core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs|core|state.core
 `
     .trim()
     .split(/\n/u)
@@ -511,6 +499,24 @@ const authBroadApiDeletedFilePaths = [
 
 const mergeQueueBroadApiDeletedPath =
   "core/crates/ctx-daemon/src/daemon/merge_queue.rs";
+
+const workspaceBroadApiDeletedPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
+]);
+
+const workspaceBroadApiReexportPath =
+  "core/crates/ctx-daemon/src/daemon/workspaces.rs";
+
+const workspaceBroadApiStaleCallerPaths = new Set([
+  "core/crates/ctx-daemon/src/test_support/tasks.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/execution/tests/resolve_existing.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks/tests/sandbox_external_hooks.rs",
+]);
 
 const workspaceStreamRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
@@ -13907,6 +13913,118 @@ function scanMergeQueueBroadApiRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceBroadApiRatchet({ filePath, contents }) {
+  const isDeletedPath = workspaceBroadApiDeletedPaths.has(filePath);
+  const isReexportPath = filePath === workspaceBroadApiReexportPath;
+  const isStaleCallerPath = workspaceBroadApiStaleCallerPaths.has(filePath);
+  if (!isDeletedPath && !isReexportPath && !isStaleCallerPath) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const addViolation = ({ index, name, text }) => {
+    const line = contents.slice(0, index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name,
+      text: lines[line - 1]?.trim() ?? text,
+    });
+  };
+
+  if (isDeletedPath) {
+    const broadStateRegex =
+      /\bDaemonState\b|\b(?:Arc|Weak)\s*<\s*(?:(?:crate|super|self)\s*::\s*)?(?:daemon\s*::\s*)?DaemonState\s*>|\bArc\s*::\s*clone\s*\(\s*&\s*(?:self\s*\.\s*)?state\s*\)|\bstate\s*\.\s*(?:core|workspaces|execution)\b/gu;
+    for (
+      let match = broadStateRegex.exec(contents);
+      match;
+      match = broadStateRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "workspace wrapper implementation uses broad daemon state",
+        text: match[0],
+      });
+    }
+
+    const deletedBroadSignaturesByPath = new Map([
+      [
+        "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
+        /\bpub\s+(?:async\s+)?fn\s+(?:effective_execution_settings_classified|effective_execution_settings|effective_install_target|effective_execution_settings_for_environment|effective_install_target_for_environment)\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspaces/active_snapshot_state.rs",
+        /\bpub\s+(?:async\s+)?fn\s+load_workspace_active_snapshot_state\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspaces/execution.rs",
+        /\bpub\s+(?:async\s+)?fn\s+resolve_existing_worktree_execution\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
+        /\bpub\s+(?:async\s+)?fn\s+(?:materialize_sandbox_binding_for_worktree|rematerialize_sandbox_binding_for_worktree)\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspaces/vcs_hooks.rs",
+        /\bpub\s+(?:async\s+)?fn\s+(?:ensure_task_commit_hook|cleanup_worktree_hooks|cleanup_workspace_hooks)\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+      [
+        "core/crates/ctx-daemon/src/daemon/workspaces/worktree_cleanup.rs",
+        /\bpub\s+(?:async\s+)?fn\s+(?:managed_worktree_root|cleanup_task_worktrees)\s*\([^)]*(?:DaemonState|(?:Arc|Weak)\s*<\s*DaemonState\s*>)/gu,
+      ],
+    ]);
+    const deletedBroadSignatures = deletedBroadSignaturesByPath.get(filePath);
+    if (deletedBroadSignatures) {
+      for (
+        let match = deletedBroadSignatures.exec(contents);
+        match;
+        match = deletedBroadSignatures.exec(contents)
+      ) {
+        addViolation({
+          index: match.index,
+          name: "deleted broad workspace API reintroduced",
+          text: match[0],
+        });
+      }
+    }
+  }
+
+  if (isReexportPath) {
+    const deletedReexportRegex =
+      /\bpub\s+use\s+(?:active_snapshot_state\s*::\s*load_workspace_active_snapshot_state|execution\s*::\s*\{[^}]*\bresolve_existing_worktree_execution\b|execution\s*::\s*resolve_existing_worktree_execution|sandbox_binding\s*::\s*rematerialize_sandbox_binding_for_worktree|vcs_hooks\s*::\s*\{[^}]*\b(?:cleanup_workspace_hooks|cleanup_worktree_hooks|ensure_task_commit_hook)\b|vcs_hooks\s*::\s*(?:cleanup_workspace_hooks|cleanup_worktree_hooks|ensure_task_commit_hook)|worktree_cleanup\s*::\s*\{[^}]*\b(?:cleanup_task_worktrees|managed_worktree_root)\b|worktree_cleanup\s*::\s*(?:cleanup_task_worktrees|managed_worktree_root))/gu;
+    for (
+      let match = deletedReexportRegex.exec(contents);
+      match;
+      match = deletedReexportRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "deleted broad workspace reexport reintroduced",
+        text: match[0],
+      });
+    }
+  }
+
+  if (isStaleCallerPath) {
+    const staleCallRegex =
+      /\b(?:crate\s*::\s*)?daemon\s*::\s*(?:execution_effective\s*::\s*effective_execution_settings|workspaces\s*::\s*(?:managed_worktree_root|cleanup_task_worktrees|resolve_existing_worktree_execution|rematerialize_sandbox_binding_for_worktree|load_workspace_active_snapshot_state|cleanup_workspace_hooks|cleanup_worktree_hooks|ensure_task_commit_hook))\s*\(|\b(?:resolve_existing_worktree_execution|ensure_task_commit_hook|cleanup_worktree_hooks)\s*\(\s*(?:state|&state|state\.as_ref\(\))/gu;
+    for (
+      let match = staleCallRegex.exec(contents);
+      match;
+      match = staleCallRegex.exec(contents)
+    ) {
+      addViolation({
+        index: match.index,
+        name: "workspace caller uses broad state wrapper",
+        text: match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionTitleModelModeAssemblyRatchet({ filePath, contents }) {
   if (!isDaemonRouteAssemblyPath(filePath)) {
     return [];
@@ -19261,6 +19379,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanSessionMessageCommandDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
@@ -19468,6 +19590,10 @@ function scanRepo() {
         contents,
       }),
       ...scanMergeQueueBroadApiRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceBroadApiRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -20184,6 +20310,7 @@ module.exports = {
   scanAuthBroadApiRatchet,
   scanAuthBroadApiDeletedPathRatchet,
   scanMergeQueueBroadApiRatchet,
+  scanWorkspaceBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,

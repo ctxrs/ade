@@ -319,6 +319,7 @@ const {
   scanAuthBroadApiRatchet,
   scanAuthBroadApiDeletedPathRatchet,
   scanMergeQueueBroadApiRatchet,
+  scanWorkspaceBroadApiRatchet,
   scanSessionMessageCommandDaemonImplementationRatchet,
   scanSessionMessageCommandHandleFieldRatchet,
   scanSessionMessageCommandHandleRatchet,
@@ -723,6 +724,23 @@ test("daemon state boundary ratchet rejects new broad production seams", () => {
 
       pub async fn run(handle: DaemonHandle, state: &Arc<DaemonState>) {
         let _ = (handle, state);
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("daemon state boundary adds broad daemon state seam"));
+});
+
+test("daemon state boundary ratchet rejects execution effective test broad state", () => {
+  const violations = scanDaemonStateBoundaryRatchet({
+    filePath:
+      "core/crates/ctx-daemon/src/daemon/execution_effective/execution_effective_test/mod.rs",
+    contents: `
+      use std::sync::Arc;
+      use crate::daemon::DaemonState;
+
+      async fn broad_test_helper(state: &Arc<DaemonState>) {
+        let _ = state;
       }
     `,
   }).map((violation) => violation.name);
@@ -5369,6 +5387,74 @@ test("appstate guard rejects deleted broad merge queue APIs", () => {
   assert.deepEqual(new Set(testSupportAliasBackdoor), new Set([
     "daemon test-support exposes unapproved merge queue helper",
   ]));
+});
+
+test("appstate guard rejects deleted broad workspace APIs", () => {
+  const executionViolations = scanWorkspaceBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/execution_effective.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub async fn effective_execution_settings(state: &DaemonState, workspace_id: WorkspaceId) {}
+      pub async fn effective_install_target_for_environment(
+        state: &DaemonState,
+        workspace_id: WorkspaceId,
+        execution_environment: ExecutionEnvironment,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+  assert(executionViolations.includes("workspace wrapper implementation uses broad daemon state"));
+  assert.equal(
+    executionViolations.filter((name) => name === "deleted broad workspace API reintroduced")
+      .length,
+    2,
+  );
+
+  const workspaceWrapperViolations = scanWorkspaceBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/sandbox_binding.rs",
+    contents: `
+      use crate::daemon::DaemonState;
+      pub async fn rematerialize_sandbox_binding_for_worktree(state: &DaemonState) {
+        let root = &state.core.data_root;
+      }
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(new Set(workspaceWrapperViolations), new Set([
+    "workspace wrapper implementation uses broad daemon state",
+    "deleted broad workspace API reintroduced",
+  ]));
+
+  const reexportViolations = scanWorkspaceBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces.rs",
+    contents: `
+      pub use active_snapshot_state::load_workspace_active_snapshot_state;
+      pub use execution::{execution_environment_from_settings, resolve_existing_worktree_execution};
+      pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
+      pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
+      pub use vcs_hooks::cleanup_workspace_hooks;
+      pub use worktree_cleanup::{
+        cleanup_task_worktrees, cleanup_task_worktrees_with_host, managed_worktree_root,
+        managed_worktree_root_for_data_root,
+      };
+      pub use worktree_cleanup::managed_worktree_root;
+    `,
+  }).map((violation) => violation.name);
+  assert.equal(
+    reexportViolations.filter((name) => name === "deleted broad workspace reexport reintroduced")
+      .length,
+    7,
+  );
+
+  const staleCallerViolations = scanWorkspaceBroadApiRatchet({
+    filePath: "core/crates/ctx-daemon/src/test_support/tasks.rs",
+    contents: `
+      crate::daemon::execution_effective::effective_execution_settings(self.state.as_ref(), workspace_id).await;
+      daemon::workspaces::managed_worktree_root(self.state.as_ref(), &workspace, &worktree);
+    `,
+  }).map((violation) => violation.name);
+  assert.deepEqual(staleCallerViolations, [
+    "workspace caller uses broad state wrapper",
+    "workspace caller uses broad state wrapper",
+  ]);
 });
 
 test("appstate guard rejects session message command broad route handles", () => {

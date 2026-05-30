@@ -8,22 +8,15 @@ use crate::daemon::provider_child_reclassifier::ProviderChildReclassifierHost;
 use crate::daemon::scheduler::DaemonSchedulerPersistenceHost;
 use crate::daemon::scheduler::DaemonTerminalStateReconcileHost;
 use crate::daemon::storage_guard::{StorageGuardHost, StorageGuardHostParts};
-use crate::daemon::workspaces::{
-    vcs_hooks::WorkspaceVcsHookHost, workspace_cache_debug_stats_host_from_runtime,
-};
+#[cfg(test)]
+use crate::daemon::workspaces::vcs_hooks::WorkspaceVcsHookHost;
+use crate::daemon::workspaces::workspace_cache_debug_stats_host_from_runtime;
 use crate::daemon::{
     CacheSweepHost, CacheSweepHostParts, DaemonShutdownHost, DaemonShutdownHostParts, DaemonState,
-    DaemonWorktreeDataPlaneHost, ProtectedWorkspaceStoreLookup, SessionStoreLookup,
-    StartupTurnReconcileHost,
+    ProtectedWorkspaceStoreLookup, SessionStoreLookup, StartupTurnReconcileHost,
 };
 
-pub(in crate::daemon) fn worktree_data_plane_host_from_state(
-    state: &DaemonState,
-) -> DaemonWorktreeDataPlaneHost {
-    let workspace_stores = protected_workspace_store_lookup_from_state(state);
-    DaemonWorktreeDataPlaneHost::new(state.global_store().clone(), workspace_stores)
-}
-
+#[cfg(test)]
 pub(in crate::daemon) fn workspace_vcs_hook_host_from_state(
     state: &DaemonState,
 ) -> WorkspaceVcsHookHost {

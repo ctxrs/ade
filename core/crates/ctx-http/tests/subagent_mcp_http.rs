@@ -1443,16 +1443,20 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
 
     let wait_resp = client
         .post(format!("{base}/api/mcp/sessions/{parent_id}/wait_agent"))
-        .json(&json!({ "agent_id": agent_id, "timeout_ms": 1_000 }))
+        .json(&json!({ "agent_id": agent_id, "timeout_ms": MATCH_WAIT_TIMEOUT_MS }))
         .send()
         .await
         .unwrap();
 
     assert_eq!(wait_resp.status(), StatusCode::OK);
     let body: serde_json::Value = wait_resp.json().await.unwrap();
-    assert_eq!(body["wait_status"], "timeout");
+    assert_eq!(body["wait_status"], "matched");
     assert_eq!(body["results"][0]["agent"]["task_label"], "StalledOutcome");
-    assert_eq!(body["results"][0]["agent"]["health"], "stalled");
+    assert_eq!(
+        body["results"][0]["agent"]["latest_result_status"],
+        "failed"
+    );
+    assert_eq!(body["results"][0]["latest_result"]["status"], "failed");
 }
 
 #[tokio::test]

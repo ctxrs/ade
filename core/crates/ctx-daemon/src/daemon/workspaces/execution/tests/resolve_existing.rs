@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::daemon::DaemonState;
+use crate::daemon::{route_handles_from_state, DaemonState};
 use ctx_core::models::{ExecutionEnvironment, SandboxGuestIdentity, SandboxProfile, VcsKind};
 use ctx_settings_model::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
 use ctx_store::StoreManager;
@@ -100,7 +100,10 @@ async fn resolve_existing_worktree_execution_uses_binding_snapshot_after_workspa
         .await
         .expect("insert sandbox binding");
 
-    let resolved = resolve_existing_worktree_execution(&state, &store, &workspace, worktree.id)
+    let resolved = route_handles_from_state(&state)
+        .task_lifecycle
+        .workspace()
+        .resolve_existing_worktree_execution(&store, &workspace, worktree.id)
         .await
         .expect("resolve worktree execution");
 
