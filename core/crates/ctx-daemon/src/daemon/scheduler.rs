@@ -17,7 +17,8 @@ pub(in crate::daemon) use host::{SessionSchedulerWorkerHost, SessionSchedulerWor
 pub use lifecycle::TurnStartProgress;
 #[cfg(test)]
 pub(in crate::daemon) use persistence::DaemonSchedulerPersistenceHost;
-pub use reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
+#[cfg(any(test, feature = "test-support"))]
+pub(in crate::daemon) use reconcile::reconcile_turn_failed_on_provider_exit_with_host;
 pub(in crate::daemon) use reconcile::{
     reconcile_turn_terminal_state_with_host, DaemonTerminalStateReconcileHost,
     TerminalStateReconcileHost,

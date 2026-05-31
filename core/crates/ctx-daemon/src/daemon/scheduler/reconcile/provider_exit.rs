@@ -1,22 +1,22 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use serde_json::json;
 
-use super::terminal_state::reconcile_turn_terminal_state;
-use crate::daemon::DaemonState;
+use super::terminal_state::{reconcile_turn_terminal_state_with_host, TerminalStateReconcileHost};
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
 
-pub async fn reconcile_turn_failed_on_provider_exit(
-    state: &Arc<DaemonState>,
+pub(in crate::daemon) async fn reconcile_turn_failed_on_provider_exit_with_host<H>(
+    host: &H,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
     fallback_reason: &str,
-) -> Result<()> {
-    let store = state.store_for_session(session_id).await?;
+) -> Result<()>
+where
+    H: TerminalStateReconcileHost + ?Sized,
+{
+    let store = host.store_for_session(session_id).await?;
     let turn = store.get_session_turn(session_id, turn_id).await?;
     let Some(turn) = turn else {
         return Ok(());
@@ -28,6 +28,7 @@ pub async fn reconcile_turn_failed_on_provider_exit(
             | SessionTurnStatus::Failed
             | SessionTurnStatus::Interrupted
     ) {
+        host.set_running(session_id, false).await;
         return Ok(());
     }
 
@@ -35,8 +36,14 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
     if resolve_turn_terminal_state(&events).is_some() {
-        return reconcile_turn_terminal_state(state, session_id, run_id, turn_id, fallback_reason)
-            .await;
+        return reconcile_turn_terminal_state_with_host(
+            host,
+            session_id,
+            run_id,
+            turn_id,
+            fallback_reason,
+        )
+        .await;
     }
 
     for _ in 0..20 {
@@ -45,8 +52,8 @@ pub async fn reconcile_turn_failed_on_provider_exit(
             .list_session_events_for_turn(session_id, turn_id, false)
             .await?;
         if resolve_turn_terminal_state(&events).is_some() {
-            return reconcile_turn_terminal_state(
-                state,
+            return reconcile_turn_terminal_state_with_host(
+                host,
                 session_id,
                 run_id,
                 turn_id,
@@ -75,7 +82,8 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         )
         .await?;
     for event in persisted {
-        state.session_publication.publish_event(event).await;
+        host.publish_event(event).await;
     }
+    host.set_running(session_id, false).await;
     Ok(())
 }

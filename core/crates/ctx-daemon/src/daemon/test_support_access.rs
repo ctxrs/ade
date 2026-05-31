@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ctx_core::ids::{TerminalId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{RunId, SessionId, TerminalId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionHeadDelta, SessionHeadSnapshot, Workspace, Worktree, WorktreeVcsSnapshot,
 };
@@ -20,9 +20,12 @@ use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use crate::daemon::git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
+use crate::daemon::scheduler::{
+    reconcile_turn_failed_on_provider_exit_with_host, reconcile_turn_terminal_state_with_host,
+};
 use crate::daemon::{
-    merge_queue::spawn_merge_queue_runner, merge_queue_route_host_from_state, DaemonState,
-    ProtectedWorkspaceStoreLookup,
+    merge_queue::spawn_merge_queue_runner, merge_queue_route_host_from_state,
+    terminal_state_reconcile_host_from_state, DaemonState, ProtectedWorkspaceStoreLookup,
 };
 use ctx_worktree_vcs_service::WorktreeVcsDirtyBits;
 
@@ -57,6 +60,44 @@ impl DaemonState {
 
     pub fn test_publish_storage_guard(&self, status: StorageGuardStatus) {
         self.core.storage_guard.publish(status);
+    }
+
+    pub async fn test_set_session_running(&self, session_id: SessionId, running: bool) {
+        let _ = self.sessions.set_running(session_id, running).await;
+    }
+
+    pub async fn test_session_is_running(&self, session_id: SessionId) -> bool {
+        self.sessions.is_running(session_id).await
+    }
+
+    pub async fn test_reconcile_turn_terminal_state(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        fallback_reason: &str,
+    ) -> anyhow::Result<()> {
+        let host = terminal_state_reconcile_host_from_state(self);
+        reconcile_turn_terminal_state_with_host(&host, session_id, run_id, turn_id, fallback_reason)
+            .await
+    }
+
+    pub async fn test_reconcile_turn_failed_on_provider_exit(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        fallback_reason: &str,
+    ) -> anyhow::Result<()> {
+        let host = terminal_state_reconcile_host_from_state(self);
+        reconcile_turn_failed_on_provider_exit_with_host(
+            &host,
+            session_id,
+            run_id,
+            turn_id,
+            fallback_reason,
+        )
+        .await
     }
 
     pub async fn test_replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {

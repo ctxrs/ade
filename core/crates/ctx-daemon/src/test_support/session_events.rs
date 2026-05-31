@@ -370,6 +370,45 @@ impl TestDaemon {
         Ok(())
     }
 
+    pub async fn set_session_runtime_running_for_reconciliation_test(
+        &self,
+        session_id: SessionId,
+        running: bool,
+    ) {
+        self.state
+            .test_set_session_running(session_id, running)
+            .await;
+    }
+
+    pub async fn session_runtime_is_running_for_reconciliation_test(
+        &self,
+        session_id: SessionId,
+    ) -> bool {
+        self.state.test_session_is_running(session_id).await
+    }
+
+    pub async fn set_turn_status_for_reconciliation_test(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        status: SessionTurnStatus,
+        end_seq: Option<i64>,
+    ) -> anyhow::Result<()> {
+        self.state
+            .store_for_session(session_id)
+            .await?
+            .update_session_turn_status(
+                session_id,
+                turn_id,
+                status,
+                end_seq,
+                None,
+                chrono::Utc::now(),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn append_turn_finished_event_for_test(
         &self,
         session_id: SessionId,

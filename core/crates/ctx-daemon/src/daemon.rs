@@ -136,8 +136,11 @@ pub use settings_route_handles::SettingsHandle;
 pub(in crate::daemon) use state::merge_queue_route_host_from_state;
 #[cfg(test)]
 pub(in crate::daemon) use state::scheduler_persistence_host_from_state;
+#[cfg(any(test, feature = "test-support"))]
+pub(in crate::daemon) use state::terminal_state_reconcile_host_from_state;
 #[cfg(test)]
 pub(in crate::daemon) use state::workspace_vcs_hook_host_from_state;
+pub(in crate::daemon) use state::DaemonOperationalHosts;
 #[cfg(test)]
 pub(in crate::daemon) use state::{
     cache_sweep_host_from_state, daemon_shutdown_host_from_state,
@@ -146,9 +149,6 @@ pub(in crate::daemon) use state::{
 pub(in crate::daemon) use state::{
     session_store_access_anyhow, CacheSweepHost, CacheSweepHostParts,
     ProtectedWorkspaceStoreLookup, SessionStoreLookup, WeakSessionStoreLookup,
-};
-pub(in crate::daemon) use state::{
-    terminal_state_reconcile_host_from_state, DaemonOperationalHosts,
 };
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{

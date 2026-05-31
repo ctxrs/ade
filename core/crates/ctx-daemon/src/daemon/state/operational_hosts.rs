@@ -152,6 +152,7 @@ pub(in crate::daemon) fn workspace_vcs_hook_host_from_state(
     )
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::daemon) fn terminal_state_reconcile_host_from_state(
     state: &DaemonState,
 ) -> DaemonTerminalStateReconcileHost {

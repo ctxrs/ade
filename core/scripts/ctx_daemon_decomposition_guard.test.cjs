@@ -34,6 +34,7 @@ const {
   checkDaemonStateOperationalHostImpls,
   checkDaemonOperationalHostGraphBoundaries,
   checkDaemonOperationalEntrypointsStateBlind,
+  checkSchedulerReconcileStateBoundaries,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,
@@ -113,6 +114,20 @@ test("retired workspace-services repo onboarding directory is rejected when recr
 
   assert(
     violations.some((violation) => violation.path === retiredDir && violation.kind === "collapsed_path"),
+  );
+});
+
+test("orphan scheduler interruption telemetry path is rejected when recreated", () => {
+  const rootDir = makeRoot();
+  const retired = "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs";
+  assert.equal(COLLAPSED_PATHS.includes(retired), true);
+  writeFile(rootDir, retired, "pub async fn old_state_helper() {}\n");
+
+  const violations = checkCollapsedPaths(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.path),
+    [retired],
   );
 });
 
@@ -1366,6 +1381,66 @@ test("operational daemon background entrypoints stay state-blind", () => {
       "daemon_operational_entrypoint_state_blind",
     ],
   );
+});
+
+test("scheduler reconcile production paths must not accept or derive DaemonState", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/provider_exit.rs", `
+    pub async fn reconcile_turn_failed_on_provider_exit(
+      state: &std::sync::Arc<crate::daemon::DaemonState>,
+    ) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/terminal_state.rs", `
+    use std::sync::Arc;
+
+    pub async fn reconcile_turn_terminal_state(state: &Arc<DaemonState>) {
+      let _host = terminal_state_reconcile_host_from_state(state.as_ref());
+    }
+
+    struct ReconcileParts {
+      state: crate::daemon::state::DaemonState,
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/terminal/finalize.rs", `
+    pub async fn finalize_from_state(state: &Arc<DaemonState>) {}
+  `);
+
+  const violations = checkSchedulerReconcileStateBoundaries(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    [
+      "scheduler_reconcile_state_boundary",
+      "scheduler_reconcile_state_boundary",
+      "scheduler_reconcile_state_boundary",
+      "scheduler_reconcile_state_boundary",
+      "scheduler_reconcile_state_boundary",
+    ],
+  );
+});
+
+test("scheduler reconcile guard allows cfg-test wrappers while production stays host-based", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/provider_exit.rs", `
+    pub(in crate::daemon) async fn reconcile_turn_failed_on_provider_exit_with_host<H>(
+      host: &H,
+    ) {}
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/scheduler/terminal/finalize.rs", `
+    #[cfg(test)]
+    pub async fn finalize_completed_turn(state: &Arc<DaemonState>) {
+      let host = scheduler_persistence_host_from_state(state.as_ref());
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/test_support/workspace_active.rs", `
+    pub async fn reconcile_turn_terminal_state_for_test(&self) {
+      self.state.test_reconcile_turn_terminal_state().await;
+    }
+  `);
+
+  const violations = checkSchedulerReconcileStateBoundaries(rootDir);
+
+  assert.deepEqual(violations, []);
 });
 
 test("full evaluator aggregates all static decomposition violations", () => {

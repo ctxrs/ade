@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 
 use crate::daemon::state::StoreLookup;
 use crate::daemon::task_session_effects::{SessionPublicationEffects, TaskSessionCleanupHost};
-use crate::daemon::{terminal_state_reconcile_host_from_state, DaemonState, SessionStoreLookup};
+use crate::daemon::SessionStoreLookup;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEvent, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
@@ -65,18 +63,6 @@ impl TerminalStateReconcileHost for DaemonTerminalStateReconcileHost {
             .set_running(session_id, running)
             .await;
     }
-}
-
-pub async fn reconcile_turn_terminal_state(
-    state: &Arc<DaemonState>,
-    session_id: SessionId,
-    run_id: Option<RunId>,
-    turn_id: TurnId,
-    fallback_reason: &str,
-) -> Result<()> {
-    let host = terminal_state_reconcile_host_from_state(state.as_ref());
-    reconcile_turn_terminal_state_with_host(&host, session_id, run_id, turn_id, fallback_reason)
-        .await
 }
 
 pub(in crate::daemon) async fn reconcile_turn_terminal_state_with_host<H>(

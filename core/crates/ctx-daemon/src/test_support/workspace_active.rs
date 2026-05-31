@@ -346,14 +346,9 @@ impl TestDaemon {
         turn_id: TurnId,
         fallback_reason: &str,
     ) -> anyhow::Result<()> {
-        daemon::scheduler::reconcile_turn_terminal_state(
-            &self.state,
-            session_id,
-            run_id,
-            turn_id,
-            fallback_reason,
-        )
-        .await
+        self.state
+            .test_reconcile_turn_terminal_state(session_id, run_id, turn_id, fallback_reason)
+            .await
     }
 
     pub async fn reconcile_turn_failed_on_provider_exit_for_test(
@@ -363,14 +358,14 @@ impl TestDaemon {
         turn_id: TurnId,
         fallback_reason: &str,
     ) -> anyhow::Result<()> {
-        daemon::scheduler::reconcile_turn_failed_on_provider_exit(
-            &self.state,
-            session_id,
-            run_id,
-            turn_id,
-            fallback_reason,
-        )
-        .await
+        self.state
+            .test_reconcile_turn_failed_on_provider_exit(
+                session_id,
+                run_id,
+                turn_id,
+                fallback_reason,
+            )
+            .await
     }
 
     pub async fn mark_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) {

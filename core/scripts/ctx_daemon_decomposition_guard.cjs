@@ -13,6 +13,7 @@ const COLLAPSED_PATHS = [
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/handle.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/run_archive.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs",
   "core/crates/ctx-session-service/src/head_projection.rs",
   "core/crates/ctx-workspace-services/src/repo_onboarding.rs",
   "core/crates/ctx-workspace-services/src/workspace_attachments.rs",
@@ -1113,6 +1114,7 @@ const checkDaemonStateMergeQueueHost = (rootDir) => {
 
 const DAEMON_STATE_TYPE_PATTERN = String.raw`(?:(?:::)?[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*DaemonState`;
 const ARC_DAEMON_STATE_TYPE_PATTERN = String.raw`(?:std\s*::\s*sync\s*::\s*)?Arc\s*<\s*${DAEMON_STATE_TYPE_PATTERN}\s*>`;
+const SHARED_DAEMON_STATE_TYPE_PATTERN = String.raw`(?:std\s*::\s*sync\s*::\s*)?(?:Arc|Weak)\s*<\s*${DAEMON_STATE_TYPE_PATTERN}\s*>`;
 
 const DAEMON_STATE_OPERATIONAL_HOST_IMPLS = [
   {
@@ -1216,6 +1218,8 @@ const DAEMON_OPERATIONAL_FROM_STATE_HELPERS = [
   "memleak_debug_host_from_state",
   "startup_turn_reconcile_host_from_state",
   "provider_child_reclassifier_host_from_state",
+  "terminal_state_reconcile_host_from_state",
+  "scheduler_persistence_host_from_state",
 ];
 
 const hasCfgTestAttributeBefore = (contents, offset) => {
@@ -1461,6 +1465,88 @@ const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
   return violations;
 };
 
+const SCHEDULER_RECONCILE_STATE_BOUNDARY_FILES = [
+  "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/provider_exit.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/reconcile/terminal_state.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/lifecycle/stop/interruption/telemetry.rs",
+  "core/crates/ctx-daemon/src/daemon/scheduler/terminal/finalize.rs",
+];
+
+const SCHEDULER_RECONCILE_STATE_DERIVED_HELPERS = [
+  "terminal_state_reconcile_host_from_state",
+  "scheduler_persistence_host_from_state",
+];
+
+const checkSchedulerReconcileStateBoundaries = (rootDir) => {
+  const violations = [];
+  const broadStateReferencePattern = String.raw`(?:&\s*)?(?:${DAEMON_STATE_TYPE_PATTERN}|${SHARED_DAEMON_STATE_TYPE_PATTERN})`;
+  const functionSignaturePattern = new RegExp(
+    String.raw`\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+\s*\([^)]*:\s*${broadStateReferencePattern}[^)]*\)`,
+    "gu",
+  );
+  const structFieldPattern = new RegExp(
+    String.raw`\bstruct\s+\w+\s*\{[^}]*:\s*${broadStateReferencePattern}`,
+    "gu",
+  );
+  const helperCallPattern = new RegExp(
+    String.raw`\b(${SCHEDULER_RECONCILE_STATE_DERIVED_HELPERS.join("|")})\s*\(`,
+    "gu",
+  );
+
+  for (const relativePath of SCHEDULER_RECONCILE_STATE_BOUNDARY_FILES) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = functionSignaturePattern.exec(contents);
+      match;
+      match = functionSignaturePattern.exec(contents)
+    ) {
+      if (hasCfgTestAttributeBefore(contents, match.index)) continue;
+      violations.push({
+        kind: "scheduler_reconcile_state_boundary",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Production scheduler/reconcile functions must receive narrow hosts, not DaemonState.",
+      });
+    }
+
+    for (
+      let match = structFieldPattern.exec(contents);
+      match;
+      match = structFieldPattern.exec(contents)
+    ) {
+      if (hasCfgTestAttributeBefore(contents, match.index)) continue;
+      violations.push({
+        kind: "scheduler_reconcile_state_boundary",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Production scheduler/reconcile structs must store narrow hosts, not DaemonState.",
+      });
+    }
+
+    if (!relativePath.includes("/scheduler/reconcile/")) continue;
+    for (
+      let match = helperCallPattern.exec(contents);
+      match;
+      match = helperCallPattern.exec(contents)
+    ) {
+      if (hasCfgTestAttributeBefore(contents, match.index)) continue;
+      violations.push({
+        kind: "scheduler_reconcile_state_boundary",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Production scheduler/reconcile code must not derive hosts from DaemonState.",
+      });
+    }
+  }
+
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
@@ -1476,6 +1562,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkDaemonStateOperationalHostImpls(rootDir),
     ...checkDaemonOperationalHostGraphBoundaries(rootDir),
     ...checkDaemonOperationalEntrypointsStateBlind(rootDir),
+    ...checkSchedulerReconcileStateBoundaries(rootDir),
   ];
   return { violations };
 };
@@ -1541,6 +1628,7 @@ module.exports = {
   checkDaemonStateOperationalHostImpls,
   checkDaemonOperationalHostGraphBoundaries,
   checkDaemonOperationalEntrypointsStateBlind,
+  checkSchedulerReconcileStateBoundaries,
   checkHeadProjectionPurity,
   checkAppStateAliases,
   checkRatchetedFileCaps,

@@ -46,6 +46,7 @@ pub(in crate::daemon) use merge_queue::{
 };
 #[cfg(test)]
 pub(in crate::daemon) use operational_hosts::scheduler_persistence_host_from_state;
+#[cfg(any(test, feature = "test-support"))]
 pub(in crate::daemon) use operational_hosts::terminal_state_reconcile_host_from_state;
 #[cfg(test)]
 pub(in crate::daemon) use operational_hosts::workspace_vcs_hook_host_from_state;

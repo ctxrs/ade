@@ -245,6 +245,118 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
 }
 
 #[tokio::test]
+async fn reconcile_provider_exit_clears_running_for_already_terminal_turn() {
+    let harness = setup_state().await;
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    harness
+        .daemon()
+        .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
+        .await
+        .unwrap();
+    harness
+        .daemon()
+        .set_turn_status_for_reconciliation_test(
+            harness.session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(2),
+        )
+        .await
+        .unwrap();
+    harness
+        .daemon()
+        .set_session_runtime_running_for_reconciliation_test(harness.session.id, true)
+        .await;
+
+    harness
+        .daemon()
+        .reconcile_turn_failed_on_provider_exit_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            "provider_exit",
+        )
+        .await
+        .unwrap();
+
+    let snapshot = harness
+        .daemon()
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Completed);
+    assert!(
+        !harness
+            .daemon()
+            .session_runtime_is_running_for_reconciliation_test(harness.session.id)
+            .await
+    );
+    assert!(!snapshot.events.iter().any(|event| {
+        matches!(event.event_type, SessionEventType::TurnFinished)
+            && event
+                .payload_json
+                .get("kind")
+                .and_then(|value| value.as_str())
+                == Some("provider_exit_without_terminal_event")
+    }));
+}
+
+#[tokio::test]
+async fn reconcile_provider_exit_clears_running_when_terminal_event_already_exists() {
+    let harness = setup_state().await;
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    harness
+        .daemon()
+        .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
+        .await
+        .unwrap();
+    harness
+        .daemon()
+        .append_turn_finished_event_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            SessionTurnStatus::Interrupted,
+        )
+        .await
+        .unwrap();
+    harness
+        .daemon()
+        .set_session_runtime_running_for_reconciliation_test(harness.session.id, true)
+        .await;
+
+    harness
+        .daemon()
+        .reconcile_turn_failed_on_provider_exit_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            "provider_exit",
+        )
+        .await
+        .unwrap();
+
+    let snapshot = harness
+        .daemon()
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Interrupted);
+    assert_eq!(
+        snapshot.last_turn_status,
+        Some(SessionTurnStatus::Interrupted)
+    );
+    assert!(
+        !harness
+            .daemon()
+            .session_runtime_is_running_for_reconciliation_test(harness.session.id)
+            .await
+    );
+}
+
+#[tokio::test]
 async fn start_failure_marks_turn_failed_and_finishes() {
     let mut providers = common::fake_providers();
     providers.insert("fake".into(), Arc::new(StartFailProvider));
