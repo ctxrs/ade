@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::daemon::git_status::{WorktreeVcsExecutionHost, WorktreeVcsRuntimeHost};
+use crate::daemon::merge_queue::MergeQueueRouteHost;
 use crate::daemon::scheduler::SessionSchedulerWorkerHost;
 use crate::daemon::state::{
     DaemonState, ProtectedWorkspaceStoreLookup, SessionRuntime, SessionStoreLookup,
@@ -70,7 +71,7 @@ pub(super) struct RouteGraphParts {
     pub(super) workspace_stores: ProtectedWorkspaceStoreLookup,
     pub(super) session_stores: SessionStoreLookup,
     pub(super) weak_session_stores: WeakSessionStoreLookup,
-    pub(super) merge_queue_host: Arc<crate::daemon::merge_queue::MergeQueueRouteHost>,
+    pub(super) merge_queue_host: Arc<MergeQueueRouteHost>,
     pub(super) task_publication: Arc<TaskPublicationHost>,
     pub(super) worktree_vcs_runtime: WorktreeVcsRuntimeHost,
     pub(super) worktree_vcs_execution: WorktreeVcsExecutionHost,
@@ -89,6 +90,17 @@ impl RouteGraphParts {
         );
         let session_stores =
             SessionStoreLookup::new(global_store.clone(), workspace_stores.clone());
+        let merge_queue_host = crate::daemon::state::merge_queue_route_host_from_parts(
+            crate::daemon::state::MergeQueueRouteHostParts {
+                stores: stores.clone(),
+                global_store: global_store.clone(),
+                workspace_stores: workspace_stores.clone(),
+                session_stores: session_stores.clone(),
+                merge_queue: Arc::clone(&state.transport.merge_queue),
+                ops_events: state.telemetry.ops_events.clone(),
+                session_publication: state.session_publication.clone(),
+            },
+        );
         let weak_session_stores = WeakSessionStoreLookup::new(
             global_store.clone(),
             stores.clone(),
@@ -141,7 +153,7 @@ impl RouteGraphParts {
             workspace_stores: workspace_stores.clone(),
             session_stores,
             weak_session_stores,
-            merge_queue_host: crate::daemon::merge_queue_route_host_from_state(state.as_ref()),
+            merge_queue_host,
             task_publication: Arc::clone(&state.task_publication),
             worktree_vcs_runtime: WorktreeVcsRuntimeHost::from_workspace_runtime(&state.workspaces),
             worktree_vcs_execution: WorktreeVcsExecutionHost::new(

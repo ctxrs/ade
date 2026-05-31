@@ -86,13 +86,17 @@ pub async fn bootstrap_daemon_runtime(
     ));
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
-    lifecycle::spawn_cache_sweeper(cache_sweep_host_from_state(state.as_ref()));
-    memleak_debug::spawn_memleak_debug(memleak_debug_host_from_state(state.as_ref()));
-    lifecycle::spawn_provider_worker_sweeper(Arc::clone(&state.provider_lifecycle_background));
-    lifecycle::spawn_endpoint_model_catalog_sweeper(Arc::clone(
-        &state.provider_lifecycle_background,
+    let operational_hosts = DaemonOperationalHosts::from_state(state.as_ref());
+    lifecycle::spawn_cache_sweeper(operational_hosts.cache_sweep.clone());
+    memleak_debug::spawn_memleak_debug(operational_hosts.memleak_debug.clone());
+    lifecycle::spawn_provider_worker_sweeper(Arc::clone(
+        &operational_hosts.provider_lifecycle_background,
     ));
-    if let Err(err) = startup_turn_reconcile_host_from_state(state.as_ref())
+    lifecycle::spawn_endpoint_model_catalog_sweeper(Arc::clone(
+        &operational_hosts.provider_lifecycle_background,
+    ));
+    if let Err(err) = operational_hosts
+        .startup_turn_reconcile
         .reconcile_running_turns()
         .await
     {
@@ -104,19 +108,19 @@ pub async fn bootstrap_daemon_runtime(
         .settings
         .apply_settings_side_effects(&settings)
         .await;
-    let shutdown_signal = DaemonShutdownSignal::new(state.core.shutdown_tx.clone());
+    let shutdown_signal = operational_hosts.shutdown_signal.clone();
     background::spawn_provider_background_services(
-        Arc::clone(&state.provider_lifecycle_background),
-        Arc::new(provider_child_reclassifier_host_from_state(state.as_ref())),
+        Arc::clone(&operational_hosts.provider_lifecycle_background),
+        Arc::clone(&operational_hosts.provider_child_reclassifier),
         route_handles.provider_status.clone(),
         route_handles.provider_usage.clone(),
     );
     background::spawn_operational_background_services(
-        storage_guard_host_from_state(state.as_ref()),
-        merge_queue_route_host_from_state(state.as_ref()),
-        managed_daemon_auto_update_host_from_state(state.as_ref()),
-        daemon_shutdown_host_from_state(state.as_ref()),
-        saved_mobile_tunnel_reconnect_host_from_state(state.as_ref()),
+        operational_hosts.storage_guard,
+        Arc::clone(&operational_hosts.merge_queue),
+        operational_hosts.managed_daemon_auto_update,
+        operational_hosts.daemon_shutdown,
+        operational_hosts.saved_mobile_tunnel_reconnect,
         requested_binds,
     );
     Ok(DaemonRuntime {

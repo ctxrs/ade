@@ -48,6 +48,8 @@
     "release:buildkite:codex-crp:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --provider codex --publish",
     "release:buildkite:controller": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/run_buildkite_release_controller.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\"",
     "release:buildkite:ci-gate": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/run_buildkite_release_ci_gate.cjs",
+    "release:e2e:publish": "pnpm release:buildkite:controller",
+    "release:e2e:verify": "pnpm verify:e2e:release",
     "release:bundle:contracts:linux-x86_64": "node scripts/run_bazel_pilot.cjs run //tools/bazel:release_bundle_contracts -- --codex-target linux-x86_64",
     "release:e2e:web:release:retry": "pnpm bazel:web:e2e:release:retry",
     "release:public-storage:locked-objects:check": "node scripts/release_public_storage_locked_objects.cjs --check-presence",

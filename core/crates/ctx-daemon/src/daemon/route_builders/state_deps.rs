@@ -9,6 +9,10 @@ pub(crate) struct RouteBuilder {
 
 pub(crate) fn route_handles_from_state(state: &Arc<DaemonState>) -> DaemonRouteHandles {
     let handle = RouteBuilder::new(RouteGraphParts::from_state(state));
+    route_handles_from_builder(handle)
+}
+
+fn route_handles_from_builder(handle: RouteBuilder) -> DaemonRouteHandles {
     let core_routes = handle.core_route_deps();
     let merge_queue_host = handle.merge_queue_route_host();
     let provider_routes = handle.provider_route_deps();

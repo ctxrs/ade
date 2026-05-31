@@ -1206,6 +1206,137 @@ const DAEMON_OPERATIONAL_STATE_BLIND_FILES = [
   "core/crates/ctx-daemon/src/daemon/memleak_debug/snapshot.rs",
 ];
 
+const DAEMON_OPERATIONAL_FROM_STATE_HELPERS = [
+  "cache_sweep_host_from_state",
+  "storage_guard_host_from_state",
+  "merge_queue_route_host_from_state",
+  "daemon_shutdown_host_from_state",
+  "managed_daemon_auto_update_host_from_state",
+  "saved_mobile_tunnel_reconnect_host_from_state",
+  "memleak_debug_host_from_state",
+  "startup_turn_reconcile_host_from_state",
+  "provider_child_reclassifier_host_from_state",
+];
+
+const hasCfgTestAttributeBefore = (contents, offset) => {
+  const lines = contents.slice(0, offset).split(/\r?\n/u);
+  const previous = lines.slice(Math.max(0, lines.length - 5)).join("\n");
+  return /#\s*\[\s*cfg\s*\(\s*(?:test|any\s*\(\s*test\s*,\s*feature\s*=\s*"test-support"\s*\))\s*\)\s*\]/u.test(previous);
+};
+
+const isDaemonOperationalTestSupportPath = (relativePath) =>
+  relativePath.startsWith("core/crates/ctx-daemon/src/test_support")
+  || relativePath.includes("/tests/")
+  || /(?:^|\/)tests\.rs$/u.test(relativePath);
+
+const checkDaemonOperationalHostGraphBoundaries = (rootDir) => {
+  const violations = [];
+  const helperAlternation = DAEMON_OPERATIONAL_FROM_STATE_HELPERS.join("|");
+  const daemonSrcRoot = path.join(rootDir, "core", "crates", "ctx-daemon", "src");
+  const helperDefinitionPattern = new RegExp(
+    String.raw`\bfn\s+(${helperAlternation})\s*\(`,
+    "gu",
+  );
+
+  for (const absolutePath of walkFiles(daemonSrcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    if (isDaemonOperationalTestSupportPath(relativePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = helperDefinitionPattern.exec(contents);
+      match;
+      match = helperDefinitionPattern.exec(contents)
+    ) {
+      if (hasCfgTestAttributeBefore(contents, match.index)) continue;
+      violations.push({
+        kind: "daemon_operational_from_state_helper",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Production operational hosts must be assembled through DaemonOperationalHosts, not individual *_from_state helpers.",
+      });
+    }
+  }
+
+  const reexportPaths = [
+    "core/crates/ctx-daemon/src/daemon/state.rs",
+    "core/crates/ctx-daemon/src/daemon.rs",
+  ];
+  const helperNamePattern = new RegExp(String.raw`\b(${helperAlternation})\b`, "gu");
+  for (const relativePath of reexportPaths) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = helperNamePattern.exec(contents);
+      match;
+      match = helperNamePattern.exec(contents)
+    ) {
+      if (hasCfgTestAttributeBefore(contents, match.index)) continue;
+      violations.push({
+        kind: "daemon_operational_from_state_helper",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Production operational host *_from_state helpers must not be re-exported outside test-only compatibility surfaces.",
+      });
+    }
+  }
+
+  const callsitePaths = [
+    "core/crates/ctx-daemon/src/daemon/runtime.rs",
+    "core/crates/ctx-daemon/src/daemon/serve/background.rs",
+  ];
+  const helperCallPattern = new RegExp(
+    String.raw`\b(${helperAlternation})\s*\(`,
+    "gu",
+  );
+  for (const relativePath of callsitePaths) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (
+      let match = helperCallPattern.exec(contents);
+      match;
+      match = helperCallPattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_from_state_helper",
+        line: lineForOffset(contents, match.index),
+        path: relativePath,
+        message:
+          "Daemon runtime/background startup must consume DaemonOperationalHosts fields instead of calling operational *_from_state helpers.",
+      });
+    }
+  }
+
+  const operationalHostsPath =
+    "core/crates/ctx-daemon/src/daemon/state/operational_hosts.rs";
+  const operationalHostsAbsolutePath = path.join(rootDir, operationalHostsPath);
+  if (fs.existsSync(operationalHostsAbsolutePath)) {
+    const contents = stripRustLineComments(fs.readFileSync(operationalHostsAbsolutePath, "utf8"));
+    const structStoragePattern = new RegExp(
+      String.raw`\bstruct\s+DaemonOperationalHosts\s*\{[^}]*\b\w+\s*:\s*(?:&\s*)?(?:${DAEMON_STATE_TYPE_PATTERN}|(?:Arc|Weak)\s*<\s*${DAEMON_STATE_TYPE_PATTERN}\s*>)`,
+      "gu",
+    );
+    for (
+      let match = structStoragePattern.exec(contents);
+      match;
+      match = structStoragePattern.exec(contents)
+    ) {
+      violations.push({
+        kind: "daemon_operational_from_state_helper",
+        line: lineForOffset(contents, match.index),
+        path: operationalHostsPath,
+        message:
+          "DaemonOperationalHosts must store explicit narrow hosts, not broad DaemonState.",
+      });
+    }
+  }
+
+  return violations;
+};
+
 const checkDaemonOperationalEntrypointsStateBlind = (rootDir) => {
   const violations = [];
   const broadStatePattern = new RegExp(
@@ -1343,6 +1474,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkDaemonHandleStoreLookupOwnership(rootDir),
     ...checkDaemonStateMergeQueueHost(rootDir),
     ...checkDaemonStateOperationalHostImpls(rootDir),
+    ...checkDaemonOperationalHostGraphBoundaries(rootDir),
     ...checkDaemonOperationalEntrypointsStateBlind(rootDir),
   ];
   return { violations };
@@ -1407,6 +1539,7 @@ module.exports = {
   checkDaemonHandleStoreLookupOwnership,
   checkDaemonStateMergeQueueHost,
   checkDaemonStateOperationalHostImpls,
+  checkDaemonOperationalHostGraphBoundaries,
   checkDaemonOperationalEntrypointsStateBlind,
   checkHeadProjectionPurity,
   checkAppStateAliases,

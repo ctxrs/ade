@@ -32,6 +32,7 @@ const {
   checkDaemonHandleStoreLookupOwnership,
   checkDaemonStateMergeQueueHost,
   checkDaemonStateOperationalHostImpls,
+  checkDaemonOperationalHostGraphBoundaries,
   checkDaemonOperationalEntrypointsStateBlind,
   checkHeadProjectionPurity,
   checkAppStateAliases,
@@ -1187,6 +1188,100 @@ test("DaemonState cannot be reintroduced as operational daemon hosts", () => {
       "daemon_state_worktree_data_plane_host",
       "daemon_state_worktree_data_plane_host",
     ],
+  );
+});
+
+test("operational daemon hosts assemble through explicit graph", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/operational_hosts.rs", `
+    pub(in crate::daemon) struct DaemonOperationalHosts {
+      cache_sweep: CacheSweepHost,
+    }
+
+    impl DaemonOperationalHosts {
+      pub(in crate::daemon) fn from_state(state: &DaemonState) -> Self {
+        Self { cache_sweep: CacheSweepHost::new(state.core.stores.clone()) }
+      }
+    }
+
+    pub(in crate::daemon) fn storage_guard_host_from_state(state: &DaemonState) -> StorageGuardHost {
+      StorageGuardHost::new(state.core.stores.clone())
+    }
+
+    #[cfg(test)]
+    pub(in crate::daemon) fn cache_sweep_host_from_state(state: &DaemonState) -> CacheSweepHost {
+      CacheSweepHost::new(state.core.stores.clone())
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/merge_queue.rs", `
+    pub(in crate::daemon) fn merge_queue_route_host_from_state(state: &DaemonState) -> Arc<MergeQueueRouteHost> {
+      Arc::new(MergeQueueRouteHost::new(state.core.stores.clone()))
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state.rs", `
+    pub(in crate::daemon) use operational_hosts::DaemonOperationalHosts;
+    pub(in crate::daemon) use operational_hosts::storage_guard_host_from_state;
+    #[cfg(test)]
+    pub(in crate::daemon) use operational_hosts::cache_sweep_host_from_state;
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon.rs", `
+    pub(in crate::daemon) use state::storage_guard_host_from_state;
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/runtime.rs", `
+    async fn boot(state: Arc<DaemonState>) {
+      spawn_operational_background_services(storage_guard_host_from_state(state.as_ref()));
+      let _handles = route_handles_from_state(&state);
+    }
+  `);
+
+  const violations = checkDaemonOperationalHostGraphBoundaries(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    [
+      "daemon_operational_from_state_helper",
+      "daemon_operational_from_state_helper",
+      "daemon_operational_from_state_helper",
+      "daemon_operational_from_state_helper",
+      "daemon_operational_from_state_helper",
+    ],
+  );
+});
+
+test("operational daemon helper definitions are rejected across daemon modules", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/new_worker.rs", `
+    pub(in crate::daemon) fn storage_guard_host_from_state(state: &DaemonState) -> StorageGuardHost {
+      StorageGuardHost::new(state.core.stores.clone())
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/tests/fixture.rs", `
+    pub(in crate::daemon) fn storage_guard_host_from_state(state: &DaemonState) -> StorageGuardHost {
+      StorageGuardHost::new(state.core.stores.clone())
+    }
+  `);
+
+  const violations = checkDaemonOperationalHostGraphBoundaries(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    ["daemon_operational_from_state_helper"],
+  );
+});
+
+test("operational daemon host graph rejects broad state storage", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/state/operational_hosts.rs", `
+    pub(in crate::daemon) struct DaemonOperationalHosts {
+      daemon: Arc<crate::daemon::state::DaemonState>,
+    }
+  `);
+
+  const violations = checkDaemonOperationalHostGraphBoundaries(rootDir);
+
+  assert.deepEqual(
+    violations.map((violation) => violation.kind),
+    ["daemon_operational_from_state_helper"],
   );
 });
 
