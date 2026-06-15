@@ -12,6 +12,7 @@ test("control-plane installer resolves the product-specific release manifest", (
   assert.match(script, /functions_base="\$\{CTX_CONTROL_PLANE_FUNCTIONS_BASE:-https:\/\/api\.example\.test\/functions\/v1\}"/);
   assert.match(script, /channel="\$\{CTX_CONTROL_PLANE_CHANNEL:-canary\}"/);
   assert.match(script, /manifest_url="\$\{functions_base%\/\}\/releases\/\$channel\/control-plane\/latest\.json"/);
+  assert.match(script, /PYTHONHOME= PYTHONPATH= python3/);
 });
 
 test("control-plane installer installs ctx without editing shell profile PATH", () => {

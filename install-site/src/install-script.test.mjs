@@ -318,7 +318,7 @@ test("renderInstallScript includes release resolution, checksum verify, and app 
   assert.match(script, /plutil -extract/);
   assert.match(script, /sha256sum/);
   assert.match(script, /shasum -a 256/);
-  assert.match(script, /python3 - "\$manifest_json" "\$key"/);
+  assert.match(script, /PYTHONHOME= PYTHONPATH= python3 - "\$manifest_json" "\$key"/);
   assert.match(script, /fail "manifest missing sha256 for selected artifact"/);
   assert.doesNotMatch(script, /skipping checksum verification/);
   assert.match(script, /hdiutil attach/);
