@@ -12,6 +12,10 @@ const playwrightRuntimeLock = fs.readFileSync(
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
 const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
+const e2eShellScript = fs.readFileSync(
+  path.join(repoRoot, "core", "apps", "web", "scripts", "run-e2e-bazel-runtime.sh"),
+  "utf8",
+);
 const premergeRequiredSuite = fs.readFileSync(
   path.join(repoRoot, "core", "apps", "web", "e2e", "suites", "premerge_required.txt"),
   "utf8",
@@ -63,7 +67,11 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
   assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_trees/u);
   assert.match(e2eMacroFile, /linux_browser = ""/u);
   assert.match(e2eMacroFile, /"CTX_E2E_BROWSER": linux_browser/u);
+  assert.match(e2eMacroFile, /"@rules_nodejs\/\/nodejs:current_node_runtime"/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
+  assert.match(e2eShellScript, /resolve_node_from_runfiles/u);
+  assert.match(e2eShellScript, /JS_BINARY__NODE_BINARY/u);
+  assert.match(e2eShellScript, /rules_nodejs\+\+node\+nodejs_[^/]+\/bin\/nodejs\/bin\/node/u);
   for (const targetName of ["premerge_required", "quarantine", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
   }

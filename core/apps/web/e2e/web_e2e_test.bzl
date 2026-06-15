@@ -28,6 +28,7 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         "//core/apps/web:node_modules/postcss",
         "//core/apps/web:node_modules/tailwindcss",
         "//core/crates/ctx-http:ctx",
+        "@rules_nodejs//nodejs:current_node_runtime",
     ]
     playwright_browser_data = select({
         "@platforms//os:linux": [

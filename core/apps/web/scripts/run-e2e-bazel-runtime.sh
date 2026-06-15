@@ -28,10 +28,62 @@ resolve_script() {
   return 1
 }
 
+resolve_runfile() {
+  local logical_path="$1"
+  local candidate=""
+  local runfiles_from_manifest=""
+  if [[ -n "${RUNFILES_MANIFEST_FILE:-}" && -f "${RUNFILES_MANIFEST_FILE}" ]]; then
+    candidate="$(awk -v key="${logical_path}" 'index($0, key " ") == 1 { print substr($0, length(key) + 2); exit }' "${RUNFILES_MANIFEST_FILE}")"
+    if [[ -n "${candidate}" && -e "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+    runfiles_from_manifest="${RUNFILES_MANIFEST_FILE%.runfiles_manifest}.runfiles"
+  fi
+  for candidate in \
+    "${RUNFILES_DIR:-}/${logical_path}" \
+    "${TEST_SRCDIR:-}/${logical_path}" \
+    "${runfiles_from_manifest}/${logical_path}"
+  do
+    if [[ -n "${candidate}" && -e "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_node_from_runfiles() {
+  local candidate=""
+  local logical_path=""
+  for logical_path in \
+    "rules_nodejs++node+nodejs_linux_amd64/bin/nodejs/bin/node" \
+    "rules_nodejs++node+nodejs_linux_arm64/bin/nodejs/bin/node" \
+    "rules_nodejs++node+nodejs_darwin_amd64/bin/nodejs/bin/node" \
+    "rules_nodejs++node+nodejs_darwin_arm64/bin/nodejs/bin/node"
+  do
+    candidate="$(resolve_runfile "${logical_path}" || true)"
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  if [[ -n "${RUNFILES_MANIFEST_FILE:-}" && -f "${RUNFILES_MANIFEST_FILE}" ]]; then
+    candidate="$(awk '$1 ~ /^rules_nodejs\+\+node\+nodejs_[^/]+\/bin\/nodejs\/bin\/node$/ { print substr($0, length($1) + 2); exit }' "${RUNFILES_MANIFEST_FILE}")"
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 resolve_node() {
   local candidate=""
   for candidate in \
+    "${JS_BINARY__NODE_BINARY:-}" \
     "${NODE:-}" \
+    "$(resolve_node_from_runfiles || true)" \
     "$(command -v node 2>/dev/null || true)" \
     "${HOME:-}/.local/node"/*/bin/node \
     "/var/lib/buildkite-agent/.local/node"/*/bin/node \
