@@ -71,13 +71,23 @@ validate_linux_local_smoke_app_path() {
 
 resolve_linux_local_smoke_app_path() {
   local root="${1:?repo root is required}"
-  local bundle_dir="${root}/core/apps/desktop/src-tauri/target/release/bundle/appimage"
+  local -a bundle_dirs=(
+    "${root}/core/apps/desktop/src-tauri/target/release/bundle/appimage"
+    "${root}/core/target/release/bundle/appimage"
+  )
+  local -a existing_bundle_dirs=()
   local -a matches=()
-  local match
+  local bundle_dir match
 
-  if [[ ! -d "$bundle_dir" ]]; then
+  for bundle_dir in "${bundle_dirs[@]}"; do
+    if [[ -d "$bundle_dir" ]]; then
+      existing_bundle_dirs+=("$bundle_dir")
+    fi
+  done
+
+  if [[ "${#existing_bundle_dirs[@]}" -eq 0 ]]; then
     updater_local_smoke_fail \
-      "linux local smoke expected an AppImage bundle directory at $bundle_dir"
+      "linux local smoke expected an AppImage bundle directory at one of: ${bundle_dirs[*]}"
     return 1
   fi
 
@@ -85,7 +95,7 @@ resolve_linux_local_smoke_app_path() {
     [[ -n "$match" ]] || continue
     matches+=("$match")
   done < <(
-    find "$bundle_dir" -maxdepth 3 -type f -path '*.AppDir/AppRun' 2>/dev/null | LC_ALL=C sort
+    find "${existing_bundle_dirs[@]}" -maxdepth 3 -type f -path '*.AppDir/AppRun' 2>/dev/null | LC_ALL=C sort
   )
 
   case "${#matches[@]}" in
@@ -96,13 +106,13 @@ resolve_linux_local_smoke_app_path() {
       ;;
     0)
       updater_local_smoke_fail \
-        "linux local smoke expected exactly one bundled AppDir AppRun launcher under $bundle_dir (*.AppDir/AppRun)"
+        "linux local smoke expected exactly one bundled AppDir AppRun launcher under: ${existing_bundle_dirs[*]} (*.AppDir/AppRun)"
       return 1
       ;;
   esac
 
   updater_local_smoke_fail \
-    "linux local smoke found multiple bundled AppDir AppRun launchers under $bundle_dir"
+    "linux local smoke found multiple bundled AppDir AppRun launchers under: ${existing_bundle_dirs[*]}"
   printf '%s\n' "${matches[@]}" >&2
   return 1
 }

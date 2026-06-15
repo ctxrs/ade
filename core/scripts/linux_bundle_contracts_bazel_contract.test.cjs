@@ -31,16 +31,26 @@ test("linux bundle contracts expose a Bazel-owned release wrapper", () => {
   assert.match(helperScript, /--prune-glibc/);
 });
 
-test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloads", () => {
+test("linux AppImage packaging includes manifest-declared runtime payloads", () => {
   assert.equal(
     tauriConfig.bundle.resources.includes("bundles/runtimes/ctx-mcp/**/*"),
     false,
     "The ctx-mcp runtime resource is Linux-only; the global macOS Tauri config must stay thin",
   );
+  assert.equal(
+    tauriConfig.bundle.resources.includes("bundles/runtimes/node/**/*"),
+    false,
+    "The Node runtime resource is Linux-only; the global macOS Tauri config must stay thin",
+  );
+  assert.equal(
+    tauriConfig.bundle.resources.includes("bundles/daemons/**/*"),
+    false,
+    "The remote daemon payload resource is Linux-only; the global macOS Tauri config must stay thin",
+  );
   assert.match(
     linuxTauriBundleScript,
-    /CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='\["bundles\/runtimes\/ctx-mcp\/\*\*\/\*"\]'/,
-    "Linux AppImages must package the ctx-mcp runtime path declared in bundles/manifest.json",
+    /CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='\["bundles\/runtimes\/ctx-mcp\/\*\*\/\*","bundles\/runtimes\/node\/\*\*\/\*","bundles\/daemons\/\*\*\/\*"\]'/,
+    "Linux AppImages must package the runtime paths declared in bundles/manifest.json",
   );
   assert.match(
     linuxTauriBundleScript,

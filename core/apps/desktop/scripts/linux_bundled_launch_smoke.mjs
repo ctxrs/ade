@@ -572,6 +572,7 @@ async function runLaunchAttempt({ options, artifactDir, appLaunchEnv, attempt, t
         && state.href !== "about:blank"
         && state.pathname !== "blank"
         && state.readyState === "complete"
+        && state.newWorkspaceVisible
       ) {
         break;
       }

@@ -19,6 +19,53 @@ case "$platform" in
     ;;
 esac
 
+sanitize_path_list() {
+  local value="${1:-}"
+  local cleaned=""
+  local old_ifs="$IFS"
+  local segment
+  IFS=:
+  for segment in $value; do
+    case "$segment" in
+      "" | /tmp/.mount_* | /tmp/.mount_*/*)
+        continue
+        ;;
+    esac
+    if [[ -n "$cleaned" ]]; then
+      cleaned+=":$segment"
+    else
+      cleaned="$segment"
+    fi
+  done
+  IFS="$old_ifs"
+  printf '%s' "$cleaned"
+}
+
+sanitize_path_env_var() {
+  local name="$1"
+  local value="${!name:-}"
+  local cleaned
+  cleaned="$(sanitize_path_list "$value")"
+  if [[ -n "$cleaned" ]]; then
+    export "$name=$cleaned"
+  else
+    unset "$name"
+  fi
+}
+
+sanitize_appimage_runtime_env() {
+  local var
+  for var in PATH LD_LIBRARY_PATH GIO_EXTRA_MODULES GIO_MODULE_DIR GTK_PATH GI_TYPELIB_PATH XDG_DATA_DIRS; do
+    sanitize_path_env_var "$var"
+  done
+  if [[ -z "${PATH:-}" ]]; then
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  fi
+  unset APPDIR APPIMAGE ARGV0 CTX_APPIMAGE_PATH CTX_BUNDLE_DIR WEBKIT_EXEC_PATH
+}
+
+sanitize_appimage_runtime_env
+
 for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: missing required command in release image: $cmd" >&2
@@ -233,6 +280,18 @@ verify_appimage_bundle_manifest_closure() {
 appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
 fallback_appimage_bundle_dir="core/target/release/bundle/appimage"
 
+tauri_build_args=(build -- --bundles appimage)
+if [[ -n "${RELEASE_TAURI_FEATURES:-}" ]]; then
+  case "$RELEASE_TAURI_FEATURES" in
+    automation) ;;
+    *)
+      echo "error: unsupported RELEASE_TAURI_FEATURES '$RELEASE_TAURI_FEATURES' for Linux Tauri bundle (only 'automation' is allowed)" >&2
+      exit 1
+      ;;
+  esac
+  tauri_build_args+=(-- --features "$RELEASE_TAURI_FEATURES")
+fi
+
 case "$platform" in
   linux-x64) ctx_http_bazel_target="linux-x86_64" ;;
   linux-arm64) ctx_http_bazel_target="linux-aarch64" ;;
@@ -246,10 +305,10 @@ if ! \
   CI=true \
   CTX_DESKTOP_SYNC_BUNDLES=0 \
   CTX_BUNDLE_REMOTE_DAEMONS=0 \
-  CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='["bundles/runtimes/ctx-mcp/**/*"]' \
+  CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='["bundles/runtimes/ctx-mcp/**/*","bundles/runtimes/node/**/*","bundles/daemons/**/*"]' \
   CTX_HTTP_BAZEL_TARGET_KEY="$ctx_http_bazel_target" \
   RUST_LOG=tauri_bundler=debug \
-  node core/scripts/desktop_tauri_entry.cjs build -- --bundles appimage; then
+  node core/scripts/desktop_tauri_entry.cjs "${tauri_build_args[@]}"; then
   echo "::group::linuxdeploy diagnostics (${platform})"
 
   tauri_cache_dir="$(select_tauri_cache_dir)"

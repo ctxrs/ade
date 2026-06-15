@@ -287,6 +287,7 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /for \(const key of DESKTOP_APP_LAUNCH_ENV_KEYS\)[\s\S]*process\.env\[key\]/);
   assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR/);
   assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR/);
+  assert.match(script, /state\.readyState === "complete"[\s\S]*&& state\.newWorkspaceVisible/);
   assert.match(script, /connectBrowserWithTimeout\(\{[\s\S]*driverPort,[\s\S]*appPath: applicationPath,[\s\S]*sessionTimeoutMs: options\.sessionTimeoutMs,[\s\S]*\}\)/);
   assert.match(script, /createLinuxAppDirLaunchWrapper\(\{/);
   assert.match(script, /wrapperDir: path\.join\(artifactDir, "desktop-app-launchers"\)/);
