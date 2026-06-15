@@ -28,10 +28,10 @@ const MERGE_READY_COMMAND = "node scripts/run_test_taxonomy_profile.cjs --run --
 const CTX_HTTP_DAEMON_BOUNDARY_COMMAND = "pnpm ctx-http:daemon-boundary:check";
 const CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND = "pnpm ctx:decomposition-boundary:check";
 const NEON_MIGRATIONS_COMMAND = "pnpm neon:migrations:check";
-const TELEMETRY_WORKER_COMMAND = "bash -lc 'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
-const CONTROL_PLANE_WORKER_COMMAND = "bash -lc 'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
-const RELEASE_API_WORKER_COMMAND = "bash -lc 'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
-const LLM_RELAY_WORKER_COMMAND = "bash -lc 'cd ../llm-relay-worker && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir \"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const TELEMETRY_WORKER_COMMAND = "bash -lc 'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const CONTROL_PLANE_WORKER_COMMAND = "bash -lc 'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const RELEASE_API_WORKER_COMMAND = "bash -lc 'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
+const LLM_RELAY_WORKER_COMMAND = "bash -lc 'cd ../llm-relay-worker && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" test && corepack pnpm@9.15.1 --config.store-dir=\"${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}\" typecheck'";
 const VERIFICATION_TOOLING_COMMAND = [
   "node",
   "--test",

@@ -14,7 +14,7 @@ if ! command -v "$python_cmd" >/dev/null 2>&1; then
   fi
 fi
 
-"$python_cmd" - "$MATRIX_JSON" <<'PY'
+env -u PYTHONHOME -u PYTHONPATH "$python_cmd" - "$MATRIX_JSON" <<'PY'
 import json
 import re
 import sys

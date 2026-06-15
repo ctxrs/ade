@@ -79,9 +79,23 @@ export type TelemetryPostHogCapture = {
   properties: Record<string, unknown>;
 };
 
+export type TelemetryEventDiagnostic = {
+  index: number;
+  code: string;
+};
+
+export type TelemetryEdgeProvenance = {
+  asOrganization?: string | null;
+  asn?: number | null;
+  colo?: string | null;
+  country?: string | null;
+  region?: string | null;
+};
+
 export type TelemetryIngestPlan = {
   rows: TelemetryRow[];
   posthogCaptures: TelemetryPostHogCapture[];
+  quarantinedEvents: TelemetryEventDiagnostic[];
 };
 
 export const selectPostHogCapturesForInsertedRows = (
@@ -142,6 +156,7 @@ const TRAFFIC_CLASSES = new Set<TelemetryTrafficClass>([
   "load_test",
   "ci",
 ]);
+const ANALYTICS_ENVIRONMENT_PATTERN = /^[a-z0-9_-]+$/;
 const BATCH_KEYS = new Set([
   "broker_install_id",
   "broker_runtime",
@@ -239,6 +254,13 @@ function normalizeOriginRuntime(
   throw new TelemetryIngestError(400, "invalid_origin_runtime");
 }
 
+function deriveSurfaceFromOriginRuntime(
+  originRuntime: "web" | "desktop" | "mobile_shell" | "daemon",
+): "web" | "desktop" | "mobile_shell" | null {
+  if (originRuntime === "daemon") return null;
+  return originRuntime;
+}
+
 function sanitizeScalar(value: unknown): TelemetryScalar | undefined {
   if (value === null) return null;
   if (typeof value === "boolean") return value;
@@ -281,6 +303,13 @@ function pickString(...values: Array<unknown>): string | null {
     if (normalized) return normalized;
   }
   return null;
+}
+
+function normalizeAnalyticsEnvironment(value: unknown): string | null {
+  const normalized = truncate(value, 32);
+  return normalized && ANALYTICS_ENVIRONMENT_PATTERN.test(normalized)
+    ? normalized
+    : null;
 }
 
 function pickNumber(...values: Array<unknown>): number | null {
@@ -338,9 +367,56 @@ function classifyTraffic(
   return explicit ?? "user";
 }
 
+function isRecoverableEventValidationError(
+  error: unknown,
+): error is TelemetryIngestError {
+  if (!(error instanceof TelemetryIngestError)) return false;
+  return error.code !== "invalid_delivery" &&
+    error.code !== "invalid_remote_delivery";
+}
+
+function sanitizedProvenanceString(
+  value: string | null | undefined,
+  max: number,
+): string | null {
+  return truncate(value, max);
+}
+
+function sanitizedProvenanceNumber(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function buildEdgeProvenanceProperties(
+  provenance: TelemetryEdgeProvenance | undefined,
+): Record<string, TelemetryScalar> {
+  if (!provenance) return {};
+  const out: Record<string, TelemetryScalar> = {};
+  const country = sanitizedProvenanceString(provenance.country, 8);
+  if (country) out.cf_country = country.toUpperCase();
+  const region = sanitizedProvenanceString(provenance.region, 64);
+  if (region) out.cf_region = region;
+  const colo = sanitizedProvenanceString(provenance.colo, 16);
+  if (colo) out.cf_colo = colo.toUpperCase();
+  const asn = sanitizedProvenanceNumber(provenance.asn);
+  if (asn !== null) out.cf_asn = asn;
+  const asOrganization = sanitizedProvenanceString(
+    provenance.asOrganization,
+    128,
+  );
+  if (asOrganization) out.cf_as_organization = asOrganization;
+  return out;
+}
+
 export async function buildTelemetryIngestPlan(
   payload: unknown,
-  opts: { idSalt: string; now?: () => Date },
+  opts: {
+    defaultAnalyticsEnvironment?: string | null;
+    edgeProvenance?: TelemetryEdgeProvenance;
+    idSalt: string;
+    now?: () => Date;
+  },
 ): Promise<TelemetryIngestPlan> {
   if (!opts.idSalt.trim()) {
     throw new TelemetryIngestError(500, "missing_hash_salt");
@@ -387,183 +463,197 @@ export async function buildTelemetryIngestPlan(
 
   const rows: TelemetryRow[] = [];
   const posthogCaptures: TelemetryPostHogCapture[] = [];
+  const quarantinedEvents: TelemetryEventDiagnostic[] = [];
   const nowIso = (opts.now ?? (() => new Date()))().toISOString();
+  const edgeProvenanceProperties = buildEdgeProvenanceProperties(
+    opts.edgeProvenance,
+  );
+  const defaultAnalyticsEnvironment = normalizeAnalyticsEnvironment(
+    opts.defaultAnalyticsEnvironment,
+  );
 
-  for (const raw of batch.events) {
-    if (!isRecord(raw)) {
-      throw new TelemetryIngestError(400, "invalid_event");
-    }
-    rejectUnknownKeys(raw, EVENT_KEYS, "unknown_event_field");
-    const rawEvent = raw as RawTelemetryEvent;
-    const eventId = requireString(rawEvent.event_id, 128, "missing_event_id");
-    const eventName = requireString(
-      rawEvent.event_name,
-      64,
-      "missing_event_name",
-    );
-    const eventVersion = requirePositiveInteger(
-      rawEvent.event_version,
-      "invalid_event_version",
-    );
-    const occurredAt = parseTimestamp(rawEvent.occurred_at);
-    const plane = normalizePlane(rawEvent.plane);
-    const delivery = normalizeDelivery(rawEvent.delivery);
-    if (delivery !== "remote") {
-      throw new TelemetryIngestError(400, "invalid_remote_delivery");
-    }
-    const originRuntime = normalizeOriginRuntime(rawEvent.origin_runtime);
-    const originInstallId = truncate(rawEvent.origin_install_id, 128) ??
-      (originRuntime === "daemon" ? brokerInstallId : null);
-    if (!originInstallId) {
-      throw new TelemetryIngestError(400, "missing_origin_install_id");
-    }
-    const originInstallIdHash = await sha256Hex(
-      `${opts.idSalt}:${originInstallId}`,
-    );
-    const properties = sanitizeProperties(rawEvent.properties);
-    const surface = truncate(rawEvent.surface, 32);
-    if (originRuntime !== "daemon" && !surface) {
-      throw new TelemetryIngestError(400, "missing_surface");
-    }
-    const propertyExecutionEnvironment =
-      typeof properties.execution_environment === "string"
-        ? properties.execution_environment
+  for (const [index, raw] of batch.events.entries()) {
+    try {
+      if (!isRecord(raw)) {
+        throw new TelemetryIngestError(400, "invalid_event");
+      }
+      rejectUnknownKeys(raw, EVENT_KEYS, "unknown_event_field");
+      const rawEvent = raw as RawTelemetryEvent;
+      const eventId = requireString(rawEvent.event_id, 128, "missing_event_id");
+      const eventName = requireString(
+        rawEvent.event_name,
+        64,
+        "missing_event_name",
+      );
+      const eventVersion = requirePositiveInteger(
+        rawEvent.event_version,
+        "invalid_event_version",
+      );
+      const occurredAt = parseTimestamp(rawEvent.occurred_at);
+      const plane = normalizePlane(rawEvent.plane);
+      const delivery = normalizeDelivery(rawEvent.delivery);
+      if (delivery !== "remote") {
+        throw new TelemetryIngestError(400, "invalid_remote_delivery");
+      }
+      const originRuntime = normalizeOriginRuntime(rawEvent.origin_runtime);
+      const originInstallId = truncate(rawEvent.origin_install_id, 128) ??
+        (originRuntime === "daemon" ? brokerInstallId : null);
+      if (!originInstallId) {
+        throw new TelemetryIngestError(400, "missing_origin_install_id");
+      }
+      const originInstallIdHash = await sha256Hex(
+        `${opts.idSalt}:${originInstallId}`,
+      );
+      const properties = sanitizeProperties(rawEvent.properties);
+      const surface = truncate(rawEvent.surface, 32) ??
+        deriveSurfaceFromOriginRuntime(originRuntime);
+      if (originRuntime !== "daemon" && !surface) {
+        throw new TelemetryIngestError(400, "missing_surface");
+      }
+      const propertyExecutionEnvironment =
+        typeof properties.execution_environment === "string"
+          ? properties.execution_environment
+          : null;
+      const propertyEnvTarget = typeof properties.env_target === "string"
+        ? properties.env_target
         : null;
-    const propertyEnvTarget = typeof properties.env_target === "string"
-      ? properties.env_target
-      : null;
-    const envTarget = truncate(
-      rawEvent.env_target ?? propertyExecutionEnvironment ?? propertyEnvTarget,
-      32,
-    );
-    const providerId = pickString(
-      rawEvent.provider_id,
-      typeof properties.provider_id === "string"
-        ? properties.provider_id
-        : null,
-    );
-    const modelId = pickString(
-      rawEvent.model_id,
-      typeof properties.model_id === "string" ? properties.model_id : null,
-    );
-    const durationMs = pickNumber(rawEvent.duration_ms, properties.duration_ms);
-    const durationBucket = pickString(
-      rawEvent.duration_bucket,
-      typeof properties.duration_bucket === "string"
-        ? properties.duration_bucket
-        : null,
-    );
-    const status = pickString(
-      rawEvent.status,
-      typeof properties.status === "string" ? properties.status : null,
-    );
-    const success = pickBoolean(rawEvent.success, properties.success);
-    const sessionRootKind = pickString(
-      rawEvent.session_root_kind,
-      typeof properties.session_root_kind === "string"
-        ? properties.session_root_kind
-        : null,
-    );
-    const sourceName = pickString(
-      rawEvent.source,
-      typeof properties.source === "string" ? properties.source : null,
-    );
-    const appVersion = requireString(
-      rawEvent.app_version ?? brokerAppVersion,
-      64,
-      "missing_app_version",
-    );
-    const os = requireString(rawEvent.os ?? brokerOs, 32, "missing_os");
-    const arch = requireString(rawEvent.arch ?? brokerArch, 32, "missing_arch");
-    const analyticsEnvironment = pickString(
-      typeof properties.analytics_environment === "string"
-        ? properties.analytics_environment
-        : null,
-    );
-    const trafficClass = classifyTraffic(
-      eventName,
-      appVersion,
-      providerId,
-      modelId,
-      analyticsEnvironment,
-      properties,
-    );
+      const envTarget = truncate(
+        rawEvent.env_target ?? propertyExecutionEnvironment ?? propertyEnvTarget,
+        32,
+      );
+      const providerId = pickString(
+        rawEvent.provider_id,
+        typeof properties.provider_id === "string"
+          ? properties.provider_id
+          : null,
+      );
+      const modelId = pickString(
+        rawEvent.model_id,
+        typeof properties.model_id === "string" ? properties.model_id : null,
+      );
+      const durationMs = pickNumber(rawEvent.duration_ms, properties.duration_ms);
+      const durationBucket = pickString(
+        rawEvent.duration_bucket,
+        typeof properties.duration_bucket === "string"
+          ? properties.duration_bucket
+          : null,
+      );
+      const status = pickString(
+        rawEvent.status,
+        typeof properties.status === "string" ? properties.status : null,
+      );
+      const success = pickBoolean(rawEvent.success, properties.success);
+      const sessionRootKind = pickString(
+        rawEvent.session_root_kind,
+        typeof properties.session_root_kind === "string"
+          ? properties.session_root_kind
+          : null,
+      );
+      const sourceName = pickString(
+        rawEvent.source,
+        typeof properties.source === "string" ? properties.source : null,
+      );
+      const appVersion = requireString(
+        rawEvent.app_version ?? brokerAppVersion,
+        64,
+        "missing_app_version",
+      );
+      const os = requireString(rawEvent.os ?? brokerOs, 32, "missing_os");
+      const arch = requireString(rawEvent.arch ?? brokerArch, 32, "missing_arch");
+      const analyticsEnvironment =
+        normalizeAnalyticsEnvironment(properties.analytics_environment) ??
+        defaultAnalyticsEnvironment;
+      const trafficClass = classifyTraffic(
+        eventName,
+        appVersion,
+        providerId,
+        modelId,
+        analyticsEnvironment,
+        properties,
+      );
 
-    const canonicalProperties: Record<string, TelemetryScalar> = {
-      event_version: eventVersion,
-      plane,
-      origin_runtime: originRuntime,
-      broker_runtime: brokerRuntime,
-      source: sourceName,
-      surface,
-      provider_id: providerId,
-      model_id: modelId,
-      analytics_environment: analyticsEnvironment,
-      traffic_class: trafficClass,
-      env_target: envTarget,
-      status,
-      success,
-      duration_ms: durationMs,
-      duration_bucket: durationBucket,
-      session_root_kind: sessionRootKind,
-      app_version: appVersion,
-      os,
-      arch,
-      ingested_at: nowIso,
-    };
-    const normalizedProperties: Record<string, TelemetryScalar> = {
-      ...canonicalProperties,
-      ...properties,
-      ...canonicalProperties,
-    };
+      const canonicalProperties: Record<string, TelemetryScalar> = {
+        event_version: eventVersion,
+        plane,
+        origin_runtime: originRuntime,
+        broker_runtime: brokerRuntime,
+        source: sourceName,
+        surface,
+        provider_id: providerId,
+        model_id: modelId,
+        analytics_environment: analyticsEnvironment,
+        traffic_class: trafficClass,
+        env_target: envTarget,
+        status,
+        success,
+        duration_ms: durationMs,
+        duration_bucket: durationBucket,
+        session_root_kind: sessionRootKind,
+        app_version: appVersion,
+        os,
+        arch,
+        ingested_at: nowIso,
+        ...edgeProvenanceProperties,
+      };
+      const normalizedProperties: Record<string, TelemetryScalar> = {
+        ...canonicalProperties,
+        ...properties,
+        ...canonicalProperties,
+      };
 
-    rows.push({
-      event_id: eventId,
-      install_id_hash: brokerInstallIdHash,
-      broker_install_id_hash: brokerInstallIdHash,
-      origin_install_id_hash: originInstallIdHash,
-      occurred_at: occurredAt,
-      event_name: eventName,
-      event_version: eventVersion,
-      plane,
-      broker_runtime: brokerRuntime,
-      origin_runtime: originRuntime,
-      source: sourceName,
-      analytics_environment: analyticsEnvironment,
-      traffic_class: trafficClass,
-      app_version: appVersion,
-      os,
-      arch,
-      surface,
-      env_target: envTarget,
-      provider_id: providerId,
-      model_id: modelId,
-      duration_ms: durationMs,
-      duration_bucket: durationBucket,
-      status,
-      success,
-      session_root_kind: sessionRootKind,
-      properties: normalizedProperties,
-    });
+      rows.push({
+        event_id: eventId,
+        install_id_hash: brokerInstallIdHash,
+        broker_install_id_hash: brokerInstallIdHash,
+        origin_install_id_hash: originInstallIdHash,
+        occurred_at: occurredAt,
+        event_name: eventName,
+        event_version: eventVersion,
+        plane,
+        broker_runtime: brokerRuntime,
+        origin_runtime: originRuntime,
+        source: sourceName,
+        analytics_environment: analyticsEnvironment,
+        traffic_class: trafficClass,
+        app_version: appVersion,
+        os,
+        arch,
+        surface,
+        env_target: envTarget,
+        provider_id: providerId,
+        model_id: modelId,
+        duration_ms: durationMs,
+        duration_bucket: durationBucket,
+        status,
+        success,
+        session_root_kind: sessionRootKind,
+        properties: normalizedProperties,
+      });
 
-    const posthogCanonicalProperties: Record<string, TelemetryScalar> = {
-      origin_install_id_hash: originInstallIdHash,
-      broker_install_id_hash: brokerInstallIdHash,
-      ...canonicalProperties,
-      source: sourceName ?? "unknown",
-    };
-    const posthogProperties = {
-      ...posthogCanonicalProperties,
-      ...normalizedProperties,
-      ...posthogCanonicalProperties,
-    };
-    posthogCaptures.push({
-      eventId,
-      event: eventName,
-      distinctId: `install:${originInstallIdHash}`,
-      properties: posthogProperties,
-    });
+      const posthogCanonicalProperties: Record<string, TelemetryScalar> = {
+        origin_install_id_hash: originInstallIdHash,
+        broker_install_id_hash: brokerInstallIdHash,
+        ...canonicalProperties,
+        source: sourceName ?? "unknown",
+      };
+      const posthogProperties = {
+        ...posthogCanonicalProperties,
+        ...normalizedProperties,
+        ...posthogCanonicalProperties,
+      };
+      posthogCaptures.push({
+        eventId,
+        event: eventName,
+        distinctId: `install:${originInstallIdHash}`,
+        properties: posthogProperties,
+      });
+    } catch (error) {
+      if (!isRecoverableEventValidationError(error)) {
+        throw error;
+      }
+      quarantinedEvents.push({ index, code: error.code });
+    }
   }
 
-  return { rows, posthogCaptures };
+  return { rows, posthogCaptures, quarantinedEvents };
 }

@@ -62,7 +62,7 @@ export const trackDesktopWebviewRecoveryObserved = (props: {
   capture("desktop_webview_recovery_observed", {
     trigger: props.trigger,
     action: props.action,
-    surface: props.surface,
+    recovery_surface: props.surface,
     daemon_health: props.daemonHealth,
     ...(props.suppressionReason ? { suppression_reason: props.suppressionReason } : {}),
   });
@@ -82,7 +82,7 @@ export const trackForegroundFreshnessSlaMissed = (props: {
 }): void => {
   captureIncident("foreground_freshness_sla_missed", {
     metric: props.metric,
-    surface: props.surface,
+    freshness_surface: props.surface,
     severity_bucket: props.bucket,
   });
 };

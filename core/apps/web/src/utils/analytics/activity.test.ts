@@ -13,6 +13,7 @@ vi.mock("./client", () => ({
 import {
   normalizeTurnFailureKind,
   trackDesktopWebviewRecoveryObserved,
+  trackForegroundFreshnessSlaMissed,
   trackProviderAuthCompleted,
   trackProviderAuthFailed,
   trackProviderAuthStarted,
@@ -287,10 +288,29 @@ describe("usage analytics activity helpers", () => {
       {
         trigger: "heartbeat_timeout",
         action: "recreate",
-        surface: "workbench",
+        recovery_surface: "workbench",
         daemon_health: "ok",
         suppression_reason: "window_not_focused",
       },
+    );
+  });
+
+  it("captures foreground freshness surface as a non-reserved dimension", () => {
+    trackForegroundFreshnessSlaMissed({
+      metric: "final_delivery_stale_ms",
+      surface: "foreground_backlog",
+      bucket: "severe",
+    });
+
+    expect(captureIncidentEventMock).toHaveBeenCalledWith(
+      "foreground_freshness_sla_missed",
+      1,
+      {
+        metric: "final_delivery_stale_ms",
+        freshness_surface: "foreground_backlog",
+        severity_bucket: "severe",
+      },
+      undefined,
     );
   });
 });

@@ -415,7 +415,7 @@ test("verify:affected routes telemetry Worker edits through Worker unit and type
 
   assert.deepEqual(plan.commands, [TELEMETRY_WORKER_COMMAND]);
   assert.match(TELEMETRY_WORKER_COMMAND, /telemetry-worker/);
-  assert.match(TELEMETRY_WORKER_COMMAND, /corepack pnpm@9\.15\.1 --config\.store-dir/);
+  assert.match(TELEMETRY_WORKER_COMMAND, /corepack pnpm@9\.15\.1 --config\.store-dir=/);
   assert.match(TELEMETRY_WORKER_COMMAND, /typecheck/);
 });
 

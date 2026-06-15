@@ -4,12 +4,15 @@ import {
   buildTelemetryIngestPlan,
   selectPostHogCapturesForInsertedRows,
   TelemetryIngestError,
+  type TelemetryEdgeProvenance,
+  type TelemetryEventDiagnostic,
   type TelemetryPostHogCapture,
 } from "./telemetry-ingest";
 
 export type Env = PostHogEnv & {
   TELEMETRY_DATABASE_URL?: string;
   INSTALL_ID_HASH_SALT?: string;
+  TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT?: string;
 };
 
 type WorkerDeps = {
@@ -18,6 +21,10 @@ type WorkerDeps = {
     input: TelemetryPostHogCapture,
     env: PostHogEnv,
   ) => Promise<void>;
+};
+
+type CloudflareRequest = Request & {
+  cf?: unknown;
 };
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
@@ -78,7 +85,14 @@ async function handleFetch(
 
   let ingestPlan;
   try {
-    ingestPlan = await buildTelemetryIngestPlan(payload, { idSalt });
+    ingestPlan = await buildTelemetryIngestPlan(payload, {
+      defaultAnalyticsEnvironment: readOptionalEnv(
+        env,
+        "TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT",
+      ),
+      edgeProvenance: readEdgeProvenance(request),
+      idSalt,
+    });
   } catch (err) {
     if (err instanceof TelemetryIngestError) {
       return jsonResponse({ error: err.code }, err.status, origin);
@@ -88,6 +102,12 @@ async function handleFetch(
       500,
       origin,
     );
+  }
+
+  logQuarantinedEvents(ingestPlan.quarantinedEvents);
+
+  if (ingestPlan.rows.length === 0) {
+    return quarantineResponse(ingestPlan.quarantinedEvents, 0, origin);
   }
 
   let insertedEventIds: Set<string>;
@@ -115,6 +135,14 @@ async function handleFetch(
     }
   }
 
+  if (ingestPlan.quarantinedEvents.length > 0) {
+    return quarantineResponse(
+      ingestPlan.quarantinedEvents,
+      ingestPlan.rows.length,
+      origin,
+    );
+  }
+
   return new Response(null, {
     status: 204,
     headers: corsHeaders(origin),
@@ -127,6 +155,60 @@ function corsHeaders(origin: string | null): Record<string, string> {
     "access-control-allow-headers": "authorization, content-type, x-client-info, apikey",
     "access-control-allow-methods": "POST, OPTIONS",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+}
+
+function readEdgeProvenance(request: Request): TelemetryEdgeProvenance | undefined {
+  const cf = (request as CloudflareRequest).cf;
+  if (!isRecord(cf)) return undefined;
+  const provenance: TelemetryEdgeProvenance = {
+    asOrganization: optionalString(cf.asOrganization),
+    asn: optionalNumber(cf.asn),
+    colo: optionalString(cf.colo),
+    country: optionalString(cf.country),
+    region: optionalString(cf.region),
+  };
+  return Object.values(provenance).some((value) => value !== null)
+    ? provenance
+    : undefined;
+}
+
+function logQuarantinedEvents(diagnostics: readonly TelemetryEventDiagnostic[]): void {
+  if (diagnostics.length === 0) return;
+  console.warn("telemetry_events_quarantined", {
+    quarantined_events: diagnostics.length,
+    diagnostics,
+  });
+}
+
+function quarantineResponse(
+  diagnostics: readonly TelemetryEventDiagnostic[],
+  acceptedEvents: number,
+  origin: string | null,
+): Response {
+  return jsonResponse(
+    {
+      accepted_events: acceptedEvents,
+      quarantined_events: diagnostics.length,
+      diagnostics,
+    },
+    202,
+    origin,
+  );
 }
 
 function jsonResponse(
@@ -146,6 +228,10 @@ function jsonResponse(
 }
 
 function readRequiredEnv(env: Env, name: keyof Env): string | null {
+  return readOptionalEnv(env, name);
+}
+
+function readOptionalEnv(env: Env, name: keyof Env): string | null {
   const raw = env[name];
   if (!raw) return null;
   const trimmed = raw.trim();

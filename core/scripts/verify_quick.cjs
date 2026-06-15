@@ -115,7 +115,7 @@ function main() {
     "bash",
     [
       "-lc",
-      'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+      'cd ../telemetry-worker && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
     ],
     env,
   );
@@ -123,7 +123,7 @@ function main() {
     "bash",
     [
       "-lc",
-      'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+      'cd ../control-plane-worker && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
     ],
     env,
   );
@@ -131,7 +131,7 @@ function main() {
     "bash",
     [
       "-lc",
-      'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir "${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
+      'cd ../release-api-worker && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" test && corepack pnpm@9.15.1 --config.store-dir="${PNPM_STORE_DIR:-/tmp/ctx-pnpm-store}" typecheck',
     ],
     env,
   );

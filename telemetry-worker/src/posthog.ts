@@ -27,6 +27,11 @@ const PRODUCTION_INCIDENT_EVENT_NAMES = new Set([
   "runtime_error_observed",
   "session_load_fatal_observed",
 ]);
+const PRODUCTION_DAEMON_PRODUCT_EVENT_NAMES = new Set([
+  "provider_call",
+  "session_completed",
+  "session_started",
+]);
 
 const readTrimmedEnv = (env: PostHogEnv, name: keyof PostHogEnv): string | null => {
   const raw = env[name];
@@ -80,8 +85,15 @@ const isProductionProductTraffic = (
     return false;
   }
   if (stringProperty(properties, "traffic_class") !== "user") return false;
-  if (stringProperty(properties, "origin_runtime") !== "desktop") return false;
-  if (stringProperty(properties, "surface") !== "desktop") return false;
+  const originRuntime = stringProperty(properties, "origin_runtime");
+  if (originRuntime === "desktop") {
+    if (stringProperty(properties, "surface") !== "desktop") return false;
+  } else if (originRuntime === "daemon") {
+    if (stringProperty(properties, "broker_runtime") !== "daemon") return false;
+    if (!PRODUCTION_DAEMON_PRODUCT_EVENT_NAMES.has(eventName)) return false;
+  } else {
+    return false;
+  }
   if (stringProperty(properties, "provider_id") === "fake") return false;
   if (stringProperty(properties, "model_id") === "fake-model") return false;
   if (hasLocalBuildVersion(properties)) return false;

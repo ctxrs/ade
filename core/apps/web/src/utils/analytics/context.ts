@@ -39,16 +39,55 @@ const detectSurface = (): AnalyticsSurface => {
 
 export const getAnalyticsSurface = (): AnalyticsSurface => detectSurface();
 
+const RESERVED_ENVELOPE_PROPERTY_KEYS = new Set([
+  "app_version",
+  "arch",
+  "analytics_environment",
+  "delivery",
+  "env_target",
+  "event_id",
+  "event_name",
+  "event_version",
+  "occurred_at",
+  "origin_install_id",
+  "origin_runtime",
+  "os",
+  "plane",
+  "properties",
+  "source",
+  "surface",
+  "traffic_class",
+]);
+
 export const getAppVersion = (): string => {
   const raw = typeof __CTX_APP_VERSION__ === "string" ? __CTX_APP_VERSION__.trim() : "";
   return raw || "0.0.0";
+};
+
+const omitReservedEnvelopeProperties = (properties: AnalyticsProperties): AnalyticsProperties => {
+  const out: AnalyticsProperties = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (!RESERVED_ENVELOPE_PROPERTY_KEYS.has(key)) out[key] = value;
+  }
+  return out;
+};
+
+const normalizeEnvTarget = (
+  value: AnalyticsProperties[string],
+): "local" | "worktree" | "remote" | null => {
+  return value === "local" || value === "worktree" || value === "remote"
+    ? value
+    : null;
 };
 
 export const buildEventEnvelope = (
   eventVersion: number,
   properties: AnalyticsProperties = {},
 ): AnalyticsProperties => {
+  const safeProperties = omitReservedEnvelopeProperties(properties);
+  const envTarget = normalizeEnvTarget(properties.env_target);
   return {
+    ...safeProperties,
     event_version: eventVersion,
     occurred_at: new Date().toISOString(),
     app_version: getAppVersion(),
@@ -57,6 +96,6 @@ export const buildEventEnvelope = (
     surface: detectSurface(),
     analytics_environment: getAnalyticsEnvironment(),
     traffic_class: "user",
-    ...properties,
+    ...(envTarget ? { env_target: envTarget } : {}),
   };
 };

@@ -108,12 +108,12 @@ const createSemanticTelemetryEvent = (
     arch,
     surface,
     event_version,
+    env_target,
     ...properties
   } = envelope;
-  const envTargetRaw = properties.env_target;
   const envTarget =
-    envTargetRaw === "local" || envTargetRaw === "worktree" || envTargetRaw === "remote"
-      ? envTargetRaw
+    env_target === "local" || env_target === "worktree" || env_target === "remote"
+      ? env_target
       : null;
   return {
     event_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

@@ -4,12 +4,14 @@ compatibility_date = "2026-05-30"
 
 [vars]
 POSTHOG_HOST = "https://t.ctx.rs"
+TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT = "staging"
 
 [env.staging]
 name = "ctx-telemetry-staging"
 
 [env.staging.vars]
 POSTHOG_HOST = "https://t.ctx.rs"
+TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT = "staging"
 
 [env.prod]
 name = "ctx-telemetry"
@@ -19,3 +21,4 @@ routes = [
 
 [env.prod.vars]
 POSTHOG_HOST = "https://t.ctx.rs"
+TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT = "production"

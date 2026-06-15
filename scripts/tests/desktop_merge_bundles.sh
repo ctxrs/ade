@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MERGE_SCRIPT="$ROOT/core/scripts/desktop_merge_bundles.cjs"
+PYTHON_CMD=(env -u PYTHONHOME -u PYTHONPATH python3)
 
 if [[ ! -f "$MERGE_SCRIPT" ]]; then
   echo "error: missing merge script: $MERGE_SCRIPT" >&2
@@ -117,7 +118,7 @@ node "$MERGE_SCRIPT" \
   --require-daemon ctx-daemon:linux:x86_64 \
   --require-daemon ctx-daemon:linux:aarch64
 
-python3 - "$bundle_out/manifest.json" <<'PY'
+"${PYTHON_CMD[@]}" - "$bundle_out/manifest.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -142,7 +143,7 @@ node "$MERGE_SCRIPT" \
   --require-image ctx-harness:linux:x86_64 \
   --require-daemon ctx-daemon:linux:x86_64
 
-python3 - "$bundle_out_single/manifest.json" <<'PY'
+"${PYTHON_CMD[@]}" - "$bundle_out_single/manifest.json" <<'PY'
 import json
 import sys
 from pathlib import Path

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { TELEMETRY_INSERT_TABLE, type TelemetryDatabase } from "../src/database";
-import { capturePostHogEvent } from "../src/posthog";
+import { capturePostHogEvent, postHogCaptureTargetNames } from "../src/posthog";
 import type { TelemetryPostHogCapture, TelemetryRow } from "../src/telemetry-ingest";
 import { createTelemetryWorker, type Env } from "../src/worker";
 
@@ -59,6 +59,139 @@ describe("telemetry worker", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "empty_events" });
+    expect(database.rows).toEqual([]);
+  });
+
+  test("quarantines recoverable per-event validation errors and inserts valid rows", async () => {
+    const database = new FakeTelemetryDatabase();
+    const posthogCaptures: TelemetryPostHogCapture[] = [];
+    const worker = createTestWorker(database, posthogCaptures);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const response = await worker.fetch(
+      jsonRequest(validPayload([
+        { event_id: "event_bad", origin_runtime: "desktop" },
+        { event_id: "event_good" },
+      ])),
+      testEnv(),
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      accepted_events: 1,
+      quarantined_events: 1,
+      diagnostics: [{ index: 0, code: "missing_origin_install_id" }],
+    });
+    expect(database.rows.map((row) => row.event_id)).toEqual(["event_good"]);
+    expect(posthogCaptures.map((capture) => capture.eventId)).toEqual(["event_good"]);
+    expect(console.warn).toHaveBeenCalledWith("telemetry_events_quarantined", {
+      quarantined_events: 1,
+      diagnostics: [{ index: 0, code: "missing_origin_install_id" }],
+    });
+  });
+
+  test("derives legacy desktop surface from origin runtime", async () => {
+    const database = new FakeTelemetryDatabase();
+    const worker = createTestWorker(database);
+
+    const response = await worker.fetch(
+      jsonRequest(validPayload([
+        {
+          event_id: "event_1",
+          origin_install_id: "desktop_install_1",
+          origin_runtime: "desktop",
+        },
+      ])),
+      testEnv(),
+    );
+
+    expect(response.status).toBe(204);
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]?.surface).toBe("desktop");
+    expect(database.rows[0]?.properties.surface).toBe("desktop");
+  });
+
+  test("stores coarse Cloudflare provenance without raw IP data", async () => {
+    const database = new FakeTelemetryDatabase();
+    const worker = createTestWorker(database);
+    const request = jsonRequest(validPayload([{ event_id: "event_1" }]));
+    Object.defineProperty(request, "cf", {
+      value: {
+        asOrganization: "Example Network",
+        asn: 64512,
+        city: "Austin",
+        colo: "dfw",
+        country: "us",
+        latitude: "30.2672",
+        longitude: "-97.7431",
+        region: "Texas",
+      },
+    });
+
+    const response = await worker.fetch(request, testEnv());
+
+    expect(response.status).toBe(204);
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]?.properties).toMatchObject({
+      cf_as_organization: "Example Network",
+      cf_asn: 64512,
+      cf_colo: "DFW",
+      cf_country: "US",
+      cf_region: "Texas",
+    });
+    expect(database.rows[0]?.properties).not.toHaveProperty("city");
+    expect(database.rows[0]?.properties).not.toHaveProperty("latitude");
+    expect(database.rows[0]?.properties).not.toHaveProperty("longitude");
+    expect(database.rows[0]?.properties).not.toHaveProperty("ip");
+  });
+
+  test("uses Worker default analytics environment for daemon product events", async () => {
+    const database = new FakeTelemetryDatabase();
+    const posthogCaptures: TelemetryPostHogCapture[] = [];
+    const worker = createTestWorker(database, posthogCaptures);
+
+    const response = await worker.fetch(
+      jsonRequest(validPayload([
+        {
+          event_id: "event_1",
+          event_name: "provider_call",
+          properties: {
+            model_id: "gpt-5",
+            provider_id: "openai",
+            success: true,
+          },
+        },
+      ])),
+      testEnv(),
+    );
+
+    expect(response.status).toBe(204);
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]?.analytics_environment).toBe("production");
+    expect(database.rows[0]?.traffic_class).toBe("user");
+    expect(database.rows[0]?.properties.analytics_environment).toBe("production");
+    expect(posthogCaptures[0]?.properties).toMatchObject({
+      analytics_environment: "production",
+      broker_runtime: "daemon",
+      origin_runtime: "daemon",
+      traffic_class: "user",
+    });
+  });
+
+  test("fails closed for invalid delivery before database insert", async () => {
+    const database = new FakeTelemetryDatabase();
+    const worker = createTestWorker(database);
+
+    const response = await worker.fetch(
+      jsonRequest(validPayload([
+        { event_id: "event_bad", delivery: "local_only" },
+        { event_id: "event_good" },
+      ])),
+      testEnv(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_remote_delivery" });
     expect(database.rows).toEqual([]);
   });
 
@@ -164,6 +297,23 @@ describe("telemetry worker", () => {
       },
     });
   });
+
+  test("routes daemon-origin production agent traffic to PostHog production", () => {
+    expect(postHogCaptureTargetNames(
+      "provider_call",
+      {
+        analytics_environment: "production",
+        app_version: "1.2.3",
+        broker_runtime: "daemon",
+        model_id: "gpt-5",
+        origin_runtime: "daemon",
+        plane: "product",
+        provider_id: "openai",
+        traffic_class: "user",
+      },
+      {},
+    )).toEqual(["production"]);
+  });
 });
 
 function createTestWorker(
@@ -188,6 +338,7 @@ function testEnv(): Env {
   return {
     TELEMETRY_DATABASE_URL: "postgres://telemetry.test/db",
     INSTALL_ID_HASH_SALT: "salt",
+    TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT: "production",
   };
 }
 
@@ -199,26 +350,33 @@ function jsonRequest(body: unknown): Request {
   });
 }
 
-function validPayload(events: Array<{ event_id: string }>): unknown {
+type TestEvent = { event_id: string; properties?: unknown } & Record<string, unknown>;
+
+function isTestRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validPayload(events: TestEvent[]): unknown {
   return {
     broker_install_id: "broker_install_1",
     broker_runtime: "daemon",
     broker_app_version: "1.2.3",
     broker_os: "darwin",
     broker_arch: "arm64",
-    events: events.map((event) => ({
-      event_id: event.event_id,
+    events: events.map(({ event_id, properties, ...overrides }) => ({
+      event_id,
       event_name: "analytics_pipeline_smoke",
       event_version: 1,
       occurred_at: "2026-05-30T12:00:00.000Z",
       plane: "product",
       delivery: "remote",
       origin_runtime: "daemon",
+      ...overrides,
       properties: {
-        analytics_environment: "staging",
         provider_id: "fake",
         prompt: "should be dropped",
         safe_count: 1,
+        ...(isTestRecord(properties) ? properties : {}),
       },
     })),
   };
