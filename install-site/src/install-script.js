@@ -164,7 +164,7 @@ extract_manifest_field_macos() {
 
 extract_manifest_field_linux() {
   key="$1"
-  python3 - "$manifest_json" "$key" <<'PY'
+  PYTHONHOME= PYTHONPATH= python3 - "$manifest_json" "$key" <<'PY'
 import json
 import sys
 

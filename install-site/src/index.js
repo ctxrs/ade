@@ -1,3 +1,4 @@
+import { renderControlPlaneInstallScript } from "./control-plane-install-script.js";
 import { renderInstallScript } from "./install-script.js";
 import { renderUninstallScript } from "./uninstall-script.js";
 
@@ -25,7 +26,8 @@ function html(body, status = 200) {
   });
 }
 
-const INSTALL_ROUTES = new Set(["/install", "/install.sh"]);
+const ADE_INSTALL_ROUTES = new Set(["/install", "/install.sh", "/install/ade", "/install/ade.sh"]);
+const CONTROL_PLANE_INSTALL_ROUTES = new Set(["/install/control-plane", "/install/control-plane.sh"]);
 const UNINSTALL_ROUTES = new Set(["/uninstall", "/uninstall.sh"]);
 
 function normalizeDownloadId(raw) {
@@ -63,7 +65,7 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (request.method === "GET" && INSTALL_ROUTES.has(pathname)) {
+    if (request.method === "GET" && ADE_INSTALL_ROUTES.has(pathname)) {
       return shell(renderInstallScript({
         downloadId: normalizeDownloadId(url.searchParams.get("ctx_download_id")) ?? crypto.randomUUID(),
         referrerDomain: normalizeReferrerDomain(url.searchParams.get("referrer_domain"))
@@ -74,13 +76,17 @@ export default {
       }), 200);
     }
 
+    if (request.method === "GET" && CONTROL_PLANE_INSTALL_ROUTES.has(pathname)) {
+      return shell(renderControlPlaneInstallScript(), 200);
+    }
+
     if (request.method === "GET" && UNINSTALL_ROUTES.has(pathname)) {
       return shell(renderUninstallScript(), 200);
     }
 
     if (request.method === "GET" && pathname === "/") {
       return html(
-        `<!doctype html><html><body><p>ctx install endpoint</p><p>Install: <code>curl -fsSL https://ctx.rs/install | sh</code></p><p>Uninstall: <code>curl -fsSL https://ctx.rs/uninstall | sh</code></p></body></html>`,
+        `<!doctype html><html><body><p>ctx install endpoint</p><p>ADE: <code>curl -fsSL https://ctx.rs/install | sh</code></p><p>Control plane: <code>curl -fsSL https://ctx.rs/install/control-plane | sh</code></p><p>Uninstall: <code>curl -fsSL https://ctx.rs/uninstall | sh</code></p></body></html>`,
       );
     }
 
