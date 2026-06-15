@@ -56,11 +56,43 @@ test("GET /install.sh falls back to a normalized Referer hostname and generated 
   assert.match(body, /utm_source="\$\{CTX_INSTALL_UTM_SOURCE:-desktop-launch\}"/);
 });
 
+test("GET /install/ade returns the ADE install script", async () => {
+  const response = await worker.fetch(new Request("https://ctx.rs/install/ade"));
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.match(body, /^#!\/bin\/sh/m);
+  assert.match(body, /manifest_url_base="\$\{functions_base%\/\}\/releases\/\$channel\/latest\.json"/);
+  assert.match(body, /ctx desktop/);
+});
+
+test("GET /install/control-plane returns the control-plane CLI install script", async () => {
+  const response = await worker.fetch(new Request("https://ctx.rs/install/control-plane"));
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.match(body, /^#!\/bin\/sh/m);
+  assert.match(body, /releases\/\$channel\/control-plane\/latest\.json/);
+  assert.match(body, /CTX_CONTROL_PLANE_INSTALL_DIR/);
+  assert.match(body, /Installed ctx control plane/);
+});
+
+test("GET /install/control-plane.sh returns the same product installer", async () => {
+  const response = await worker.fetch(new Request("https://ctx.rs/install/control-plane.sh"));
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /releases\/\$channel\/control-plane\/latest\.json/);
+});
+
 test("GET / root advertises install and uninstall commands", async () => {
   const response = await worker.fetch(new Request("https://ctx.rs/"));
   const body = await response.text();
 
   assert.equal(response.status, 200);
   assert.match(body, /curl -fsSL https:\/\/ctx\.rs\/install \| sh/);
+  assert.match(body, /curl -fsSL https:\/\/ctx\.rs\/install\/control-plane \| sh/);
   assert.match(body, /curl -fsSL https:\/\/ctx\.rs\/uninstall \| sh/);
 });

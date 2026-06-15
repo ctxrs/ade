@@ -222,6 +222,13 @@ exit 0
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
+const withoutHostPythonEnv = () => {
+  const env = { ...process.env };
+  delete env.PYTHONHOME;
+  delete env.PYTHONPATH;
+  return env;
+};
+
 const runInstaller = ({
   os,
   arch,
@@ -269,7 +276,7 @@ const runInstaller = ({
   const result = spawnSync("sh", [scriptPath], {
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...withoutHostPythonEnv(),
       PATH: `${stubDir}:${process.env.PATH ?? ""}`,
       CTX_INSTALL_NO_OPEN: "1",
       CTX_INSTALL_DIR: installDir,

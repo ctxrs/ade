@@ -21,6 +21,7 @@ js_test(
     name = "install_script_contract_tests",
     entry_point = "src/run-node-test-suite.mjs",
     args = [
+        "src/control-plane-install-script.test.mjs",
         "src/install-script.test.mjs",
         "src/uninstall-script.test.mjs",
     ],
