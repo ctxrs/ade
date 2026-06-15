@@ -364,7 +364,7 @@ fetch_file() {
   local url="$1"
   local dest="$2"
   log "download: $url"
-  curl -fsSL "$url" -o "$dest"
+  curl -fL --retry 3 --retry-delay 2 --retry-all-errors --continue-at - "$url" -o "$dest"
 }
 
 resolve_unique_path() {

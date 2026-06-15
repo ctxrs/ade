@@ -76,6 +76,12 @@ const defaultRuntimeOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
 
+const scrubHostPythonEnv = (env) => {
+  delete env.PYTHONHOME;
+  delete env.PYTHONPATH;
+  return env;
+};
+
 const copyDirRecursive = (srcDir, destDir) => {
   fs.mkdirSync(destDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
@@ -1514,6 +1520,7 @@ const syncBundles = () => {
     CTX_BUNDLE_DIR: destBundleDir,
     CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES: "0",
   });
+  scrubHostPythonEnv(env);
   Object.assign(env, resolvePrimaryBundleTargetEnv({ env }));
   const requiredProviderIds = readRuntimeLockRequiredIds("provider");
   const requiredRuntimeIds = readRuntimeLockRequiredIds("runtime");
@@ -1577,7 +1584,7 @@ const syncBundles = () => {
         CTX_BUNDLE_HARNESS_IMAGE: request.shouldBundleLinuxImage ? "1" : "0",
       };
       const linuxRes = childProcess.spawnSync(bundleScript, {
-        env: linuxEnv,
+        env: scrubHostPythonEnv(linuxEnv),
         stdio: "inherit",
       });
       if (linuxRes.status !== 0) {
