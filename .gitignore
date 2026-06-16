@@ -73,6 +73,7 @@ supabase/supabase/
 *.db
 *.db-journal
 
+
 **/__pycache__/
 
 # Harness junk
