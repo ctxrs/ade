@@ -661,7 +661,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
-  it("requests active heads when subscribed session ids change", async () => {
+  it("does not request active heads when subscribed session ids change", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
@@ -672,7 +672,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.include_active_heads).toBe(true);
+    expect(payload.include_active_heads).toBe(false);
     store.destroy();
   });
 
@@ -706,7 +706,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     expect(ws.send).toHaveBeenCalledTimes(1);
     let payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.include_active_heads).toBe(true);
+    expect(payload.include_active_heads).toBe(false);
     expect(payload.sessions).toEqual([
       {
         session_id: "session-1",
@@ -765,7 +765,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     expect(ws.send).toHaveBeenCalledTimes(1);
     let payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.include_active_heads).toBe(true);
+    expect(payload.include_active_heads).toBe(false);
     expect(payload.sessions).toHaveLength(29);
     expect(payload.sessions.every((session: { intent?: string }) => session.intent === "head")).toBe(true);
 

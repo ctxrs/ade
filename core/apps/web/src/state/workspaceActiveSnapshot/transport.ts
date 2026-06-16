@@ -17,7 +17,6 @@ export const shouldRequestWorkspaceSnapshot = (reason: string): boolean => {
     case "ws_open":
     case "reset_required":
     case "snapshot_rev_reset":
-    case "session_ids":
       return true;
     default:
       return false;
