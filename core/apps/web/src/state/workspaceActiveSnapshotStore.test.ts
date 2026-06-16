@@ -1196,7 +1196,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
-  it("keeps partial-only worker patches batched for subscribed sessions", async () => {
+  it("keeps partial-only worker patches batched for non-priority subscribed sessions", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     vi.useFakeTimers();
@@ -1206,7 +1206,10 @@ describe("WorkspaceActiveSnapshotStore", () => {
       onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
     });
 
-    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "auto" } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
+    ]);
     await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
@@ -1216,14 +1219,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
           workspace_id: "ws-1",
           snapshot_rev: 1,
           delta: {
-            session_id: "session-1",
+            session_id: "session-2",
             last_event_seq: 1,
             projection_rev: 1,
             state_rev: 1,
             event: {
               seq: 1,
               id: "event-1",
-              session_id: "session-1",
+              session_id: "session-2",
               turn_id: "turn-1",
               event_type: "assistant_chunk",
               payload_json: { content_fragment: "partial" },
