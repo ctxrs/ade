@@ -29,6 +29,7 @@ const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
 const ctxMcpCargoTomlPath = path.join(coreRoot, "crates", "ctx-mcp", "Cargo.toml");
+const managedInstallsLibRs = path.join(coreRoot, "crates", "ctx-managed-installs", "src", "lib.rs");
 const avfLinuxHelperEntitlementsPath = path.join(
   desktopTauriRoot,
   "ctx-avf-linux-helper.entitlements",
@@ -58,6 +59,7 @@ const parityImageTargets = [
   { os: "linux", arch: "x86_64" },
 ];
 const CTX_MCP_RUNTIME_ID = "ctx-mcp";
+const NODE_RUNTIME_ID = "node";
 const AVF_LINUX_GUEST_RUNTIME_ID = "avf-linux-guest";
 const AVF_LINUX_GUEST_ROOTFS_NAME = "rootfs.raw";
 const AVF_LINUX_GUEST_KERNEL_REL = path.join("helpers", "kernel");
@@ -1274,6 +1276,80 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   ]);
 };
 
+const bundleLinuxNodeRuntime = (
+  bundleDir,
+  {
+    arch = resolveLinuxCtxMcpRuntimeArch({ env: process.env }),
+    nodeVersion = readRustStringConst(managedInstallsLibRs, "NODE_VERSION"),
+  } = {},
+) => {
+  const target = linuxBundleTargetForArch(arch);
+  const nodeDistTarget = target.arch === "aarch64" ? "linux-arm64" : "linux-x64";
+  const nodeFolder = `node-v${nodeVersion}-${nodeDistTarget}`;
+  const runtimeRootRel = path.posix.join(
+    "runtimes",
+    NODE_RUNTIME_ID,
+    "linux",
+    target.arch,
+    nodeFolder,
+  );
+  const runtimeRootDir = path.join(bundleDir, runtimeRootRel);
+  const nodeBinRel = path.posix.join("bin", "node");
+  const npmCliRel = path.posix.join("lib", "node_modules", "npm", "bin", "npm-cli.js");
+  const nodeBin = path.join(runtimeRootDir, nodeBinRel);
+  const npmCli = path.join(runtimeRootDir, npmCliRel);
+
+  if (!fs.existsSync(nodeBin) || !fs.existsSync(npmCli)) {
+    const parentDir = path.dirname(runtimeRootDir);
+    fs.mkdirSync(parentDir, { recursive: true });
+    const archivePath = path.join(parentDir, `${nodeFolder}.${process.pid}.tar.gz`);
+    const extractDir = path.join(parentDir, `${nodeFolder}.${process.pid}.extract`);
+    fs.rmSync(archivePath, { force: true });
+    fs.rmSync(extractDir, { recursive: true, force: true });
+    fs.mkdirSync(extractDir, { recursive: true });
+    const url = `https://nodejs.org/dist/v${nodeVersion}/${nodeFolder}.tar.gz`;
+    const curlResult = childProcess.spawnSync(
+      "curl",
+      ["-fL", "--retry", "3", "--retry-delay", "2", "--retry-all-errors", "-o", archivePath, url],
+      { stdio: "inherit" },
+    );
+    if (curlResult.status !== 0) {
+      throw new Error(`failed to download bundled Node runtime ${nodeFolder} (${curlResult.status ?? "unknown"})`);
+    }
+    const tarResult = childProcess.spawnSync("tar", ["-xzf", archivePath, "-C", extractDir], {
+      stdio: "inherit",
+    });
+    if (tarResult.status !== 0) {
+      throw new Error(`failed to extract bundled Node runtime ${nodeFolder} (${tarResult.status ?? "unknown"})`);
+    }
+    const extractedRoot = path.join(extractDir, nodeFolder);
+    if (!fs.existsSync(extractedRoot) || !fs.statSync(extractedRoot).isDirectory()) {
+      throw new Error(`bundled Node runtime extract missing ${nodeFolder}`);
+    }
+    fs.rmSync(runtimeRootDir, { recursive: true, force: true });
+    fs.renameSync(extractedRoot, runtimeRootDir);
+    fs.rmSync(extractDir, { recursive: true, force: true });
+    fs.rmSync(archivePath, { force: true });
+  }
+
+  if (!fs.existsSync(nodeBin) || !fs.existsSync(npmCli)) {
+    throw new Error(`bundled Node runtime is incomplete: ${runtimeRootRel}`);
+  }
+  ensureExecutable(nodeBin);
+  upsertManifestRuntimes(bundleDir, [
+    {
+      id: NODE_RUNTIME_ID,
+      version: nodeVersion,
+      os: "linux",
+      arch: target.arch,
+      sha256: sha256File(nodeBin),
+      root: runtimeRootRel,
+      bin: nodeBinRel,
+      npm_cli: npmCliRel,
+    },
+  ]);
+};
+
 const bundleHostLinuxCtxMcpRuntime = (
   bundleDir,
   {
@@ -1873,8 +1949,10 @@ const main = () => {
 
   if (bundleLinuxCtxMcpRuntimeOnly || bundleHostLinuxCtxMcpRuntimeOnly) {
     if (bundleHostLinuxCtxMcpRuntimeOnly) {
+      bundleLinuxNodeRuntime(destBundleDir, { arch: hostManifestArch });
       bundleHostLinuxCtxMcpRuntime(destBundleDir);
     } else {
+      bundleLinuxNodeRuntime(destBundleDir);
       bundleLinuxCtxMcpRuntime(destBundleDir);
     }
     const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);

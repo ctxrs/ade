@@ -10,6 +10,10 @@ const {
   __desktopSyncResourcesTestHooks,
 } = require("./desktop_sync_resources.cjs");
 
+const desktopSyncResourcesText = fs.readFileSync(
+  path.join(__dirname, "desktop_sync_resources.cjs"),
+  "utf8",
+);
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 const avfManifestOs = "macos";
@@ -40,6 +44,18 @@ test("linux ctx-mcp runtime bundling can be disabled for host-only local prep", 
       CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME: "0",
     }),
     false,
+  );
+});
+
+test("linux ctx-mcp-only release fast path materializes Node before declaring bundle resources", () => {
+  assert.match(desktopSyncResourcesText, /const bundleLinuxNodeRuntime = /);
+  assert.match(
+    desktopSyncResourcesText,
+    /bundleLinuxNodeRuntime\(destBundleDir\);\s*bundleLinuxCtxMcpRuntime\(destBundleDir\);/,
+  );
+  assert.match(
+    desktopSyncResourcesText,
+    /bundleLinuxNodeRuntime\(destBundleDir, \{ arch: hostManifestArch \}\);\s*bundleHostLinuxCtxMcpRuntime\(destBundleDir\);/,
   );
 });
 
