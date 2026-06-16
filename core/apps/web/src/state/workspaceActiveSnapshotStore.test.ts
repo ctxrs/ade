@@ -1241,6 +1241,50 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
+  it("flushes partial worker patches immediately for foreground sessions", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ events: Array<{ type: string }> }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
+    });
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    store.setForegroundSessionId?.("session-1");
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-1",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-1",
+              turn_id: "turn-1",
+              event_type: "assistant_chunk",
+              payload_json: { content_fragment: "partial" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
   it("keeps the desktop publish path bounded under the ctx-ui May 8 incident event mix", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 

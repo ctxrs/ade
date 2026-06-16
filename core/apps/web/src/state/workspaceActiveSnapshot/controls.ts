@@ -9,6 +9,7 @@ import {
   isForegroundPrioritySessionEvent,
   prioritizeForegroundPriorityEvents,
   resolveForegroundPrioritySessionIds,
+  workspaceEventSessionId,
 } from "./foregroundPriority";
 import {
   normalizeSessionSubscriptionCursors,
@@ -61,11 +62,13 @@ const isImmediateWorkerPatchEvent = (
       if (evt.delta.message) return true;
       const eventType = String(evt.delta.event?.event_type ?? "");
       if (!eventType) return false;
-      return (
-        eventType !== "assistant_chunk" &&
-        eventType !== "thought_chunk" &&
-        eventType !== "context_window_update"
-      );
+      if (eventType === "assistant_chunk" || eventType === "thought_chunk") {
+        const foregroundSessionId =
+          typeof host.foregroundSessionId === "string" ? host.foregroundSessionId.trim() : "";
+        return Boolean(foregroundSessionId) && workspaceEventSessionId(evt) === foregroundSessionId;
+      }
+      if (eventType === "context_window_update") return false;
+      return true;
     }
     default:
       return false;
