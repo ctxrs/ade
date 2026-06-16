@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const DEFAULT_PUBLIC_STORAGE_ORIGIN = "https://api.ctx.rs";
 const DEFAULT_PUBLIC_STORAGE_BUCKET = "releases";
 const DEFAULT_R2_REGION = "auto";
+const DEFAULT_R2_PUT_ATTEMPTS = 3;
+const DEFAULT_R2_PUT_RETRY_BASE_DELAY_MS = 1000;
 
 function trimValue(value) {
   return String(value || "").trim();
@@ -218,6 +220,39 @@ function isMissingObject(status, text) {
   return status === 404 || (status === 400 && /not[_ -]?found|does not exist|no such|NoSuchKey/i.test(text));
 }
 
+function parsePositiveInteger(value, fallback, name) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value, fallback, name) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function isRetryableR2Status(status) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function sleep(ms) {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function responseText(response) {
   try {
     return await response.text();
@@ -227,12 +262,26 @@ async function responseText(response) {
 }
 
 class ReleaseStorageClient {
-  constructor(config, { fetchImpl = globalThis.fetch } = {}) {
+  constructor(config, {
+    fetchImpl = globalThis.fetch,
+    putRetryAttempts = process.env.RELEASE_STORAGE_PUT_ATTEMPTS,
+    putRetryBaseDelayMs = process.env.RELEASE_STORAGE_PUT_RETRY_BASE_DELAY_MS,
+  } = {}) {
     if (typeof fetchImpl !== "function") {
       throw new Error("fetch is required for release storage");
     }
     this.config = config;
     this.fetchImpl = fetchImpl;
+    this.putRetryAttempts = parsePositiveInteger(
+      putRetryAttempts,
+      DEFAULT_R2_PUT_ATTEMPTS,
+      "RELEASE_STORAGE_PUT_ATTEMPTS",
+    );
+    this.putRetryBaseDelayMs = parseNonNegativeInteger(
+      putRetryBaseDelayMs,
+      DEFAULT_R2_PUT_RETRY_BASE_DELAY_MS,
+      "RELEASE_STORAGE_PUT_RETRY_BASE_DELAY_MS",
+    );
   }
 
   publicObjectUrl(objectPath) {
@@ -283,26 +332,45 @@ class ReleaseStorageClient {
       "content-type": contentType,
       ...(upsert ? {} : { "if-none-match": "*" }),
     };
-    const signed = signR2Request(this.config, {
-      body,
-      headers,
-      method: "PUT",
-      objectPath,
-    });
-    const response = await this.fetchImpl(signed.url, {
-      body: signed.body,
-      headers: signed.headers,
-      method: "PUT",
-    });
-    if (response.ok) {
-      return { existing: false, objectPath: normalizeObjectPath(objectPath), uploaded: true };
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    for (let attempt = 1; attempt <= this.putRetryAttempts; attempt += 1) {
+      const signed = signR2Request(this.config, {
+        body,
+        headers,
+        method: "PUT",
+        objectPath,
+      });
+      let response;
+      try {
+        response = await this.fetchImpl(signed.url, {
+          body: signed.body,
+          headers: signed.headers,
+          method: "PUT",
+        });
+      } catch (error) {
+        if (attempt >= this.putRetryAttempts) {
+          throw error;
+        }
+        console.error(`warn: R2 upload request failed for ${normalizedObjectPath} (attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+        await sleep(attempt * this.putRetryBaseDelayMs);
+        continue;
+      }
+      if (response.ok) {
+        return { existing: false, objectPath: normalizedObjectPath, uploaded: true };
+      }
+      const text = await responseText(response);
+      if (!upsert && verifyExisting && (response.status === 409 || response.status === 412)) {
+        await this.verifyExistingObject(objectPath, body);
+        return { existing: true, objectPath: normalizedObjectPath, uploaded: false };
+      }
+      const error = new Error(`failed to upload ${normalizedObjectPath} to R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+      if (!isRetryableR2Status(response.status) || attempt >= this.putRetryAttempts) {
+        throw error;
+      }
+      console.error(`warn: transient R2 upload failure for ${normalizedObjectPath} (HTTP ${response.status}, attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+      await sleep(attempt * this.putRetryBaseDelayMs);
     }
-    const text = await responseText(response);
-    if (!upsert && verifyExisting && (response.status === 409 || response.status === 412)) {
-      await this.verifyExistingObject(objectPath, body);
-      return { existing: true, objectPath: normalizeObjectPath(objectPath), uploaded: false };
-    }
-    throw new Error(`failed to upload ${normalizeObjectPath(objectPath)} to R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    throw new Error(`failed to upload ${normalizedObjectPath} to R2 after ${this.putRetryAttempts} attempts`);
   }
 
   async verifyExistingObject(objectPath, expectedBytes) {
