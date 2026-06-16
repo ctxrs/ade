@@ -24,3 +24,14 @@ test("control-plane installer installs ctx without editing shell profile PATH", 
   assert.match(script, /Add \$bin_dir to PATH to run ctx from any shell\./);
   assert.doesNotMatch(script, />>\s*"\$HOME\/\.(bashrc|zshrc|profile)"/);
 });
+
+test("control-plane installer supports windows-x64 zip archives from Git Bash", () => {
+  const script = renderControlPlaneInstallScript();
+
+  assert.match(script, /MINGW\*:x86_64\|MSYS\*:x86_64\|CYGWIN\*:x86_64\).*"windows-x64"/);
+  assert.match(script, /archive_format="\$\(extract_manifest_field "platforms\.\$platform\.cli\.archive_format"\)"/);
+  assert.match(script, /zip\)\s+need_cmd unzip[\s\S]*archive_path="\$tmp_dir\/ctx-control-plane\.zip"/);
+  assert.match(script, /zip\) unzip -q "\$archive_path" -d "\$extract_dir" ;;/);
+  assert.match(script, /windows-\*\) executable_name="ctx\.exe" ;;/);
+  assert.match(script, /windows-\*\) target_link="\$bin_dir\/ctx\.exe" ;;/);
+});
