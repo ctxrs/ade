@@ -1376,6 +1376,7 @@ async function startVisibleProgressProbe(page: Page, faultMode: string): Promise
     let stopped = false;
     let observer: MutationObserver | null = null;
     let timer: number | null = null;
+    let dirty = true;
 
     const isVisible = (element: HTMLElement): boolean => {
       const style = window.getComputedStyle(element);
@@ -1403,9 +1404,11 @@ async function startVisibleProgressProbe(page: Page, faultMode: string): Promise
       if (stopped) return;
       const target = activeTarget();
       if (!target) return;
-      const text = target.innerText || target.textContent || "";
+      const text = target.textContent || "";
       const signature = `${text.length}:${text.slice(-320)}`;
-      if (signature === lastSignature) return;
+      if (signature === lastSignature) {
+        return;
+      }
       lastSignature = signature;
       samples.push({
         at_ms: Date.now(),
@@ -1424,14 +1427,21 @@ async function startVisibleProgressProbe(page: Page, faultMode: string): Promise
       `;
       document.head.appendChild(style);
     }
-    observer = new MutationObserver(sample);
+    observer = new MutationObserver(() => {
+      dirty = true;
+    });
     observer.observe(document.body, {
       childList: true,
       characterData: true,
       subtree: true,
     });
-    timer = window.setInterval(sample, 250);
+    timer = window.setInterval(() => {
+      if (!dirty) return;
+      dirty = false;
+      sample();
+    }, 250);
     sample();
+    dirty = false;
     const snapshot = (): VisibleProgressSnapshot => ({
       startedAtMs,
       endedAtMs,
