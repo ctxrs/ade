@@ -30,7 +30,6 @@ need_cmd mkdir
 need_cmd mv
 need_cmd cp
 need_cmd chmod
-need_cmd tar
 need_cmd find
 need_cmd head
 need_cmd awk
@@ -43,7 +42,7 @@ arch="$(uname -m)"
 
 tmp_dir="$(mktemp -d "\${TMPDIR:-/tmp}/ctx-control-plane-install.XXXXXX")"
 manifest_json="$tmp_dir/latest.json"
-archive_path="$tmp_dir/ctx-control-plane.tar.gz"
+archive_path=""
 extract_dir="$tmp_dir/extract"
 cleanup_stage_path=""
 cleanup_backup_path=""
@@ -184,15 +183,20 @@ select_platform() {
     Darwin:x86_64) printf '%s\\n' "macos-x64" ;;
     Linux:x86_64|Linux:amd64) printf '%s\\n' "linux-x64" ;;
     Linux:aarch64|Linux:arm64) printf '%s\\n' "linux-arm64" ;;
+    MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64) printf '%s\\n' "windows-x64" ;;
     *) fail "unsupported platform: $os $arch" ;;
   esac
 }
 
 find_ctx_binary() {
-  find "$extract_dir" -type f -name ctx | head -n 1
+  find "$extract_dir" -type f -name "$executable_name" | head -n 1
 }
 
 platform="$(select_platform)"
+executable_name="ctx"
+case "$platform" in
+  windows-*) executable_name="ctx.exe" ;;
+esac
 
 log "Resolving ctx control plane release manifest from $manifest_url"
 curl -fsSL "$manifest_url" -o "$manifest_json"
@@ -208,32 +212,68 @@ if [ -z "$expected_sha" ]; then
   expected_sha="$(extract_manifest_field "platforms.$platform.archive.sha256")"
 fi
 
+archive_format="$(extract_manifest_field "platforms.$platform.cli.archive_format")"
+if [ -z "$archive_format" ]; then
+  case "$url_path" in
+    *.tar.gz) archive_format="tar.gz" ;;
+    *.zip) archive_format="zip" ;;
+    *) fail "manifest archive format is missing for $platform" ;;
+  esac
+fi
+
+case "$archive_format" in
+  tar.gz)
+    need_cmd tar
+    archive_path="$tmp_dir/ctx-control-plane.tar.gz"
+    ;;
+  zip)
+    need_cmd unzip
+    archive_path="$tmp_dir/ctx-control-plane.zip"
+    ;;
+  *)
+    fail "unsupported archive format for $platform: $archive_format"
+    ;;
+esac
+
 download_url="$(resolve_download_url "$url_path")"
 log "Downloading $download_url"
 curl -fL --retry 3 --retry-delay 2 "$download_url" -o "$archive_path"
 verify_artifact_sha "$archive_path" "$expected_sha"
 
 mkdir -p "$extract_dir"
-tar -xzf "$archive_path" -C "$extract_dir"
+case "$archive_format" in
+  tar.gz) tar -xzf "$archive_path" -C "$extract_dir" ;;
+  zip) unzip -q "$archive_path" -d "$extract_dir" ;;
+esac
 ctx_binary="$(find_ctx_binary)"
-[ -n "$ctx_binary" ] || fail "downloaded archive does not contain an executable ctx binary"
+[ -n "$ctx_binary" ] || fail "downloaded archive does not contain $executable_name"
 
 install_root="\${CTX_CONTROL_PLANE_INSTALL_DIR:-$HOME/.local/share/ctx-control-plane}"
 bin_dir="\${CTX_CONTROL_PLANE_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$install_root" "$bin_dir"
 
-target_binary="$install_root/ctx"
+target_binary="$install_root/$executable_name"
 staged_binary="$(stage_path_for_target "$target_binary")"
 cp "$ctx_binary" "$staged_binary"
 chmod 0755 "$staged_binary"
 promote_staged_path "$staged_binary" "$target_binary" "ctx control plane binary"
 
 target_link="$bin_dir/ctx"
+case "$platform" in
+  windows-*) target_link="$bin_dir/ctx.exe" ;;
+esac
 staged_link="$(stage_path_for_target "$target_link")"
-cat >"$staged_link" <<EOF
+case "$platform" in
+  windows-*)
+    cp "$target_binary" "$staged_link"
+    ;;
+  *)
+    cat >"$staged_link" <<EOF
 #!/bin/sh
 exec "$target_binary" "\\$@"
 EOF
+    ;;
+esac
 chmod 0755 "$staged_link"
 promote_staged_path "$staged_link" "$target_link" "ctx launcher"
 
