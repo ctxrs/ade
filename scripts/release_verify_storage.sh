@@ -24,6 +24,7 @@ optional:
   - RELEASE_VERIFIED_MANIFEST_SIG_PATH=<path> (optional; required with RELEASE_VERIFIED_MANIFEST_PATH, writes validated <version>.json.sig)
   - RELEASE_VERIFIED_TAURI_MANIFEST_PATH=<path> (optional; when RELEASE_VERIFY_VERSION is set, write the validated versioned Tauri manifest here)
   - RELEASE_VERIFY_ARTIFACT_CURL_MAX_TIME_SECONDS=<seconds> (optional; updater artifact fetch budget, default: 1800)
+  - RELEASE_VERIFY_FINAL_ARTIFACT_ANALYTICS=0|1 (optional; verify extracted Linux AppImage analytics, default: 1)
 EOF
   exit 2
 fi
@@ -61,6 +62,7 @@ VERIFY_ARTIFACT_CURL_MAX_TIME_SECONDS="${RELEASE_VERIFY_ARTIFACT_CURL_MAX_TIME_S
 VERIFY_ARTIFACT_FETCH_RETRIES="${RELEASE_VERIFY_ARTIFACT_FETCH_RETRIES:-1}"
 VERIFY_LINUX_REMOTE_ARTIFACTS="${RELEASE_VERIFY_LINUX_REMOTE_ARTIFACTS:-auto}"
 VERIFY_LINUX_REMOTE_ARTIFACT_EMULATION="${RELEASE_VERIFY_LINUX_REMOTE_ARTIFACT_EMULATION:-0}"
+VERIFY_FINAL_ARTIFACT_ANALYTICS="${RELEASE_VERIFY_FINAL_ARTIFACT_ANALYTICS:-1}"
 VERIFY_CURL_STALL_SECONDS="${RELEASE_VERIFY_CURL_STALL_SECONDS:-60}"
 VERIFY_CURL_STALL_BYTES_PER_SECOND="${RELEASE_VERIFY_CURL_STALL_BYTES_PER_SECOND:-1024}"
 VERIFY_MIN_DMG_SIZE_BYTES="${RELEASE_MIN_DMG_SIZE_BYTES:-1048576}"
@@ -311,6 +313,18 @@ validate_linux_appimage_artifact() {
   if ! node core/scripts/verify_bundle_manifest_closure.cjs "$(dirname "$bundle_manifest")"; then
     echo "error: ${platform}/AppImage bundle manifest references files that were not packaged" >&2
     return 1
+  fi
+  if [[ "$VERIFY_FINAL_ARTIFACT_ANALYTICS" == "1" ]]; then
+    if [[ -z "${verified_release_version:-}" ]]; then
+      echo "error: cannot verify ${platform}/AppImage analytics without a resolved release version" >&2
+      return 1
+    fi
+    if ! node core/scripts/final_artifact_analytics_gate.cjs \
+      --artifact-root "$squashfs_root" \
+      --expected-version "$verified_release_version"; then
+      echo "error: ${platform}/AppImage final artifact analytics gate failed" >&2
+      return 1
+    fi
   fi
   if ! find "$squashfs_root" \( -name 'ctx' -o -name 'ctx-daemon-*' \) -type f -print -quit | grep -q .; then
     echo "error: ${platform}/AppImage missing bundled ctx daemon binary" >&2
@@ -592,6 +606,11 @@ NODE
 
 schema_head="$(printf '%s\n' "$schema_out" | sed -n '1p')"
 echo "$schema_head"
+verified_release_version="${schema_head#manifest schema: OK }"
+if [[ -z "$verified_release_version" || "$verified_release_version" == "$schema_head" ]]; then
+  echo "error: failed to resolve verified release version from manifest schema output" >&2
+  exit 3
+fi
 artifact_rows="$(printf '%s\n' "$schema_out" | sed -n '2,$p')"
 
 echo "Checking Edge redirect behavior (HEAD)..."

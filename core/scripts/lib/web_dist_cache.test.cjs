@@ -12,6 +12,7 @@ const {
   ensureWebDistArtifact,
   resolveDirectRunBazelVersion,
   resolveDesktopWebDistSource,
+  resolveWebDistAnalyticsEnv,
   resolveWebDistArtifactDir,
   runWebDistBuild,
 } = require("./web_dist_cache.cjs");
@@ -61,6 +62,8 @@ test("ensureWebDistArtifact materializes the Bazel-run dist once and reuses it o
     runWebDistBuildImpl: ({ env, destinationDir }) => {
       calls.push({ type: "run", env });
       assert.equal(destinationDir.endsWith(path.join("dist")), true);
+      assert.equal(env.VITE_CTX_APP_VERSION, "1.2.3");
+      assert.equal(env.VITE_POSTHOG_ENV, "production");
       fs.mkdirSync(destinationDir, { recursive: true });
       fs.writeFileSync(path.join(destinationDir, "index.html"), "<html>cached</html>\n");
       return destinationDir;
@@ -82,6 +85,39 @@ test("ensureWebDistArtifact materializes the Bazel-run dist once and reuses it o
   assert.equal(calls.length, 1);
   assert.equal(calls[0].type, "run");
   assert.equal(fs.existsSync(path.join(path.dirname(first.distDir), ARTIFACT_MARKER)), true);
+  const metadata = JSON.parse(
+    fs.readFileSync(path.join(path.dirname(first.distDir), ARTIFACT_MARKER), "utf8"),
+  );
+  assert.equal(metadata.analytics_env, "production");
+});
+
+test("resolveWebDistAnalyticsEnv defaults explicit app version builds to production", () => {
+  assert.equal(resolveWebDistAnalyticsEnv({ env: {}, appVersion: "1.2.3" }), "production");
+  assert.equal(resolveWebDistAnalyticsEnv({ env: {}, appVersion: "" }), "");
+  assert.equal(
+    resolveWebDistAnalyticsEnv({
+      env: { VITE_POSTHOG_ENV: "staging" },
+      appVersion: "1.2.3",
+    }),
+    "staging",
+  );
+});
+
+test("computeWebDistCacheKey changes when analytics env changes", () => {
+  const coreRoot = createFixtureCoreRoot();
+  const production = computeWebDistCacheKey({
+    coreRoot,
+    appVersion: "1.2.3",
+    analyticsEnv: "production",
+    variant: "desktop-release",
+  });
+  const staging = computeWebDistCacheKey({
+    coreRoot,
+    appVersion: "1.2.3",
+    analyticsEnv: "staging",
+    variant: "desktop-release",
+  });
+  assert.notEqual(production, staging);
 });
 
 test("ensureWebDistArtifact fails when the Bazel-run copy does not materialize a dist directory", () => {

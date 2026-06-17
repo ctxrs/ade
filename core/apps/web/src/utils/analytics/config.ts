@@ -17,15 +17,17 @@ const readTrimmed = (value: string | undefined): string | undefined => {
 export type ProductionAnalyticsBuildConfig = {
   explicitAnalyticsEnv: string | undefined;
   explicitAppVersion: string | undefined;
+  mode: string | undefined;
   packageVersion: string | undefined;
 };
 
 export const validateProductionAnalyticsBuildConfig = ({
   explicitAnalyticsEnv,
   explicitAppVersion,
+  mode,
   packageVersion,
 }: ProductionAnalyticsBuildConfig): void => {
-  const analyticsEnv = readTrimmed(explicitAnalyticsEnv)?.toLowerCase();
+  const analyticsEnv = resolveAnalyticsEnvironment(explicitAnalyticsEnv, mode, explicitAppVersion);
   if (analyticsEnv !== "production") return;
 
   const appVersion = readTrimmed(explicitAppVersion);
@@ -45,17 +47,23 @@ export const validateProductionAnalyticsBuildConfig = ({
 export const resolveAnalyticsEnvironment = (
   explicitEnv: string | undefined,
   mode: string | undefined,
+  appVersion?: string | undefined,
 ): AnalyticsEnvironment => {
   const normalizedMode = String(mode ?? "").trim().toLowerCase();
   if (normalizedMode === "development" || normalizedMode === "dev") return "staging";
   const env = readTrimmed(explicitEnv)?.toLowerCase();
   if (env === "production") return "production";
   if (env === "staging") return "staging";
+  if (normalizedMode === "production" && readTrimmed(appVersion)) return "production";
   return "staging";
 };
 
 export const getAnalyticsEnvironment = (): AnalyticsEnvironment =>
-  resolveAnalyticsEnvironment(import.meta.env.VITE_POSTHOG_ENV, import.meta.env.MODE);
+  resolveAnalyticsEnvironment(
+    import.meta.env.VITE_POSTHOG_ENV,
+    import.meta.env.MODE,
+    import.meta.env.VITE_CTX_APP_VERSION,
+  );
 
 export const getPostHogProjectId = (): string =>
   getAnalyticsEnvironment() === "production"

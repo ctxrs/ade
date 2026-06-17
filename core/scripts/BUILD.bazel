@@ -135,7 +135,7 @@ sh_binary(
 sh_binary(
     name = "desktop_bundle_contracts",
     srcs = ["//tools/bazel:run_node_task.sh"],
-    args = ["core", "--test", "scripts/desktop_import_bundles.test.cjs", "scripts/desktop_normalize_bundle_permissions.test.cjs", "scripts/desktop_icon_reps.test.cjs"],
+    args = ["core", "--test", "scripts/desktop_import_bundles.test.cjs", "scripts/desktop_normalize_bundle_permissions.test.cjs", "scripts/desktop_icon_reps.test.cjs", "scripts/final_artifact_analytics_gate.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
