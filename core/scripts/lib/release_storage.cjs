@@ -2,12 +2,17 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
+const { Readable } = require("node:stream");
+const { pipeline } = require("node:stream/promises");
 
 const DEFAULT_PUBLIC_STORAGE_ORIGIN = "https://api.ctx.rs";
 const DEFAULT_PUBLIC_STORAGE_BUCKET = "releases";
 const DEFAULT_R2_REGION = "auto";
 const DEFAULT_R2_PUT_ATTEMPTS = 3;
 const DEFAULT_R2_PUT_RETRY_BASE_DELAY_MS = 1000;
+const DEFAULT_R2_GET_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_R2_PUT_TIMEOUT_MS = 15 * 60 * 1000;
 
 function trimValue(value) {
   return String(value || "").trim();
@@ -140,6 +145,16 @@ function sha256Hex(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
+function sha256FileHex(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
 function hmac(key, value, encoding) {
   return crypto.createHmac("sha256", key).update(value).digest(encoding);
 }
@@ -154,13 +169,14 @@ function signR2Request(config, {
   method,
   objectPath,
   now = new Date(),
+  payloadHash: explicitPayloadHash,
 }) {
   const payload = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
   const request = buildR2ObjectRequestUrl(config, objectPath);
   const url = new URL(request.url);
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex(payload);
+  const payloadHash = explicitPayloadHash || sha256Hex(payload);
   const normalizedHeaders = {
     ...Object.fromEntries(
       Object.entries(headers)
@@ -266,6 +282,8 @@ class ReleaseStorageClient {
     fetchImpl = globalThis.fetch,
     putRetryAttempts = process.env.RELEASE_STORAGE_PUT_ATTEMPTS,
     putRetryBaseDelayMs = process.env.RELEASE_STORAGE_PUT_RETRY_BASE_DELAY_MS,
+    getTimeoutMs = process.env.RELEASE_STORAGE_GET_TIMEOUT_MS,
+    putTimeoutMs = process.env.RELEASE_STORAGE_PUT_TIMEOUT_MS,
   } = {}) {
     if (typeof fetchImpl !== "function") {
       throw new Error("fetch is required for release storage");
@@ -282,6 +300,38 @@ class ReleaseStorageClient {
       DEFAULT_R2_PUT_RETRY_BASE_DELAY_MS,
       "RELEASE_STORAGE_PUT_RETRY_BASE_DELAY_MS",
     );
+    this.getTimeoutMs = parseNonNegativeInteger(
+      getTimeoutMs,
+      DEFAULT_R2_GET_TIMEOUT_MS,
+      "RELEASE_STORAGE_GET_TIMEOUT_MS",
+    );
+    this.putTimeoutMs = parseNonNegativeInteger(
+      putTimeoutMs,
+      DEFAULT_R2_PUT_TIMEOUT_MS,
+      "RELEASE_STORAGE_PUT_TIMEOUT_MS",
+    );
+  }
+
+  async putFetch(url, init, normalizedObjectPath, attempt) {
+    if (this.putTimeoutMs <= 0) {
+      return this.fetchImpl(url, init);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, this.putTimeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(
+          `timed out uploading ${normalizedObjectPath} to R2 after ${this.putTimeoutMs}ms on attempt ${attempt}`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   publicObjectUrl(objectPath) {
@@ -290,6 +340,14 @@ class ReleaseStorageClient {
 
   async getObjectBuffer(objectPath, { allowMissing = false } = {}) {
     return this.getR2ObjectBuffer(objectPath, { allowMissing });
+  }
+
+  async getFileObject({
+    allowMissing = false,
+    objectPath,
+    outPath,
+  }) {
+    return this.getR2FileObject({ allowMissing, objectPath, outPath });
   }
 
   async getObjectText(objectPath, options = {}) {
@@ -302,18 +360,113 @@ class ReleaseStorageClient {
       method: "GET",
       objectPath,
     });
-    const response = await this.fetchImpl(signed.url, {
-      headers: signed.headers,
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    const controller = this.getTimeoutMs > 0 ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), this.getTimeoutMs) : null;
+    try {
+      const response = await this.fetchImpl(signed.url, {
+        headers: signed.headers,
+        method: "GET",
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) {
+        return Buffer.from(await response.arrayBuffer());
+      }
+      const text = await responseText(response);
+      if (allowMissing && isMissingObject(response.status, text)) {
+        return null;
+      }
+      throw new Error(`failed to read ${normalizedObjectPath} from R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`timed out downloading ${normalizedObjectPath} from R2 after ${this.getTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  async getR2ObjectSha256(objectPath, { allowMissing = false } = {}) {
+    const signed = signR2Request(this.config, {
       method: "GET",
+      objectPath,
     });
-    if (response.ok) {
-      return Buffer.from(await response.arrayBuffer());
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    const controller = this.getTimeoutMs > 0 ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), this.getTimeoutMs) : null;
+    try {
+      const response = await this.fetchImpl(signed.url, {
+        headers: signed.headers,
+        method: "GET",
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) {
+        if (!response.body) {
+          throw new Error(`failed to hash ${normalizedObjectPath} from R2: response body is empty`);
+        }
+        const hash = crypto.createHash("sha256");
+        for await (const chunk of Readable.fromWeb(response.body)) {
+          hash.update(chunk);
+        }
+        return hash.digest("hex");
+      }
+      const text = await responseText(response);
+      if (allowMissing && isMissingObject(response.status, text)) {
+        return null;
+      }
+      throw new Error(`failed to read ${normalizedObjectPath} from R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`timed out downloading ${normalizedObjectPath} from R2 after ${this.getTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
-    const text = await responseText(response);
-    if (allowMissing && isMissingObject(response.status, text)) {
-      return null;
+  }
+
+  async getR2FileObject({ objectPath, outPath, allowMissing = false }) {
+    const signed = signR2Request(this.config, {
+      method: "GET",
+      objectPath,
+    });
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    const controller = this.getTimeoutMs > 0 ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), this.getTimeoutMs) : null;
+    try {
+      const response = await this.fetchImpl(signed.url, {
+        headers: signed.headers,
+        method: "GET",
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) {
+        if (!response.body) {
+          throw new Error(`failed to stream ${normalizedObjectPath} from R2: response body is empty`);
+        }
+        fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+        await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(outPath));
+        return { downloaded: true, objectPath: normalizedObjectPath, outPath };
+      }
+      const text = await responseText(response);
+      if (allowMissing && isMissingObject(response.status, text)) {
+        return null;
+      }
+      throw new Error(`failed to read ${normalizedObjectPath} from R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`timed out downloading ${normalizedObjectPath} from R2 after ${this.getTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
-    throw new Error(`failed to read ${normalizeObjectPath(objectPath)} from R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
   }
 
   async putObject({
@@ -325,6 +478,29 @@ class ReleaseStorageClient {
   }) {
     const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
     return this.putR2Object({ body: bytes, contentType, objectPath, upsert, verifyExisting });
+  }
+
+  async putFileObject({
+    contentType = "application/octet-stream",
+    filePath,
+    objectPath,
+    upsert = false,
+    verifyExisting = false,
+  }) {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`release storage source is not a file: ${filePath}`);
+    }
+    const payloadHash = await sha256FileHex(filePath);
+    return this.putR2FileObject({
+      contentLength: stats.size,
+      contentType,
+      filePath,
+      objectPath,
+      payloadHash,
+      upsert,
+      verifyExisting,
+    });
   }
 
   async putR2Object({ body, contentType, objectPath, upsert, verifyExisting }) {
@@ -342,11 +518,11 @@ class ReleaseStorageClient {
       });
       let response;
       try {
-        response = await this.fetchImpl(signed.url, {
+        response = await this.putFetch(signed.url, {
           body: signed.body,
           headers: signed.headers,
           method: "PUT",
-        });
+        }, normalizedObjectPath, attempt);
       } catch (error) {
         if (attempt >= this.putRetryAttempts) {
           throw error;
@@ -373,10 +549,64 @@ class ReleaseStorageClient {
     throw new Error(`failed to upload ${normalizedObjectPath} to R2 after ${this.putRetryAttempts} attempts`);
   }
 
+  async putR2FileObject({ contentLength, contentType, filePath, objectPath, payloadHash, upsert, verifyExisting }) {
+    const headers = {
+      "content-length": String(contentLength),
+      "content-type": contentType,
+      ...(upsert ? {} : { "if-none-match": "*" }),
+    };
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    for (let attempt = 1; attempt <= this.putRetryAttempts; attempt += 1) {
+      const signed = signR2Request(this.config, {
+        headers,
+        method: "PUT",
+        objectPath,
+        payloadHash,
+      });
+      let response;
+      try {
+        response = await this.putFetch(signed.url, {
+          body: fs.createReadStream(filePath),
+          duplex: "half",
+          headers: signed.headers,
+          method: "PUT",
+        }, normalizedObjectPath, attempt);
+      } catch (error) {
+        if (attempt >= this.putRetryAttempts) {
+          throw error;
+        }
+        console.error(`warn: R2 upload request failed for ${normalizedObjectPath} (attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+        await sleep(attempt * this.putRetryBaseDelayMs);
+        continue;
+      }
+      if (response.ok) {
+        return { existing: false, objectPath: normalizedObjectPath, uploaded: true };
+      }
+      const text = await responseText(response);
+      if (!upsert && verifyExisting && (response.status === 409 || response.status === 412)) {
+        await this.verifyExistingObjectHash(objectPath, payloadHash);
+        return { existing: true, objectPath: normalizedObjectPath, uploaded: false };
+      }
+      const error = new Error(`failed to upload ${normalizedObjectPath} to R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+      if (!isRetryableR2Status(response.status) || attempt >= this.putRetryAttempts) {
+        throw error;
+      }
+      console.error(`warn: transient R2 upload failure for ${normalizedObjectPath} (HTTP ${response.status}, attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+      await sleep(attempt * this.putRetryBaseDelayMs);
+    }
+    throw new Error(`failed to upload ${normalizedObjectPath} to R2 after ${this.putRetryAttempts} attempts`);
+  }
+
   async verifyExistingObject(objectPath, expectedBytes) {
     const existing = await this.getObjectBuffer(objectPath);
     const expectedSha = sha256Hex(expectedBytes);
-    const existingSha = sha256Hex(existing);
+    await this.verifyExistingObjectHash(objectPath, expectedSha, existing);
+  }
+
+  async verifyExistingObjectHash(objectPath, expectedSha, existingBytes = null) {
+    const existingSha = existingBytes === null
+      ? await this.getR2ObjectSha256(objectPath)
+      : sha256Hex(existingBytes);
     if (expectedSha !== existingSha) {
       throw new Error(
         `immutable upload conflict for ${normalizeObjectPath(objectPath)} has mismatched existing content (local sha256 ${expectedSha}, existing sha256 ${existingSha})`,
@@ -418,6 +648,8 @@ module.exports = {
   DEFAULT_PUBLIC_STORAGE_ORIGIN,
   DEFAULT_PUBLIC_STORAGE_BUCKET,
   DEFAULT_R2_REGION,
+  DEFAULT_R2_GET_TIMEOUT_MS,
+  DEFAULT_R2_PUT_TIMEOUT_MS,
   ReleaseStorageClient,
   buildPublicObjectUrl,
   buildR2ObjectRequestUrl,
@@ -430,6 +662,7 @@ module.exports = {
   resolvePublicStorageBucket,
   resolveStorageBucket,
   resolveStorageConfigFromEnv,
+  sha256FileHex,
   sha256Hex,
   signR2Request,
 };

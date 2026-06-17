@@ -5,7 +5,6 @@ const path = require("node:path");
 
 const {
   buildStorageClientFromEnv,
-  readFileBytes,
 } = require("./lib/release_storage.cjs");
 
 function parseArgs(argv) {
@@ -102,9 +101,9 @@ async function main() {
     if (!options.objectPath || !options.srcPath) {
       throw new Error("put requires --object-path and --src");
     }
-    await client.putObject({
-      body: readFileBytes(options.srcPath),
+    await client.putFileObject({
       contentType: options.contentType,
+      filePath: options.srcPath,
       objectPath: options.objectPath,
       upsert: options.upsert,
       verifyExisting: options.verifyExisting,
@@ -115,14 +114,11 @@ async function main() {
     if (!options.objectPath || !options.outPath) {
       throw new Error("get requires --object-path and --out");
     }
-    const bytes = await client.getObjectBuffer(options.objectPath, {
+    await client.getFileObject({
       allowMissing: options.allowMissing,
+      objectPath: options.objectPath,
+      outPath: options.outPath,
     });
-    if (bytes === null) {
-      return;
-    }
-    fs.mkdirSync(path.dirname(path.resolve(options.outPath)), { recursive: true });
-    fs.writeFileSync(options.outPath, bytes);
     return;
   }
   if (options.command === "delete") {
