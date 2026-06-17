@@ -237,13 +237,14 @@ patch_appdir_linuxdeploy_gtk_hook() {
 repack_appimage_from_appdir() {
   local appimage="$1"
   local appdir="$2"
-  local offset tmp_squashfs tmp_out
+  local appimage_dir offset tmp_squashfs tmp_out
   offset="$("$appimage" --appimage-offset)"
   if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
     echo "error: unable to determine AppImage runtime offset for $appimage: $offset" >&2
     return 1
   fi
-  tmp_squashfs="/tmp/ctx-repacked-appimage-${platform}-$$.squashfs"
+  appimage_dir="$(cd "$(dirname "$appimage")" && pwd)"
+  tmp_squashfs="${appimage_dir}/.ctx-repacked-appimage-${platform}-$$.squashfs"
   tmp_out="${appimage}.repacked-$$"
   rm -f "$tmp_squashfs" "$tmp_out"
   head -c "$offset" "$appimage" >"$tmp_out"
@@ -417,4 +418,4 @@ fi
 patch_appdir_linuxdeploy_gtk_hook "$appdir_path"
 rewrite_appdir_bundle_manifest_digests "$appdir_path"
 appimage_bundle="$(repack_appimage_from_appdir "$appimage_bundle" "$appdir_path")"
-verify_appimage_bundle_manifest_closure "$appimage_bundle" "/tmp/ctx-rebuilt-appimage-verify-${platform}-$$"
+verify_appimage_bundle_manifest_closure "$appimage_bundle" "$(dirname "$appimage_bundle")/.ctx-rebuilt-appimage-verify-${platform}-$$"
