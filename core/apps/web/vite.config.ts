@@ -137,11 +137,12 @@ const walPlugin = (enabled: boolean): Plugin => ({
   },
 });
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const isTest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
   validateProductionAnalyticsBuildConfig({
     explicitAnalyticsEnv: process.env.VITE_POSTHOG_ENV,
     explicitAppVersion: process.env.VITE_CTX_APP_VERSION,
+    mode,
     packageVersion: packageJson.version,
   });
   const auth = command === "serve" ? loadDaemonAuth() : null;
@@ -154,7 +155,10 @@ export default defineConfig(({ command }) => {
       : process.env.CTX_DEV_HTTP === "1"
         ? false
         : true;
-  const appVersion = String(process.env.VITE_CTX_APP_VERSION ?? packageJson.version ?? "0.0.0");
+  const explicitAppVersion = String(process.env.VITE_CTX_APP_VERSION ?? "").trim();
+  const appVersion = String(explicitAppVersion || packageJson.version || "0.0.0");
+  const isReleaseAppBuild =
+    Boolean(explicitAppVersion) && explicitAppVersion !== String(packageJson.version ?? "").trim();
   const isCi = ["1", "true", "yes", "on"].includes(
     String(process.env.CI ?? "").trim().toLowerCase(),
   );
@@ -195,7 +199,7 @@ export default defineConfig(({ command }) => {
   return {
     define: {
       __CTX_APP_VERSION__: JSON.stringify(appVersion),
-      __CTX_BUILD_CI__: JSON.stringify(isCi),
+      __CTX_BUILD_CI__: JSON.stringify(isCi && !isReleaseAppBuild),
     },
     plugins: [
       react(),

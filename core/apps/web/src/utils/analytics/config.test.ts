@@ -10,7 +10,11 @@ describe("resolveAnalyticsEnvironment", () => {
     expect(resolveAnalyticsEnvironment("staging", "production")).toBe("staging");
   });
 
-  it("does not infer production analytics from production build mode", () => {
+  it("infers production analytics for production builds with an explicit app version", () => {
+    expect(resolveAnalyticsEnvironment(undefined, "production", "0.64.0")).toBe("production");
+  });
+
+  it("does not infer production analytics from production build mode without an app version", () => {
     expect(resolveAnalyticsEnvironment(undefined, "production")).toBe("staging");
     expect(resolveAnalyticsEnvironment(undefined, "prod")).toBe("staging");
   });
@@ -33,6 +37,7 @@ describe("validateProductionAnalyticsBuildConfig", () => {
       validateProductionAnalyticsBuildConfig({
         explicitAnalyticsEnv: "staging",
         explicitAppVersion: undefined,
+        mode: "production",
         packageVersion: "0.1.0",
       }),
     ).not.toThrow();
@@ -43,6 +48,7 @@ describe("validateProductionAnalyticsBuildConfig", () => {
       validateProductionAnalyticsBuildConfig({
         explicitAnalyticsEnv: "production",
         explicitAppVersion: undefined,
+        mode: "production",
         packageVersion: "0.1.0",
       }),
     ).toThrow(/VITE_CTX_APP_VERSION/);
@@ -53,6 +59,7 @@ describe("validateProductionAnalyticsBuildConfig", () => {
       validateProductionAnalyticsBuildConfig({
         explicitAnalyticsEnv: "production",
         explicitAppVersion: "0.1.0",
+        mode: "production",
         packageVersion: "0.1.0",
       }),
     ).toThrow(/web package version/);
@@ -63,8 +70,20 @@ describe("validateProductionAnalyticsBuildConfig", () => {
       validateProductionAnalyticsBuildConfig({
         explicitAnalyticsEnv: "production",
         explicitAppVersion: "0.64.0",
+        mode: "production",
         packageVersion: "0.1.0",
       }),
     ).not.toThrow();
+  });
+
+  it("rejects inferred production analytics when the app version is the web package version", () => {
+    expect(() =>
+      validateProductionAnalyticsBuildConfig({
+        explicitAnalyticsEnv: undefined,
+        explicitAppVersion: "0.1.0",
+        mode: "production",
+        packageVersion: "0.1.0",
+      }),
+    ).toThrow(/web package version/);
   });
 });

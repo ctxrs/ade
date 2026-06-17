@@ -11,7 +11,7 @@ const {
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./host_job_budget.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("../run_bazel_pilot.cjs");
 
-const ARTIFACT_VERSION = 1;
+const ARTIFACT_VERSION = 2;
 const ARTIFACT_MARKER = ".ctx-web-dist-artifact.json";
 const BAZEL_VERSION_FILE = ".bazelversion";
 const WEB_DIST_SYNC_TARGET = "//core/apps/web:dist_sync";
@@ -33,6 +33,22 @@ const DEFAULT_INPUTS = [
 
 function trimValue(value) {
   return String(value ?? "").trim();
+}
+
+function normalizeAnalyticsEnv(value) {
+  const normalized = trimValue(value).toLowerCase();
+  if (normalized === "production" || normalized === "staging") {
+    return normalized;
+  }
+  return "";
+}
+
+function resolveWebDistAnalyticsEnv({ env = process.env, appVersion = "" } = {}) {
+  const explicitEnv = normalizeAnalyticsEnv(env.VITE_POSTHOG_ENV);
+  if (explicitEnv) {
+    return explicitEnv;
+  }
+  return trimValue(appVersion) ? "production" : "";
 }
 
 function updateHashWithFile(hash, absolutePath, relativePath, stats) {
@@ -81,17 +97,22 @@ function walkForFingerprint({ hash, rootDir, currentRelativePath }) {
 }
 
 function computeWebDistCacheKey({
+  analyticsEnv = "",
   coreRoot,
+  env = process.env,
   appVersion = "",
   extra = {},
   inputs = DEFAULT_INPUTS,
   variant = "default",
 } = {}) {
   const resolvedCoreRoot = path.resolve(coreRoot);
+  const resolvedAnalyticsEnv = normalizeAnalyticsEnv(analyticsEnv)
+    || resolveWebDistAnalyticsEnv({ env, appVersion });
   const hash = crypto.createHash("sha256");
   hash.update(`artifact:web-dist:v${ARTIFACT_VERSION}\n`);
   hash.update(`variant:${variant}\n`);
   hash.update(`appVersion:${appVersion}\n`);
+  hash.update(`analyticsEnv:${resolvedAnalyticsEnv}\n`);
   hash.update(`${JSON.stringify(extra, Object.keys(extra).sort())}\n`);
   for (const input of inputs) {
     const relativeInput = trimValue(input);
@@ -108,6 +129,7 @@ function computeWebDistCacheKey({
 }
 
 function resolveWebDistArtifactRoot({
+  analyticsEnv = "",
   coreRoot,
   env = process.env,
   appVersion = "",
@@ -121,7 +143,10 @@ function resolveWebDistArtifactRoot({
     env,
     mode: "workspace",
   }).layout;
+  const resolvedAnalyticsEnv = normalizeAnalyticsEnv(analyticsEnv)
+    || resolveWebDistAnalyticsEnv({ env, appVersion });
   const cacheKey = computeWebDistCacheKey({
+    analyticsEnv: resolvedAnalyticsEnv,
     coreRoot: resolvedCoreRoot,
     appVersion,
     extra,
@@ -130,6 +155,7 @@ function resolveWebDistArtifactRoot({
   });
   const artifactRoot = path.join(layout.artifactsDir, "web-dist", cacheKey);
   return {
+    analyticsEnv: resolvedAnalyticsEnv,
     artifactRoot,
     cacheKey,
     layout,
@@ -150,6 +176,7 @@ function hasReusableWebDistArtifact(artifactRoot) {
 }
 
 function writeArtifactMetadata({
+  analyticsEnv,
   artifactRoot,
   appVersion,
   cacheKey,
@@ -162,6 +189,7 @@ function writeArtifactMetadata({
     variant,
     cache_key: cacheKey,
     app_version: appVersion,
+    analytics_env: analyticsEnv,
     extra,
     created_at: new Date().toISOString(),
   };
@@ -309,6 +337,7 @@ function ensureWebDistArtifact({
     inputs,
     variant,
   });
+  const analyticsEnv = resolveWebDistAnalyticsEnv({ env: buildEnv, appVersion });
 
   if (hasReusableWebDistArtifact(artifactRoot)) {
     return {
@@ -336,6 +365,7 @@ function ensureWebDistArtifact({
     env: {
       ...buildEnv,
       ...(trimValue(appVersion) ? { VITE_CTX_APP_VERSION: appVersion } : {}),
+      ...(analyticsEnv ? { VITE_POSTHOG_ENV: analyticsEnv } : {}),
     },
   });
   if (!fs.existsSync(distDir)) {
@@ -343,6 +373,7 @@ function ensureWebDistArtifact({
   }
 
   writeArtifactMetadata({
+    analyticsEnv,
     artifactRoot: tmpArtifactRoot,
     appVersion,
     cacheKey,
@@ -394,6 +425,7 @@ module.exports = {
   hasReusableWebDistArtifact,
   resolveDirectRunBazelVersion,
   resolveDesktopWebDistSource,
+  resolveWebDistAnalyticsEnv,
   resolveWebDistArtifactDir,
   resolveWebDistArtifactRoot,
   runWebDistBuild,

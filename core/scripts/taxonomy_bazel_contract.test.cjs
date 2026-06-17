@@ -176,7 +176,7 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   assert.match(bundleContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
     bundleContracts,
-    /args = \["core", "--test", "scripts\/desktop_import_bundles\.test\.cjs", "scripts\/desktop_normalize_bundle_permissions\.test\.cjs", "scripts\/desktop_icon_reps\.test\.cjs"\]/,
+    /args = \["core", "--test", "scripts\/desktop_import_bundles\.test\.cjs", "scripts\/desktop_normalize_bundle_permissions\.test\.cjs", "scripts\/desktop_icon_reps\.test\.cjs", "scripts\/final_artifact_analytics_gate\.test\.cjs"\]/,
   );
   assert.doesNotMatch(bundleContracts, /run_workspace_task\.sh/);
 
