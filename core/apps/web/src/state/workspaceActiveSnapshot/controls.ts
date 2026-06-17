@@ -327,8 +327,7 @@ export function flushSubscriptions(
     host.foregroundSessionId,
     host.subscribedSessions,
   );
-  const forceSend =
-    reason === "ws_open" || reason === "reset_required" || reason === "snapshot_rev_reset";
+  const forceSend = built.requestSnapshot;
   if (!forceSend && host.subscribedSessions.length === 0 && !host.foregroundSessionId) {
     recordSubscriptionFlushMetric(
       "skipped",

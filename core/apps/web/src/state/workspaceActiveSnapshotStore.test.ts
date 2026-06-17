@@ -590,8 +590,40 @@ describe("WorkspaceActiveSnapshotStore", () => {
       { type: "session_gap", session_id: "session-1", reason: "stream_seq_gap" },
       { type: "session_gap", session_id: "session-2", reason: "stream_seq_gap" },
     ]);
-    expect(ws.send).not.toHaveBeenCalled();
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.scope).toBe("active");
     unsubscribe();
+    store.destroy();
+  });
+
+  it("requests an active snapshot on stream sequence gaps even without subscribed sessions", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 1 },
+      }),
+    );
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 3,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 3 },
+      }),
+    );
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.scope).toBe("active");
     store.destroy();
   });
 
@@ -773,6 +805,11 @@ describe("WorkspaceActiveSnapshotStore", () => {
     asStoreInternals(store).flushSubscriptions("active_task_upsert");
     asStoreInternals(store).flushSubscriptions("session_gap");
     asStoreInternals(store).flushSubscriptions("stream_seq_gap");
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.sessions).toHaveLength(29);
+    ws.send.mockClear();
     store.setSubscribedSessions(
       sessions.map((session, index) => ({
         ...session,
@@ -1792,7 +1829,10 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
     expect(getWorkspaceActiveSnapshot).not.toHaveBeenCalled();
-    expect(ws.send).not.toHaveBeenCalled();
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.scope).toBe("active");
     store.destroy();
   });
 
