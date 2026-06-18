@@ -347,6 +347,24 @@ function normalizeTrafficClass(value: unknown): TelemetryTrafficClass | null {
     : null;
 }
 
+function parseCiAsOrganizationPatterns(value: string | null | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,\n]/u)
+    .map((entry) => normalizedKey(entry))
+    .filter((entry) => entry.length > 0);
+}
+
+function matchesCiAsOrganization(
+  provenance: TelemetryEdgeProvenance | undefined,
+  patterns: readonly string[],
+): boolean {
+  if (patterns.length === 0) return false;
+  const asOrganization = normalizedKey(provenance?.asOrganization ?? "");
+  if (!asOrganization) return false;
+  return patterns.some((pattern) => asOrganization.includes(pattern));
+}
+
 function classifyTraffic(
   eventName: string,
   appVersion: string,
@@ -354,6 +372,8 @@ function classifyTraffic(
   modelId: string | null,
   analyticsEnvironment: string | null,
   properties: Record<string, unknown>,
+  provenance: TelemetryEdgeProvenance | undefined,
+  ciAsOrganizationPatterns: readonly string[],
 ): TelemetryTrafficClass {
   if (eventName === PIPELINE_SMOKE_EVENT_NAME) return "synthetic";
   const explicit = normalizeTrafficClass(properties.traffic_class);
@@ -363,6 +383,12 @@ function classifyTraffic(
   if (appVersion.startsWith("0.0.0")) return "synthetic";
   if (analyticsEnvironment && analyticsEnvironment !== "production") {
     return "internal";
+  }
+  if (
+    analyticsEnvironment === "production" &&
+    matchesCiAsOrganization(provenance, ciAsOrganizationPatterns)
+  ) {
+    return "ci";
   }
   return explicit ?? "user";
 }
@@ -412,6 +438,7 @@ function buildEdgeProvenanceProperties(
 export async function buildTelemetryIngestPlan(
   payload: unknown,
   opts: {
+    ciAsOrganizationPatterns?: string | null;
     defaultAnalyticsEnvironment?: string | null;
     edgeProvenance?: TelemetryEdgeProvenance;
     idSalt: string;
@@ -470,6 +497,9 @@ export async function buildTelemetryIngestPlan(
   );
   const defaultAnalyticsEnvironment = normalizeAnalyticsEnvironment(
     opts.defaultAnalyticsEnvironment,
+  );
+  const ciAsOrganizationPatterns = parseCiAsOrganizationPatterns(
+    opts.ciAsOrganizationPatterns,
   );
 
   for (const [index, raw] of batch.events.entries()) {
@@ -570,6 +600,8 @@ export async function buildTelemetryIngestPlan(
         modelId,
         analyticsEnvironment,
         properties,
+        opts.edgeProvenance,
+        ciAsOrganizationPatterns,
       );
 
       const canonicalProperties: Record<string, TelemetryScalar> = {

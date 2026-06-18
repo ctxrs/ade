@@ -145,6 +145,56 @@ describe("telemetry worker", () => {
     expect(database.rows[0]?.properties).not.toHaveProperty("ip");
   });
 
+  test("classifies configured Cloudflare AS organization traffic as ci before mirroring", async () => {
+    const database = new FakeTelemetryDatabase();
+    const posthogCaptures: TelemetryPostHogCapture[] = [];
+    const worker = createTestWorker(database, posthogCaptures);
+    const request = jsonRequest(validPayload([
+      {
+        app_version: "0.69.3",
+        arch: "x64",
+        event_id: "event_1",
+        event_name: "app_opened",
+        origin_install_id: "desktop_install_1",
+        origin_runtime: "desktop",
+        os: "linux",
+        properties: {
+          model_id: "gpt-5",
+          provider_id: "openai",
+        },
+        surface: "desktop",
+      },
+    ]));
+    Object.defineProperty(request, "cf", {
+      value: {
+        asOrganization: "Example CI Network",
+        asn: 64512,
+        colo: "iad",
+        country: "us",
+        region: "Virginia",
+      },
+    });
+
+    const response = await worker.fetch(request, {
+      ...testEnv(),
+      TELEMETRY_CI_AS_ORGANIZATION_PATTERNS: "Example CI Network",
+    });
+
+    expect(response.status).toBe(204);
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]?.traffic_class).toBe("ci");
+    expect(database.rows[0]?.properties).toMatchObject({
+      analytics_environment: "production",
+      cf_as_organization: "Example CI Network",
+      traffic_class: "ci",
+    });
+    expect(posthogCaptures[0]?.properties).toMatchObject({
+      analytics_environment: "production",
+      origin_runtime: "desktop",
+      traffic_class: "ci",
+    });
+  });
+
   test("uses Worker default analytics environment for daemon product events", async () => {
     const database = new FakeTelemetryDatabase();
     const posthogCaptures: TelemetryPostHogCapture[] = [];

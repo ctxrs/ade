@@ -572,6 +572,7 @@
   },
   "devDependencies": {
     "@bazel/bazelisk": "1.28.1",
+    "@neondatabase/serverless": "^1.1.0",
     "pixelmatch": "^7.1.0",
     "playwright-core": "^1.57.0",
     "pngjs": "^7.0.0",

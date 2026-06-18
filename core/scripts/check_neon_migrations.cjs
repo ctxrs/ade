@@ -48,6 +48,7 @@ const REQUIRED_TABLES = Object.freeze([
   "ctx.audit_events",
   "ctx.relay_grant_jti_consumptions",
   "ctx.provider_invoice_lines",
+  "ctx.telemetry_traffic_class_overrides",
 ]);
 
 const REQUIRED_INDEXES = Object.freeze([
@@ -103,6 +104,9 @@ const REQUIRED_INDEXES = Object.freeze([
   "audit_events_subject_time_idx",
   "relay_grant_jti_consumptions_request_uidx",
   "provider_invoice_lines_request_idx",
+  "telemetry_traffic_class_overrides_event_idx",
+  "telemetry_traffic_class_overrides_origin_install_idx",
+  "telemetry_traffic_class_overrides_broker_install_idx",
 ]);
 
 const REQUIRED_SQL_PATTERNS = Object.freeze([

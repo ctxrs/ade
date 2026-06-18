@@ -22,3 +22,4 @@ routes = [
 [env.prod.vars]
 POSTHOG_HOST = "https://t.ctx.rs"
 TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT = "production"
+TELEMETRY_CI_AS_ORGANIZATION_PATTERNS = "Example CI Network"

@@ -11,6 +11,7 @@ import {
 
 export type Env = PostHogEnv & {
   TELEMETRY_DATABASE_URL?: string;
+  TELEMETRY_CI_AS_ORGANIZATION_PATTERNS?: string;
   INSTALL_ID_HASH_SALT?: string;
   TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT?: string;
 };
@@ -86,6 +87,10 @@ async function handleFetch(
   let ingestPlan;
   try {
     ingestPlan = await buildTelemetryIngestPlan(payload, {
+      ciAsOrganizationPatterns: readOptionalEnv(
+        env,
+        "TELEMETRY_CI_AS_ORGANIZATION_PATTERNS",
+      ),
       defaultAnalyticsEnvironment: readOptionalEnv(
         env,
         "TELEMETRY_DEFAULT_ANALYTICS_ENVIRONMENT",
