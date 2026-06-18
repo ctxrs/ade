@@ -11,6 +11,13 @@ const releaseWrapperText = fs.readFileSync(
   "utf8",
 );
 
+test("release proof wrapper allows explicit remote updater proof arch scope", () => {
+  assert.match(
+    releaseWrapperText,
+    /CTX_UPDATER_E2E_ARCHES="\$\{CTX_UPDATER_E2E_ARCHES:-\$\{CTX_RELEASE_REMOTE_UPDATER_PROOF_ARCHES:-linux-x64,linux-arm64\}\}"/,
+  );
+});
+
 test("remote updater proof uses isolated WebDriver ports", () => {
   assert.match(scriptText, /PORT_BASE="\$\{CTX_UPDATER_REMOTE_E2E_PORT_BASE:-\$\(\(34000 \+ RANDOM % 20000\)\)\}"/);
   assert.match(scriptText, /TAURI_DRIVER_PORT_VALUE="\$\{CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-\$\{TAURI_DRIVER_PORT:-\$\{PORT_BASE\}\}\}"/);
