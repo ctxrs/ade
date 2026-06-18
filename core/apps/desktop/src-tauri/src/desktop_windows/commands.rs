@@ -56,6 +56,7 @@ pub(crate) fn open_workspace_setup_window_with_label(
     let window = apply_workbench_titlebar(builder)
         .build()
         .context("creating workspace setup window failed")?;
+    ensure_workbench_titlebar(&window)?;
     log_window_created(label, route);
     log_navigation_start(label, route, "workspace_setup_window");
     register_window_for_recovery(app, label, route);

@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { buildEventEnvelope } from "./context";
 
 describe("buildEventEnvelope", () => {
+  beforeEach(() => {
+    delete window.__CTX_DESKTOP_ENV__;
+  });
+
   it("emits the required baseline envelope fields", () => {
     const envelope = buildEventEnvelope(1, { provider_id: "codex" });
 
@@ -13,6 +17,19 @@ describe("buildEventEnvelope", () => {
     expect(typeof envelope.surface).toBe("string");
     expect(typeof envelope.analytics_environment).toBe("string");
     expect(envelope.traffic_class).toBe("user");
+    expect(envelope.provider_id).toBe("codex");
+  });
+
+  it("prefers the native desktop environment injected by the app shell", () => {
+    window.__CTX_DESKTOP_ENV__ = {
+      os: "linux",
+      arch: "x64",
+    };
+
+    const envelope = buildEventEnvelope(1, { provider_id: "codex" });
+
+    expect(envelope.os).toBe("linux");
+    expect(envelope.arch).toBe("x64");
     expect(envelope.provider_id).toBe("codex");
   });
 

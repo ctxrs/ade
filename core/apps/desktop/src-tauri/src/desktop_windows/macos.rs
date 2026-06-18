@@ -169,8 +169,36 @@ pub(crate) fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<
             .title_bar_style(tauri::TitleBarStyle::Visible)
             .hidden_title(false);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        builder.decorations(LINUX_WORKBENCH_WINDOW_DECORATIONS)
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
         builder.decorations(false)
+    }
+}
+
+pub(crate) fn ensure_workbench_titlebar(window: &tauri::WebviewWindow) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        window
+            .set_decorations(LINUX_WORKBENCH_WINDOW_DECORATIONS)
+            .context("setting Linux workbench window decorations")?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_WORKBENCH_WINDOW_DECORATIONS: bool = true;
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn linux_workbench_windows_use_native_decorations() {
+        assert!(
+            super::LINUX_WORKBENCH_WINDOW_DECORATIONS,
+            "Linux workbench windows should keep native titlebar controls"
+        );
     }
 }

@@ -14,7 +14,7 @@ pub(super) use commands::{
     desktop_set_titlebar_color, desktop_set_window_title, desktop_unregister_workspace_window,
     open_workspace_setup_window_with_label,
 };
-pub(super) use macos::apply_workbench_titlebar;
+pub(super) use macos::{apply_workbench_titlebar, ensure_workbench_titlebar};
 #[cfg(target_os = "macos")]
 pub(super) use macos::{
     emit_settings_inplace, install_macos_settings_button, load_lucide_settings_icon,

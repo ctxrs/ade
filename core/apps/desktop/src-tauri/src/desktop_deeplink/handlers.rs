@@ -201,12 +201,15 @@ pub(crate) fn open_file_preview_window_with_label(
     route: &str,
 ) -> Result<()> {
     let init_script = desktop_startup_initialization_script(label, route);
-    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
-        .title("ctx")
-        .inner_size(1000.0, 780.0)
-        .initialization_script(&init_script)
-        .build()
-        .context("creating file preview window")?;
+    let window = apply_workbench_titlebar(
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
+            .title("ctx")
+            .inner_size(1000.0, 780.0)
+            .initialization_script(&init_script),
+    )
+    .build()
+    .context("creating file preview window")?;
+    ensure_workbench_titlebar(&window)?;
     log_window_created(label, route);
     log_navigation_start(label, route, "file_preview_window");
     register_window_for_recovery(app, label, route);
@@ -280,12 +283,15 @@ pub(crate) fn open_settings_window_at_route(
         return Ok(());
     }
     let init_script = desktop_startup_initialization_script(label, route);
-    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
-        .title("Settings")
-        .inner_size(1000.0, 780.0)
-        .initialization_script(&init_script)
-        .build()
-        .context("creating settings window")?;
+    let window = apply_workbench_titlebar(
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
+            .title("Settings")
+            .inner_size(1000.0, 780.0)
+            .initialization_script(&init_script),
+    )
+    .build()
+    .context("creating settings window")?;
+    ensure_workbench_titlebar(&window)?;
     log_window_created(label, route);
     log_navigation_start(label, route, "settings_window");
     register_window_for_recovery(app, label, route);

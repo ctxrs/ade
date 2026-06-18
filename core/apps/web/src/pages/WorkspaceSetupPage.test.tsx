@@ -1374,6 +1374,7 @@ describe("WorkspaceSetupPage", () => {
         "new-hidden-defaults",
         "remote",
         "wizard",
+        "host",
       );
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "ssh",
@@ -1467,6 +1468,7 @@ describe("WorkspaceSetupPage", () => {
         "latest-visible-target",
         "remote",
         "wizard",
+        "host",
       );
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "ssh",
@@ -1777,7 +1779,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/test/.codex/auth.json",
+          path: "/home/test/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -1981,7 +1983,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -1991,7 +1993,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "cursor",
           provider_label: "Cursor",
           kind: "config_file",
-          path: "/Users/example-user/.cursor/cli-config.json",
+          path: "/home/example-user/.cursor/cli-config.json",
           signal_strength: "weak",
           confidence: "low-medium",
           parse_status: "unsupported",
@@ -2013,8 +2015,8 @@ describe("WorkspaceSetupPage", () => {
     expect(codexCheckbox.checked).toBe(true);
     expect(screen.queryByRole("checkbox", { name: /claude code/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /cursor/i })).not.toBeInTheDocument();
-    expect(screen.queryByText("Source: /Users/example-user/.cursor/cli-config.json")).not.toBeInTheDocument();
-    expect(screen.getByText("Source: /Users/example-user/.codex/auth.json")).toBeInTheDocument();
+    expect(screen.queryByText("Source: /home/example-user/.cursor/cli-config.json")).not.toBeInTheDocument();
+    expect(screen.getByText("Source: /home/example-user/.codex/auth.json")).toBeInTheDocument();
   });
 
   it("keeps auth-import next enabled before session titling is selected", async () => {
@@ -2027,7 +2029,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2064,7 +2066,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "claude-crp",
           provider_label: "Claude Code",
           kind: "auth_file",
-          path: "/Users/example-user/.claude.json",
+          path: "/home/example-user/.claude.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2112,7 +2114,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2147,7 +2149,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2183,7 +2185,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2268,7 +2270,7 @@ describe("WorkspaceSetupPage", () => {
             provider_id: "codex",
             provider_label: "Codex",
             kind: "auth_file",
-            path: "/Users/example-user/.codex/auth.json",
+            path: "/home/example-user/.codex/auth.json",
             signal_strength: "strong",
             confidence: "high",
             parse_status: "parsed",
@@ -2292,7 +2294,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2501,7 +2503,7 @@ describe("WorkspaceSetupPage", () => {
       target: { value: "provider/model-name" },
     });
     fireEvent.change(screen.getByTestId("wizard-titling-remote-api-key"), {
-      target: { value: "sk-onboarding" },
+      target: { value: "invalid-onboarding-api-key" },
     });
     fireEvent.click(screen.getByTestId("wizard-next"));
 
@@ -2510,7 +2512,7 @@ describe("WorkspaceSetupPage", () => {
         title_generation: expect.objectContaining({
           mode: "remote",
           remote: expect.objectContaining({
-            api_key: "sk-onboarding",
+            api_key: "invalid-onboarding-api-key",
           }),
         }),
       }));
@@ -2576,7 +2578,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2610,7 +2612,7 @@ describe("WorkspaceSetupPage", () => {
           provider_id: "codex",
           provider_label: "Codex",
           kind: "auth_file",
-          path: "/Users/example-user/.codex/auth.json",
+          path: "/home/example-user/.codex/auth.json",
           signal_strength: "strong",
           confidence: "high",
           parse_status: "parsed",
@@ -2731,7 +2733,7 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local", "wizard");
+      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local", "wizard", "host");
       expect(desktopConnectLocal).not.toHaveBeenCalled();
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
@@ -2782,7 +2784,7 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalledWith("/private/tmp/new-repo", "new-repo", "local", "wizard");
+      expect(createWorkspace).toHaveBeenCalledWith("/private/tmp/new-repo", "new-repo", "local", "wizard", "host");
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
         root_path: "/private/tmp/new-repo",

@@ -3,8 +3,8 @@ use ctx_desktop_ipc::DesktopWebviewSurface;
 use tauri::Manager;
 
 use super::super::{
-    apply_workbench_titlebar, open_file_preview_window_with_label, open_launcher_window_with_label,
-    open_main_window_at_route, open_settings_window_at_route,
+    apply_workbench_titlebar, ensure_workbench_titlebar, open_file_preview_window_with_label,
+    open_launcher_window_with_label, open_main_window_at_route, open_settings_window_at_route,
     open_workspace_setup_window_with_label, open_workspace_target_in_window_with_label,
     workspace_registry_parse_target_route, WorkspaceWindowRegistry,
 };
@@ -108,6 +108,7 @@ pub(super) fn reopen_window(
             let window = apply_workbench_titlebar(builder)
                 .build()
                 .context("creating generic recovery window")?;
+            ensure_workbench_titlebar(&window)?;
             super::super::log_window_created(window_label, route);
             super::super::log_navigation_start(window_label, route, "recreate_window");
             let _ = window.show();

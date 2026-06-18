@@ -13,7 +13,6 @@ vi.mock("./client", () => ({
 import {
   normalizeTurnFailureKind,
   trackDesktopWebviewRecoveryObserved,
-  trackForegroundFreshnessSlaMissed,
   trackProviderAuthCompleted,
   trackProviderAuthFailed,
   trackProviderAuthStarted,
@@ -25,6 +24,13 @@ import {
   trackTurnStarted,
   trackUnknownEventBurst,
   trackUserMessageSent,
+  trackWorkspaceCreated,
+  trackWorkspaceCreateFailed,
+  trackWorkspaceCreateSubmitted,
+  trackWorkspaceCreateSucceeded,
+  trackWorkspaceLaunchCompleted,
+  trackWorkspaceOpened,
+  trackWorkspaceRouteOpenedFromPending,
 } from "./activity";
 
 describe("usage analytics activity helpers", () => {
@@ -241,6 +247,159 @@ describe("usage analytics activity helpers", () => {
     );
   });
 
+  it("captures bounded workspace launch failures separately from completion status", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T12:00:10.000Z"));
+
+    try {
+      trackWorkspaceLaunchCompleted({
+        workspaceId: "workspace-1",
+        workspaceKind: "local",
+        executionMode: "sandbox",
+        source: "wizard",
+        startedAtMs: Date.parse("2026-06-12T12:00:00.000Z"),
+        result: "error",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_launch_completed",
+      1,
+      {
+        workspace_kind: "local",
+        execution_mode: "sandbox",
+        source: "wizard",
+        result: "error",
+        click_to_launch_ready_ms: 10_000,
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_launch_failed",
+      1,
+      {
+        workspace_kind: "local",
+        execution_mode: "sandbox",
+        source: "wizard",
+        status: "failed",
+        failure_kind: "launch_error",
+        click_to_launch_ready_ms: 10_000,
+      },
+    );
+  });
+
+  it("includes execution mode on workspace create and opened events when known", () => {
+    trackWorkspaceCreateSubmitted({
+      workspaceKind: "local",
+      source: "wizard",
+      executionMode: "sandbox",
+    });
+    trackWorkspaceCreateSucceeded({
+      workspaceKind: "local",
+      source: "wizard",
+      executionMode: "sandbox",
+    });
+    trackWorkspaceCreated({
+      workspaceKind: "local",
+      executionMode: "sandbox",
+    });
+    trackWorkspaceCreateFailed({
+      workspaceKind: "remote",
+      source: "api",
+      executionMode: "host",
+      failureKind: "request_error",
+    });
+    trackWorkspaceOpened({
+      workspaceKind: "local",
+      executionMode: "sandbox",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_create_submitted",
+      1,
+      {
+        workspace_kind: "local",
+        source: "wizard",
+        execution_mode: "sandbox",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_create_succeeded",
+      1,
+      {
+        workspace_kind: "local",
+        source: "wizard",
+        execution_mode: "sandbox",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_created",
+      1,
+      {
+        workspace_kind: "local",
+        execution_mode: "sandbox",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_create_failed",
+      1,
+      {
+        workspace_kind: "remote",
+        source: "api",
+        execution_mode: "host",
+        failure_kind: "request_error",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_opened",
+      1,
+      {
+        workspace_kind: "local",
+        execution_mode: "sandbox",
+      },
+    );
+  });
+
+  it("returns pending workspace launch context after recording route open", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T12:00:05.000Z"));
+
+    let pending: ReturnType<typeof trackWorkspaceRouteOpenedFromPending> = null;
+    try {
+      trackWorkspaceLaunchCompleted({
+        workspaceId: "workspace-1",
+        workspaceKind: "local",
+        executionMode: "host",
+        source: "wizard",
+        startedAtMs: Date.parse("2026-06-12T12:00:00.000Z"),
+        result: "ready",
+        emitEvent: false,
+      });
+
+      pending = trackWorkspaceRouteOpenedFromPending("workspace-1");
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(pending).toEqual({
+      workspaceKind: "local",
+      executionMode: "host",
+      source: "wizard",
+      clickToWorkspaceRouteMs: 5_000,
+    });
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_route_opened",
+      1,
+      {
+        workspace_kind: "local",
+        execution_mode: "host",
+        source: "wizard",
+        click_to_workspace_route_ms: 5_000,
+      },
+    );
+  });
+
   it("keeps structured interrupted turn failures more specific than cancellation", () => {
     expect(normalizeTurnFailureKind("provider_auth_required", "interrupted")).toBe("auth_missing");
     expect(normalizeTurnFailureKind(undefined, "interrupted")).toBe("user_cancelled");
@@ -292,25 +451,6 @@ describe("usage analytics activity helpers", () => {
         daemon_health: "ok",
         suppression_reason: "window_not_focused",
       },
-    );
-  });
-
-  it("captures foreground freshness surface as a non-reserved dimension", () => {
-    trackForegroundFreshnessSlaMissed({
-      metric: "final_delivery_stale_ms",
-      surface: "foreground_backlog",
-      bucket: "severe",
-    });
-
-    expect(captureIncidentEventMock).toHaveBeenCalledWith(
-      "foreground_freshness_sla_missed",
-      1,
-      {
-        metric: "final_delivery_stale_ms",
-        freshness_surface: "foreground_backlog",
-        severity_bucket: "severe",
-      },
-      undefined,
     );
   });
 });

@@ -336,6 +336,7 @@ describe("useWorkspaceSetupCreate", () => {
       "remote-sandbox",
       "remote",
       "wizard",
+      "sandbox",
     );
     expect(apiMocks.updateWorkspaceExecutionConfig).toHaveBeenCalledWith("ws-1", {
       environment: "sandbox",
@@ -377,6 +378,7 @@ describe("useWorkspaceSetupCreate", () => {
       "remote-sandbox",
       "remote",
       "wizard",
+      "sandbox",
     );
     expect(
       workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation,
@@ -440,13 +442,13 @@ describe("useWorkspaceSetupCreate", () => {
           container: "sandbox",
           source: "clone",
         },
-        sourcePath: "/Users/test/projects/",
+        sourcePath: "/home/test/projects/",
         repoUrl: "https://github.com/contextual-ai/ctx.git",
         repoBranch: "main",
       },
       effectiveTarget: localEffectiveTarget,
       pendingMock: () => apiMocks.repoClone,
-      resolveValue: { path: "/Users/test/projects/ctx" },
+      resolveValue: { path: "/home/test/projects/ctx" },
       expectedStepLabel: "Cloning repository",
     },
     {
@@ -457,11 +459,11 @@ describe("useWorkspaceSetupCreate", () => {
           container: "host",
           source: "new",
         },
-        sourcePath: "/Users/test/projects/ctx",
+        sourcePath: "/home/test/projects/ctx",
       },
       effectiveTarget: localEffectiveTarget,
       pendingMock: () => apiMocks.repoInit,
-      resolveValue: { path: "/Users/test/projects/ctx" },
+      resolveValue: { path: "/home/test/projects/ctx" },
       expectedStepLabel: "Initializing repository",
     },
   ])("shows launch logs immediately for $name", async ({
@@ -553,18 +555,18 @@ describe("useWorkspaceSetupCreate", () => {
   });
 
   it("seeds default daemon telemetry from the initiating client preference", async () => {
-    clientSettingsMocks.state.settings.telemetry.clientEnabled = false;
+    clientSettingsMocks.state.settings.telemetry.clientEnabled = true;
     apiMocks.getSettings.mockResolvedValue({
       telemetry: {
-        enabled: true,
-        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        enabled: false,
+        endpoint: "",
         source: "default",
       },
     });
     apiMocks.updateSettings.mockResolvedValue({
       telemetry: {
-        enabled: false,
-        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        enabled: true,
+        endpoint: "",
         source: "configured",
       },
     });
@@ -576,8 +578,8 @@ describe("useWorkspaceSetupCreate", () => {
 
     expect(apiMocks.updateSettings).toHaveBeenCalledWith({
       telemetry: {
-        enabled: false,
-        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        enabled: true,
+        endpoint: "",
       },
     });
   });
@@ -587,7 +589,7 @@ describe("useWorkspaceSetupCreate", () => {
     apiMocks.getSettings.mockResolvedValue({
       telemetry: {
         enabled: true,
-        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        endpoint: "https://telemetry.example/telemetry",
         source: "configured",
       },
     });
