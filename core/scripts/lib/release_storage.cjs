@@ -141,6 +141,14 @@ function buildR2ObjectRequestUrl(config, objectPath) {
   };
 }
 
+function buildR2CopySource(config, objectPath) {
+  const encodedSegments = [
+    encodeRfc3986(config.bucket),
+    ...normalizeObjectPath(objectPath).split("/").map((segment) => encodeRfc3986(segment)),
+  ];
+  return `/${encodedSegments.join("/")}`;
+}
+
 function sha256Hex(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
@@ -503,6 +511,81 @@ class ReleaseStorageClient {
     });
   }
 
+  async copyObject({
+    objectPath,
+    sourceObjectPath,
+    upsert = false,
+    verifyExisting = false,
+  }) {
+    return this.copyR2Object({
+      objectPath,
+      sourceObjectPath,
+      upsert,
+      verifyExisting,
+    });
+  }
+
+  async copyR2Object({ objectPath, sourceObjectPath, upsert, verifyExisting }) {
+    const normalizedObjectPath = normalizeObjectPath(objectPath);
+    const normalizedSourceObjectPath = normalizeObjectPath(sourceObjectPath);
+    const headers = {
+      ...(upsert ? {} : { "if-none-match": "*" }),
+      "x-amz-copy-source": buildR2CopySource(this.config, normalizedSourceObjectPath),
+      "x-amz-metadata-directive": "COPY",
+    };
+    for (let attempt = 1; attempt <= this.putRetryAttempts; attempt += 1) {
+      const signed = signR2Request(this.config, {
+        body: Buffer.alloc(0),
+        headers,
+        method: "PUT",
+        objectPath,
+      });
+      let response;
+      try {
+        response = await this.putFetch(signed.url, {
+          body: signed.body,
+          headers: signed.headers,
+          method: "PUT",
+        }, normalizedObjectPath, attempt);
+      } catch (error) {
+        if (attempt >= this.putRetryAttempts) {
+          throw error;
+        }
+        console.error(`warn: R2 copy request failed for ${normalizedSourceObjectPath} -> ${normalizedObjectPath} (attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+        await sleep(attempt * this.putRetryBaseDelayMs);
+        continue;
+      }
+      if (response.ok) {
+        return {
+          copied: true,
+          existing: false,
+          objectPath: normalizedObjectPath,
+          sourceObjectPath: normalizedSourceObjectPath,
+        };
+      }
+      const text = await responseText(response);
+      if (!upsert && verifyExisting && (response.status === 409 || response.status === 412)) {
+        await this.verifyExistingCopiedObject({
+          objectPath: normalizedObjectPath,
+          sourceObjectPath: normalizedSourceObjectPath,
+        });
+        return {
+          copied: false,
+          existing: true,
+          objectPath: normalizedObjectPath,
+          sourceObjectPath: normalizedSourceObjectPath,
+        };
+      }
+      const error = new Error(`failed to copy ${normalizedSourceObjectPath} to ${normalizedObjectPath} in R2 (HTTP ${response.status}): ${text.slice(0, 500)}`);
+      if (!isRetryableR2Status(response.status) || attempt >= this.putRetryAttempts) {
+        throw error;
+      }
+      console.error(`warn: transient R2 copy failure for ${normalizedSourceObjectPath} -> ${normalizedObjectPath} (HTTP ${response.status}, attempt ${attempt}/${this.putRetryAttempts}); retrying`);
+      await sleep(attempt * this.putRetryBaseDelayMs);
+    }
+    throw new Error(`failed to copy ${normalizedSourceObjectPath} to ${normalizedObjectPath} in R2 after ${this.putRetryAttempts} attempts`);
+  }
+
   async putR2Object({ body, contentType, objectPath, upsert, verifyExisting }) {
     const headers = {
       "content-type": contentType,
@@ -614,6 +697,11 @@ class ReleaseStorageClient {
     }
   }
 
+  async verifyExistingCopiedObject({ objectPath, sourceObjectPath }) {
+    const sourceSha = await this.getR2ObjectSha256(sourceObjectPath);
+    await this.verifyExistingObjectHash(objectPath, sourceSha);
+  }
+
   async deleteObject(objectPath) {
     return this.deleteR2Object(objectPath);
   }
@@ -652,6 +740,7 @@ module.exports = {
   DEFAULT_R2_PUT_TIMEOUT_MS,
   ReleaseStorageClient,
   buildPublicObjectUrl,
+  buildR2CopySource,
   buildR2ObjectRequestUrl,
   buildStorageClientFromEnv,
   normalizeObjectPath,
