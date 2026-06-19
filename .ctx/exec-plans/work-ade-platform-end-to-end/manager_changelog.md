@@ -89,3 +89,11 @@ Record each local commit or integrated worker handoff here.
     host-level Cargo lock and runs under low I/O priority by default.
   - Documents the no-direct-concurrent-Cargo process rule for local development
     agents.
+- `2174364` - Add Workbench plugin UI contribution projection.
+  - Integrated worker branch `ctx/workbench-contrib-20260619`.
+  - Adds frontend-only projection for current plugin `ui_surfaces` registry
+    records into source-labeled Workbench contribution candidates.
+  - Keeps the slice data-only: no arbitrary React/webview/plugin execution.
+- `de4488f` - Harden Workbench plugin template IDs.
+  - Removes future-looking action IDs until SDK/schema parity defines actions.
+  - Uses delimiter-safe encoding for persisted plugin template IDs.

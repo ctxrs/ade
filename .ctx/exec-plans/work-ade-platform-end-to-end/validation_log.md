@@ -171,3 +171,21 @@ These baseline results must be rerun after subsequent implementation phases.
 - Manager validation:
   - `git diff --check`
   - Result: passed.
+
+## Workbench Plugin Contribution Projection Slice
+
+- Worker validation:
+  - `pnpm --dir core/apps/web exec vitest run src/pages/workbenchShell/pluginWorkbenchContributionProjection.test.ts`
+  - Result: passed, 1 file / 8 tests.
+- Reviewer validation:
+  - `pnpm vitest run src/pages/workbenchShell/pluginWorkbenchContributionProjection.test.ts`
+  - Result: passed on worker branch.
+- Manager integration:
+  - `git cherry-pick 887981f01cad986df547eb3d5b7589d308af4a57 5ca66aa24da459cf7b08b87ceb778e13b65e3829`
+  - Result: passed; integrated as `2174364` and `de4488f`.
+- Manager validation:
+  - `pnpm --dir core/apps/web exec vitest run src/pages/workbenchShell/pluginWorkbenchContributionProjection.test.ts`
+  - Result: passed, 1 file / 8 tests.
+- Manager validation:
+  - `git diff --check HEAD~2..HEAD`
+  - Result: passed.

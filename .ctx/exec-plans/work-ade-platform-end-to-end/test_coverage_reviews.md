@@ -106,3 +106,16 @@ Record adversarial test coverage reviews and gaps.
   the duplicate runtime is excluded from the registry.
 - Remaining gaps: in-flight plugin command behavior across reload/remove and
   ADE-visible plugin diagnostics still need later slices.
+
+## Workbench Plugin Contribution Projection Review
+
+- Added frontend projection coverage for current plugin `ui_surfaces` registry
+  records into source-labeled Workbench contribution candidates.
+- Covered malformed record filtering, unsupported surface compatibility,
+  loading/error/empty/ready/fallback states, removed-plugin fallback, and
+  delimiter-safe plugin template ID round trips.
+- Reviewer found no blockers and confirmed the slice remains frontend-only and
+  data-only, without arbitrary plugin UI execution.
+- Remaining gap: this is not wired into persisted template selection or rendered
+  plugin panels yet; that should wait for SDK/schema parity and a concrete
+  Workbench contribution runtime.
