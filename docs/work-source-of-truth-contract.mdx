@@ -1,0 +1,156 @@
+---
+title: "Work Source Of Truth Contract"
+description: "Storage, identity, transaction, import/export, and projection rules for local ctx Work records"
+---
+
+# Work Source Of Truth Contract
+
+Work is the durable local record model behind the ADE and `ctx work`.
+
+The ADE must not have one data model while the CLI, import/export, plugins, or
+future harness starter kit use another. They all target the same local Work
+records.
+
+## First-Class Record Families
+
+The local Work model must support these record families:
+
+| Record | Purpose | Source of truth |
+| --- | --- | --- |
+| Work/task | Human objective and delegated unit of work | ctx workspace store |
+| Session | Durable agent conversation/execution context | ctx session store, imported session records |
+| Run | Bounded attempt inside a session | ctx run/session event store |
+| Transcript | Messages/chunks visible for review/import/export | session transcript store, imported transcript records |
+| Tool call | Tool invocation/result pairs | session/tool event store, ACP/CRP normalized events |
+| Worktree | Isolated checkout where work happened | workspace/worktree store |
+| Artifact | Screenshots, logs, traces, reports, generated files | artifact/object store plus Work links |
+| Check | Observed evidence such as tests, lint, builds, scans | Work/check store |
+| Gate | Local evidence checkpoint or local blocking decision | Work/gate store |
+| Change set | Reviewable diff/patch/revision group | VCS/change-set store plus Work links |
+| Contribution | Many-to-many edge between records/outcomes | Work contribution store |
+| PR link | Source-control review/landing reference | Work contribution/link store |
+| Manual attestation | Human note, review, override, or assertion | Work note/attestation store |
+| Provenance | Who/what produced a record and from where | record metadata |
+| Redaction metadata | What is safe to export/share | record metadata and export profile |
+
+## Storage Semantics
+
+Workers must treat this section as a blocking contract before broad parallel
+implementation.
+
+### Transactions
+
+Multi-record writes must be transactional when they create an observable Work
+state. Examples:
+
+- import bundle writes;
+- transcript plus tool-call writes;
+- artifact object plus artifact metadata writes;
+- check plus gate update writes;
+- change set plus contribution edge writes.
+
+If a transaction fails, readers must see either the previous complete state or a
+recoverable pending state with diagnostics. They must not see a half-imported
+record as valid Work.
+
+### Referential Integrity
+
+References between Work, sessions, runs, transcripts, tool calls, artifacts,
+checks, gates, change sets, contributions, and PR links must be validated.
+
+Imported/external records may use external endpoint identities, but local ctx IDs
+must be checked against the workspace database. Cross-workspace local references
+must be rejected unless explicitly represented as external/imported references.
+
+### IDs And Versions
+
+Rules:
+
+- local records keep stable ctx IDs;
+- imported records keep source identity plus deterministic local import IDs;
+- re-import is idempotent;
+- schema versions are explicit;
+- unknown required versions are rejected;
+- optional forward-compatible fields are preserved when practical;
+- migrations are explicit and tested.
+
+### Concurrency And Locking
+
+Concurrent writers must not corrupt Work records.
+
+At minimum, the implementation must define whether a write path uses:
+
+- SQLite transaction isolation;
+- optimistic version checks;
+- explicit per-workspace locks;
+- import/capture writer serialization;
+- conflict retries.
+
+The chosen rule must be tested for stale writer or concurrent import behavior.
+
+### Corruption And Recovery
+
+The store must detect and explain:
+
+- missing referenced local IDs;
+- malformed JSON payloads;
+- checksum mismatch for objects;
+- partially written imports;
+- unsupported schema versions;
+- stale persisted UI pointers to removed plugin/template records.
+
+Recovery may be automatic where safe, or diagnostic-only where user intent is
+needed.
+
+### Large Transcript And Artifact Indexing
+
+Large transcripts and artifacts must not force every UI/CLI path to load full
+payloads.
+
+The implementation must define:
+
+- transcript chunk indexing;
+- query/list pagination;
+- artifact metadata index;
+- object checksum/index;
+- size limits;
+- redaction preview behavior without loading every artifact into memory.
+
+## Local Gates
+
+In public/local ctx, a gate is a Work record that represents an evidence
+checkpoint or local decision. It is not hosted policy.
+
+Gates may:
+
+- summarize required checks/evidence;
+- mark a local action as ready, blocked, warning, failed, bypassed, or unknown;
+- optionally block a local UI action such as "mark ready", "merge locally", or
+  "export without warning";
+- record an explicit human bypass/override.
+
+Gates must not introduce hosted/team enforcement into the public repo.
+
+## Import/Export Snapshot Rule
+
+`ctx work export` must export a consistent snapshot. `ctx work import` must write
+a consistent state or roll back.
+
+Import/export bundles must include:
+
+- manifest version;
+- schema versions;
+- object index;
+- checksums;
+- source/provenance;
+- redaction profile;
+- size metadata;
+- compatibility metadata for `agent-work` v1 where applicable.
+
+## ADE Projection Rule
+
+The ADE must project from Work records, not re-infer durable facts from one-off
+UI state.
+
+Templates and plugin panels may use view models, but those view models must be
+derived from the source-of-truth records and approved actions.

@@ -1,0 +1,132 @@
+---
+title: "ACP Provider Plugin Contract"
+description: "How ctx plugins package ACP-compatible coding agents without introducing a competing ctx agent protocol"
+---
+
+# ACP Provider Plugin Contract
+
+ACP is the public provider integration protocol for ctx.
+
+A coding agent author should implement ACP, then package/register the agent as a
+ctx plugin provider contribution. ctx should not ask external authors to
+implement a competing ctx agent protocol.
+
+Reference target for this branch:
+
+- ACP v1 documentation as of June 19, 2026;
+- local subprocess transport over JSON-RPC stdio is required;
+- remote HTTP/WebSocket transport is out of scope for local done-ness unless
+  explicitly added as optional, non-required behavior;
+- relevant stable v1 areas include initialization, prompt turns, content, tool
+  calls, slash commands, session setup/list/resume/close/delete, authentication,
+  terminals, and transports.
+
+ACP docs: https://agentclientprotocol.com/get-started/introduction and
+https://agentclientprotocol.com/llms.txt.
+
+## Public Shape
+
+A plugin provider contribution declares:
+
+- plugin ID and version;
+- provider ID and display name;
+- ACP command/entrypoint;
+- install/discovery metadata;
+- auth/status behavior;
+- command catalog behavior;
+- capability metadata;
+- diagnostics.
+
+Example shape:
+
+```json
+{
+  "id": "example.acp-provider",
+  "name": "Example ACP Provider",
+  "version": "0.1.0",
+  "entrypoints": [
+    {
+      "id": "agent",
+      "kind": "process",
+      "command": "example-agent-acp"
+    }
+  ],
+  "contributes": {
+    "providers": [
+      {
+        "id": "example-agent",
+        "name": "Example Agent",
+        "entrypoint": "agent",
+        "capabilities": ["acp.v1"]
+      }
+    ]
+  }
+}
+```
+
+## CRP Boundary
+
+CRP may remain an internal/native runtime compatibility layer.
+
+It is acceptable for ctx to:
+
+- keep existing CRP-native integrations;
+- bridge ACP providers into internal normalized events;
+- use CRP where ctx needs richer runtime integration.
+
+It is not acceptable to make external agent authors implement CRP as the public
+extension target.
+
+## Provider Ownership
+
+Provider IDs are authority-bearing names.
+
+Rules:
+
+- duplicate provider IDs from different plugins are errors unless an explicit
+  override/ownership mechanism exists;
+- a removed provider cannot be selected for new sessions;
+- active daemon-owned sessions from a removed provider remain visible;
+- new turns for an unavailable provider must surface a clear diagnostic;
+- plugin reload must clean up provider ownership for future catalog state
+  without deleting historical Work records.
+
+## Conformance Matrix
+
+Provider plugin integration is not complete until executable fixtures cover:
+
+| Area | Required behavior |
+| --- | --- |
+| Initialization | ctx launches provider, negotiates protocol metadata, and records diagnostics |
+| Status/auth | auth-required, authenticated, logout/failure states surface consistently |
+| Prompt turn | user prompt starts a turn and streams output into session/Work records |
+| Streaming | incremental output is ordered, bounded, and reconnect-safe |
+| Cancellation | cancellation reaches the provider and normalizes final state |
+| Errors | protocol errors, command failure, and malformed output become diagnostics |
+| Tool calls | tool-call/result pairs map to Work tool-call records |
+| Terminals | terminal requests map to ctx-approved execution surfaces where supported |
+| Slash commands | provider-owned commands are source-labeled and not shadowed |
+| Backpressure | output caps and channel backpressure are enforced |
+| Resume/reload | session resume and provider reload behavior are defined and tested |
+| Process death | provider exit/crash is detected and does not corrupt Work records |
+| Removal | removed provider is unavailable for new sessions but history remains readable |
+
+Any row not implemented in the first pass must be explicitly deferred in the
+completion record with user-approved rationale.
+
+## Work Capture Mapping
+
+ACP output must map to Work records:
+
+- messages/chunks become transcript records;
+- tool calls/results become tool-call records;
+- artifacts and diffs become artifact/change-set records where available;
+- provider diagnostics become checks or diagnostic events where appropriate;
+- PR/contribution links remain local/passive unless the user explicitly runs a
+  remote command.
+
+## Network Boundary
+
+Provider install/discovery metadata must be local/passive by default. Remote
+registry queries, auth flows, or provider downloads are optional and must not be
+required for local done-ness.

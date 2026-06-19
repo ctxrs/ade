@@ -1,0 +1,148 @@
+---
+title: "Plugin Contribution Contract"
+description: "Typed contribution, capability, data binding, action, and hot-reload rules for ctx plugins"
+---
+
+# Plugin Contribution Contract
+
+Plugins are installable bundles that contribute composable ctx surfaces. They
+are not a replacement for the Work model, the ADE state model, or ACP.
+
+## Contribution Types
+
+The public contribution surface must be typed by the repo-local plugin SDK.
+
+Supported or explicitly deferred contribution types:
+
+| Contribution | First-pass expectation |
+| --- | --- |
+| Commands | Supported |
+| ACP providers | Supported |
+| Collectors/importers | Supported |
+| Observers | Supported |
+| Redaction/export processors | Supported or explicitly deferred |
+| Workbench panels | Supported |
+| Workbench templates | Supported |
+| Card renderers | Supported or explicitly deferred |
+| Detail sections | Supported or explicitly deferred |
+| Review sections | Supported or explicitly deferred |
+| Toolbar actions | Supported or explicitly deferred |
+| Artifact renderers | Supported |
+| Arbitrary webview/React UI | Deferred or gated behind explicit capability |
+
+Silent partial support is not allowed. If a contribution appears in the public
+manifest schema, the SDK must type it or the docs/tests must clearly mark it as
+deferred.
+
+## Composability Rule
+
+Workbench primitives are the composable internal units. Plugins contribute
+configuration, bindings, renderers, and actions over those primitives.
+
+A plugin should not mutate the store directly or replace the whole ADE shell in
+the first pass.
+
+## Data Bindings
+
+Declarative UI contributions may bind to explicit, versioned data sources:
+
+- current Work summary;
+- current task/session/run;
+- transcript slice;
+- tool-call list;
+- artifact list;
+- check/gate state;
+- change-set/diff summary;
+- PR/contribution links;
+- provider status;
+- plugin diagnostics.
+
+Bindings must define:
+
+- loading state;
+- empty state;
+- error state;
+- incremental update behavior;
+- stale/reload behavior;
+- unmount cleanup.
+
+## Actions
+
+Plugin UI can request approved actions by stable action ID and typed input.
+
+Initial action candidates:
+
+- focus Work/task/session;
+- start task;
+- run ctx command;
+- run plugin command;
+- export/redact Work;
+- attach artifact;
+- add manual note/attestation;
+- update local gate state;
+- open provider settings;
+- request provider/session restart.
+
+Action handlers own validation, permissions, provenance, redaction defaults, and
+store writes.
+
+## Capability And Trust Model
+
+Local plugins are powerful local code. The first-pass trust model is:
+
+- plugins only load from explicit plugin roots;
+- dev-mode execution is source-labeled;
+- command entrypoints, cwd, args, and env are validated;
+- host process execution requires a visible plugin identity;
+- arbitrary UI/webview execution is deferred or capability-gated;
+- plugin stdout/stderr may be sensitive and must be bounded/redacted where
+  displayed or exported;
+- duplicate plugin IDs, provider IDs, and command IDs are errors or
+  source-labeled conflicts.
+
+## Hot Reload
+
+Plugin reload must handle:
+
+- add/change/remove of manifests;
+- invalid manifest recovery;
+- last-good revision behavior where safe;
+- removed panels/templates and persisted fallback;
+- in-flight command behavior;
+- collector restart from cursor/checkpoint;
+- provider removal without deleting historical Work;
+- registry generation changes;
+- diagnostics visible in CLI and ADE.
+
+UI reload must not kill daemon-owned active sessions.
+
+## SDK Shape
+
+The repo-local SDK should start narrow and typed:
+
+```ts
+import { defineCtxPlugin } from "@ctx/plugin-sdk";
+
+export default defineCtxPlugin({
+  id: "example.review",
+  name: "Example Review",
+  version: "0.1.0",
+  contributes: {
+    commands: [],
+    workbench: {
+      panels: [],
+      templates: [],
+    },
+  },
+});
+```
+
+Publishing to npm is not required for the local program. The package should be
+publishable later, but first it must work as a repo-local package with examples
+and tests.
+
+## Worker Rule
+
+Only the manager branch may change plugin capability semantics. Workers may add
+contributions only after this contract and the manifest/SDK contract land in the
+manager branch.

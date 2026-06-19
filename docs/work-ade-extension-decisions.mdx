@@ -159,14 +159,22 @@ host-local roots and raw transcripts unless the user explicitly includes them.
 
 The next public implementation steps are:
 
-1. Finish the `ctx work` CLI/export/import layer over the same records.
-2. Plan any `agent-work` to `work` namespace migration as one compatibility
-   change, not a piecemeal rename.
-3. Add provider command catalog/execution passthrough so provider commands stay
+1. Follow the [Work Namespace Compatibility](./work-namespace-compatibility.mdx)
+   contract for public `Work` naming and `agent-work` compatibility.
+2. Follow the
+   [Work Source Of Truth Contract](./work-source-of-truth-contract.mdx) so the
+   ADE, `ctx work`, plugins, import/export, and future harness primitives use
+   the same records.
+3. Finish the `ctx work` CLI/export/import layer over the same records.
+4. Add ACP provider plugin support according to the
+   [ACP Provider Plugin Contract](./acp-provider-plugin-contract.mdx).
+5. Build plugin contributions according to the
+   [Plugin Contribution Contract](./plugin-contribution-contract.mdx).
+6. Add provider command catalog/execution passthrough so provider commands stay
    provider-owned.
-4. Move plugin commands into source-labeled command palette/workflow surfaces.
-5. Add declarative Workbench panel, template, and renderer contributions.
-6. Add plugin dev hot reload/watch mode.
-7. Add import/export/redaction tests and examples.
-8. Add a follow-on ACP-compatible coding-agent harness starter kit that uses
+7. Move plugin commands into source-labeled command palette/workflow surfaces.
+8. Add declarative Workbench panel, template, and renderer contributions.
+9. Add plugin dev hot reload/watch mode.
+10. Add import/export/redaction tests and examples.
+11. Add a follow-on ACP-compatible coding-agent harness starter kit that uses
    ctx Work capture, sandbox, shell, file, artifact, and transcript primitives.

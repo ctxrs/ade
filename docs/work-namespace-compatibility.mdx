@@ -1,0 +1,89 @@
+---
+title: "Work Namespace Compatibility"
+description: "How ctx uses Work as the public noun while preserving the current agent-work compatibility surface"
+---
+
+# Work Namespace Compatibility
+
+ctx uses **Work** as the public product noun in UI, CLI copy, docs, and future
+extension APIs.
+
+The current v1 schema and some Rust/TypeScript internals still use
+`agent-work`. That namespace is a compatibility surface, not the product
+direction. New public surfaces should not casually introduce more `agent-work`
+names.
+
+## Compatibility Rule
+
+Do not mix new `work` and old `agent-work` names piecemeal.
+
+Any rename must be a planned compatibility migration that covers:
+
+- JSON schemas and `$id` URLs;
+- CLI subcommands;
+- HTTP routes;
+- Rust modules and public types;
+- TypeScript package/types;
+- docs and examples;
+- import/export bundle manifests;
+- compatibility fixtures;
+- migration tests.
+
+Until that migration lands, `agent-work` may remain only where it is already a
+stable compatibility name or where renaming would break existing local data.
+
+## Current Compatibility Surface
+
+The current branch may keep these names temporarily:
+
+- `schemas/agent-work/*`;
+- `AgentWork` schema/type names;
+- Rust module paths such as `agent_work`;
+- route or CLI code that already exposes `agent-work`;
+- compatibility tests for existing records.
+
+New user-facing docs should call the concept **Work** and explain that
+`agent-work` names are compatibility paths where they appear.
+
+## CLI Direction
+
+The public CLI should be:
+
+```text
+ctx work ...
+```
+
+The existing schema-printing command may remain as a compatibility alias if
+needed, but the implementation work should move toward:
+
+- `ctx work schema`;
+- `ctx work list`;
+- `ctx work show`;
+- `ctx work capture`;
+- `ctx work export`;
+- `ctx work import`;
+- `ctx work validate`;
+- `ctx work redact`;
+- `ctx work redaction-preview`;
+- `ctx work inspect`.
+
+## Migration Shape
+
+The preferred migration is:
+
+1. Add `work` CLI/routes/types as the new public surface.
+2. Keep `agent-work` schemas/routes as v1 compatibility aliases.
+3. Export bundles include both:
+   - public concept: `work`;
+   - compatibility schema version/source: current `agent-work` v1 where
+     applicable.
+4. Tests prove:
+   - old `agent-work` fixtures still import;
+   - new `work` CLI output validates;
+   - route aliases produce equivalent records;
+   - docs/examples do not introduce new public `agent-work` names.
+
+## Worker Rule
+
+Only the manager branch may change namespace policy. Worker branches must not
+rename `agent-work` to `work` independently.

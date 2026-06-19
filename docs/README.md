@@ -8,6 +8,10 @@ This directory contains selected ctx documentation for GitHub browsing.
 - [Install and Launch](getting-started/install-and-launch.mdx)
 - [Workbench Tour](workbench/tour.mdx)
 - [Work and ADE Extension Decisions](work-ade-extension-decisions.mdx)
+- [Work Namespace Compatibility](work-namespace-compatibility.mdx)
+- [Work Source Of Truth Contract](work-source-of-truth-contract.mdx)
+- [ACP Provider Plugin Contract](acp-provider-plugin-contract.mdx)
+- [Plugin Contribution Contract](plugin-contribution-contract.mdx)
 - [What Is a Worktree?](what-is-a-worktree.mdx)
 - [Containerization](containerization.mdx)
 
