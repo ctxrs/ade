@@ -41,6 +41,9 @@ describe("workbench persistence daemon scope keys", () => {
     expect(mod.workbenchWindowKeyV1("ws-1", "window-1")).toContain(
       encodeURIComponent(serializeDaemonTargetScope(targetScope)),
     );
+    expect(mod.workbenchTemplateKeyV1("ws-1", "window-1")).toContain(
+      encodeURIComponent(serializeDaemonTargetScope(targetScope)),
+    );
   });
 
   it("distinguishes reused forwarded URLs across different desktop ssh targets", async () => {
@@ -106,5 +109,73 @@ describe("workbench persistence daemon scope keys", () => {
     expect(firstKey).toBe(serializeDaemonTargetScope(createDesktopLocalDaemonTargetScope("http://127.0.0.1:4399")));
     expect(secondKey).toBe(serializeDaemonTargetScope(createDesktopLocalDaemonTargetScope("http://127.0.0.1:4400")));
     expect(firstKey).not.toBe(secondKey);
+  });
+
+  it("decodes template state and defaults to classic", async () => {
+    const mod = await import("./persistence");
+
+    expect(mod.defaultWorkbenchTemplateState()).toEqual({ id: "classic", version: 1, layout: {} });
+    expect(
+      mod.decodePersistedWorkbenchTemplateV1({
+        v: 1,
+        template: { id: "review", version: 1, layout: {} },
+      }),
+    ).toEqual({
+      v: 1,
+      template: { id: "review", version: 1, layout: {} },
+    });
+    expect(
+      mod.decodePersistedWorkbenchTemplateV1({
+        v: 1,
+        template: { id: "plugin:publisher/template", version: 2, layout: { density: "compact" } },
+      }),
+    ).toEqual({
+      v: 1,
+      template: { id: "plugin:publisher/template", version: 2, layout: { density: "compact" } },
+    });
+    expect(
+      mod.decodePersistedWorkbenchTemplateV1({
+        v: 1,
+        template: { id: "review", state: { legacy: true } },
+      }),
+    ).toEqual({
+      v: 1,
+      template: { id: "review", version: 1, layout: { legacy: true } },
+    });
+    expect(
+      mod.decodePersistedWorkbenchTemplateV1({
+        v: 1,
+        template: { id: "unknown", version: 1, layout: {} },
+      }),
+    ).toBeNull();
+  });
+
+  it("normalizes stale focused leaf ids when decoding persisted windows", async () => {
+    const mod = await import("./persistence");
+
+    expect(
+      mod.decodePersistedWorkbenchWindowV1({
+        v: 1,
+        focusedLeafId: "missing",
+        layout: {
+          kind: "split",
+          id: "split-1",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: {
+            kind: "leaf",
+            id: "leaf-1",
+            tabs: [{ id: "tab-1", kind: "new_task" }],
+            activeTabId: "tab-1",
+          },
+          second: {
+            kind: "leaf",
+            id: "leaf-2",
+            tabs: [{ id: "tab-2", kind: "new_task" }],
+            activeTabId: "tab-2",
+          },
+        },
+      })?.focusedLeafId,
+    ).toBe("leaf-1");
   });
 });

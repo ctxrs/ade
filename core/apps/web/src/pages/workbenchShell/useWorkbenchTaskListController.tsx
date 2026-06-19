@@ -208,6 +208,10 @@ export function useWorkbenchTaskListController({
     () => filteredArchivedIds.map((id) => tasksById[id]).filter((value): value is WorkspaceActiveSnapshotItem => Boolean(value)),
     [filteredArchivedIds, tasksById],
   );
+  const taskBoardSummaries = useMemo(
+    () => [...activeTaskSummaries, ...archivedTaskSummaries],
+    [activeTaskSummaries, archivedTaskSummaries],
+  );
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -602,5 +606,6 @@ export function useWorkbenchTaskListController({
     renderTaskListItem,
     taskListContext,
     onTaskListRangeChanged,
+    taskBoardSummaries,
   };
 }

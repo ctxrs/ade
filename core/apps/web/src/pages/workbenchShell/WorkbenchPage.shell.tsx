@@ -44,6 +44,8 @@ import { resolveWorkspaceBootstrapGateState } from "../workspaceBootstrapGate";
 import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
 import { projectPluginSlashCommands } from "./pluginCommandProjection";
 import { resolvePluginCommandMessage } from "./pluginCommandInvocation";
+import { projectAgentWorkForTask, projectWorkbenchTaskBoard } from "./agentWorkProjection";
+import { WorkbenchTemplateSwitcher } from "./WorkbenchTemplateSwitcher";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -349,6 +351,18 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     supervisor,
     workbenchStore,
   });
+  const taskBoardSummaries = useMemo(
+    () => taskListController.taskBoardSummaries,
+    [taskListController.taskBoardSummaries],
+  );
+  const taskBoardProjection = useMemo(
+    () => projectWorkbenchTaskBoard(agentWorkGraph, taskBoardSummaries),
+    [agentWorkGraph, taskBoardSummaries],
+  );
+  const activeAgentWorkDetail = useMemo(
+    () => (activeTaskId ? projectAgentWorkForTask(agentWorkGraph, activeTaskId) : null),
+    [activeTaskId, agentWorkGraph],
+  );
 
   const activeTaskController = useWorkbenchActiveTaskController({
     workspaceId,
@@ -488,6 +502,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     workbenchHydrated: workbenchSnap.hydrated,
     providerBootstrapState,
   });
+  const workbenchTemplateState = workbenchSnap.template ?? ({ id: "classic", version: 1, layout: {} } as const);
 
   return (
     <WorkbenchPageShellView
@@ -509,6 +524,15 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         void refreshBootstrap();
       }}
       workbenchWarnings={workbenchSnap.warnings}
+      workbenchWindow={workbenchSnap.window}
+      templateState={workbenchTemplateState}
+      taskBoardProjection={taskBoardProjection}
+      activeAgentWorkDetail={activeAgentWorkDetail}
+      activeTaskTitle={activeTaskSummary?.task.title ?? null}
+      onSelectTaskFromTemplate={focusTask}
+      onFocusWorkbenchLeaf={workbenchStore.focusLeaf}
+      onSplitWorkbenchLeaf={workbenchStore.splitFocusedLeaf}
+      onResizeWorkbenchSplit={workbenchStore.resizeSplit}
       activeTaskController={activeTaskController}
       taskListController={taskListController}
       topbarProps={{
@@ -517,6 +541,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         showDebugIds,
         debugIdLabel,
         onCopyDebugIds: copyDebugIds,
+        templateSwitcher: (
+          <WorkbenchTemplateSwitcher
+            activeTemplateId={mobileShell ? "classic" : workbenchTemplateState.id}
+            disabledTemplateIds={mobileShell ? ["kanban", "multipane", "review"] : undefined}
+            onSelectTemplate={workbenchStore.setTemplateId}
+          />
+        ),
         settingsHref: mobileShell ? "/mobile/connect" : undefined,
         onToggleSidebar: mobileShell ? () => setSidebarCollapsed((prev) => !prev) : undefined,
         sidebarOpen: mobileShell ? !sidebarCollapsed : false,

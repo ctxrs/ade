@@ -4,6 +4,7 @@ import { serializeDaemonTargetScope } from "../state/scopeIdentity";
 import type {
   LayoutNode,
   PersistedWorkbenchDraftV1,
+  PersistedWorkbenchTemplateV1,
   PersistedWorkbenchTerminalLayoutV1,
   PersistedWorkbenchTerminalTitlesV1,
   PersistedWorkbenchTerminalOpenV1,
@@ -13,11 +14,15 @@ import type {
   TerminalLayoutNode,
   TerminalPanelScopeState,
   TerminalScope,
+  WorkbenchBuiltinTemplateId,
+  WorkbenchTemplateId,
+  WorkbenchTemplateState,
   WorkbenchTab,
   WorkbenchDraft,
 } from "./types";
 
 const WINDOW_DB_VERSION = 1 as const;
+const TEMPLATE_DB_VERSION = 1 as const;
 const DRAFT_DB_VERSION = 1 as const;
 const DIFF_PANE_DB_VERSION = 1 as const;
 const ARTIFACTS_PANE_DB_VERSION = 1 as const;
@@ -37,6 +42,10 @@ function safeKeyPart(v: string): string {
 
 export function workbenchWindowKeyV1(workspaceId: string, windowId: string): string {
   return `wb.window.v${WINDOW_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(windowId)}`;
+}
+
+export function workbenchTemplateKeyV1(workspaceId: string, windowId: string): string {
+  return `wb.template.v${TEMPLATE_DB_VERSION}.${safeKeyPart(workbenchDaemonKey())}.${safeKeyPart(workspaceId)}.${safeKeyPart(windowId)}`;
 }
 
 export function workbenchDraftKeyV1(workspaceId: string, key: string): string {
@@ -111,6 +120,37 @@ function decodeMessageAttachment(raw: unknown) {
 function decodeSplitDirection(v: unknown): SplitDirection | null {
   if (v === "horizontal" || v === "vertical") return v;
   return null;
+}
+
+function decodeWorkbenchBuiltinTemplateId(v: unknown): WorkbenchBuiltinTemplateId | null {
+  if (v === "classic" || v === "kanban" || v === "multipane" || v === "review") return v;
+  return null;
+}
+
+function decodeWorkbenchTemplateId(v: unknown): WorkbenchTemplateId | null {
+  if (!isString(v)) return null;
+  const builtin = decodeWorkbenchBuiltinTemplateId(v);
+  if (builtin) return builtin;
+  return /^plugin:[^/]+\/[^/]+$/.test(v) ? (v as WorkbenchTemplateId) : null;
+}
+
+export function defaultWorkbenchTemplateState<TId extends WorkbenchTemplateId>(
+  id: TId,
+): WorkbenchTemplateState<TId>;
+export function defaultWorkbenchTemplateState(): WorkbenchTemplateState<"classic">;
+export function defaultWorkbenchTemplateState(
+  id: WorkbenchTemplateId = "classic",
+): WorkbenchTemplateState {
+  return { id, version: 1, layout: {} } as WorkbenchTemplateState;
+}
+
+export function decodeWorkbenchTemplateState(raw: unknown): WorkbenchTemplateState | null {
+  if (!isRecord(raw)) return null;
+  const id = decodeWorkbenchTemplateId(raw.id);
+  if (!id) return null;
+  const version = isNumber(raw.version) && raw.version >= 1 ? Math.floor(raw.version) : 1;
+  const layout = isRecord(raw.layout) ? raw.layout : isRecord(raw.state) ? raw.state : {};
+  return { id, version, layout } as WorkbenchTemplateState;
 }
 
 function decodeTerminalScope(v: unknown): TerminalScope | null {
@@ -280,13 +320,34 @@ function decodeLayoutNode(raw: unknown, depth: number): LayoutNode | null {
   return null;
 }
 
+function layoutLeafIds(node: LayoutNode, out: string[] = []): string[] {
+  if (node.kind === "leaf") {
+    out.push(node.id);
+    return out;
+  }
+  layoutLeafIds(node.first, out);
+  layoutLeafIds(node.second, out);
+  return out;
+}
+
 export function decodePersistedWorkbenchWindowV1(raw: unknown): PersistedWorkbenchWindowV1 | null {
   if (!isRecord(raw)) return null;
   if (raw.v !== 1) return null;
   const layout = decodeLayoutNode(raw.layout, 0);
   if (!layout) return null;
   if (!isString(raw.focusedLeafId) || !raw.focusedLeafId.trim()) return null;
-  return { v: 1, layout, focusedLeafId: raw.focusedLeafId };
+  const leafIds = layoutLeafIds(layout);
+  const focusedLeafId = leafIds.includes(raw.focusedLeafId) ? raw.focusedLeafId : leafIds[0];
+  if (!focusedLeafId) return null;
+  return { v: 1, layout, focusedLeafId };
+}
+
+export function decodePersistedWorkbenchTemplateV1(raw: unknown): PersistedWorkbenchTemplateV1 | null {
+  if (!isRecord(raw)) return null;
+  if (raw.v !== 1) return null;
+  const template = decodeWorkbenchTemplateState(raw.template);
+  if (!template) return null;
+  return { v: 1, template };
 }
 
 export function decodePersistedWorkbenchTerminalLayoutV1(raw: unknown): PersistedWorkbenchTerminalLayoutV1 | null {
@@ -315,8 +376,24 @@ export async function loadWorkbenchWindowV1(workspaceId: string, windowId: strin
   return decodePersistedWorkbenchWindowV1(raw);
 }
 
+export async function loadWorkbenchTemplateV1(
+  workspaceId: string,
+  windowId: string,
+): Promise<PersistedWorkbenchTemplateV1 | null> {
+  const raw = await uiStateGet(workbenchTemplateKeyV1(workspaceId, windowId));
+  return decodePersistedWorkbenchTemplateV1(raw);
+}
+
 export async function saveWorkbenchWindowV1(workspaceId: string, windowId: string, win: PersistedWorkbenchWindowV1): Promise<void> {
   await uiStateSet(workbenchWindowKeyV1(workspaceId, windowId), win);
+}
+
+export async function saveWorkbenchTemplateV1(
+  workspaceId: string,
+  windowId: string,
+  template: PersistedWorkbenchTemplateV1,
+): Promise<void> {
+  await uiStateSet(workbenchTemplateKeyV1(workspaceId, windowId), template);
 }
 
 export async function saveWorkbenchWindowV1Immediate(
@@ -327,8 +404,20 @@ export async function saveWorkbenchWindowV1Immediate(
   await uiStateBatch([{ kind: "set", key: workbenchWindowKeyV1(workspaceId, windowId), value: win }]);
 }
 
+export async function saveWorkbenchTemplateV1Immediate(
+  workspaceId: string,
+  windowId: string,
+  template: PersistedWorkbenchTemplateV1,
+): Promise<void> {
+  await uiStateBatch([{ kind: "set", key: workbenchTemplateKeyV1(workspaceId, windowId), value: template }]);
+}
+
 export async function deleteWorkbenchWindowV1(workspaceId: string, windowId: string): Promise<void> {
   await uiStateDelete(workbenchWindowKeyV1(workspaceId, windowId));
+}
+
+export async function deleteWorkbenchTemplateV1(workspaceId: string, windowId: string): Promise<void> {
+  await uiStateDelete(workbenchTemplateKeyV1(workspaceId, windowId));
 }
 
 export function decodePersistedWorkbenchDraftV1(raw: unknown): PersistedWorkbenchDraftV1 | null {

@@ -23,6 +23,7 @@ type WorkbenchTopbarProps = {
   showDebugIds: boolean;
   debugIdLabel: string;
   onCopyDebugIds: () => void;
+  templateSwitcher?: React.ReactNode;
   settingsHref?: string;
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
@@ -34,6 +35,7 @@ export function WorkbenchTopbar({
   showDebugIds,
   debugIdLabel,
   onCopyDebugIds,
+  templateSwitcher,
   settingsHref,
   onToggleSidebar,
   sidebarOpen = false,
@@ -60,6 +62,7 @@ export function WorkbenchTopbar({
         {workspaceTitle ? <div className="wb-topbar-title">{workspaceTitle}</div> : null}
       </div>
       <div className="wb-topbar-right" data-tauri-drag-region={false}>
+        {templateSwitcher}
         {showDebugIds ? (
           <button
             type="button"

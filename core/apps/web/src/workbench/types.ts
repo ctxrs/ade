@@ -3,6 +3,10 @@ import type { WorkbenchModeId } from "../components/WorkbenchComposer";
 
 export type SplitDirection = "horizontal" | "vertical";
 
+export type WorkbenchBuiltinTemplateId = "classic" | "kanban" | "multipane" | "review";
+export type WorkbenchPluginTemplateId = `plugin:${string}/${string}`;
+export type WorkbenchTemplateId = WorkbenchBuiltinTemplateId | WorkbenchPluginTemplateId;
+
 export type LayoutNode =
   | {
       kind: "split";
@@ -42,6 +46,14 @@ export type WorkbenchDraft = {
   modeId: WorkbenchModeId;
   attachments: MessageAttachment[];
   updatedAtMs: number;
+};
+
+export type WorkbenchTemplateLayout = Record<string, unknown>;
+
+export type WorkbenchTemplateState<TId extends WorkbenchTemplateId = WorkbenchTemplateId> = {
+  id: TId;
+  version: number;
+  layout: WorkbenchTemplateLayout;
 };
 
 export type TerminalScope = "task" | "workspace";
@@ -97,6 +109,11 @@ export type PersistedWorkbenchWindowV1 = {
   v: 1;
   layout: LayoutNode;
   focusedLeafId: string;
+};
+
+export type PersistedWorkbenchTemplateV1 = {
+  v: 1;
+  template: WorkbenchTemplateState;
 };
 
 export type PersistedWorkbenchDraftV1 = {

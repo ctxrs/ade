@@ -6,18 +6,34 @@ import {
   defaultWindowState,
   ensureLeafActiveTab,
   findLeaf,
+  focusLeaf,
   getActiveTabFromLeaf,
   getOrCreateWindowId,
+  readSessionTemplateV1,
   readSessionWindowV1,
+  resizeSplitRatio,
+  splitFocusedLeaf,
   updateLeaf,
+  writeSessionTemplateV1,
   writeSessionWindowV1,
 } from "../utils/workbenchStoreLayout";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
-import type { PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchTab } from "./types";
+import type {
+  PersistedWorkbenchTemplateV1,
+  PersistedWorkbenchWindowV1,
+  SplitDirection,
+  WorkbenchDraft,
+  WorkbenchTab,
+  WorkbenchTemplateId,
+  WorkbenchTemplateState,
+} from "./types";
 import {
+  defaultWorkbenchTemplateState,
   loadWorkbenchDraftV1,
+  loadWorkbenchTemplateV1,
   loadWorkbenchWindowV1,
   saveWorkbenchDraftV1,
+  saveWorkbenchTemplateV1Immediate,
   saveWorkbenchWindowV1Immediate,
   workbenchDaemonKey,
 } from "./persistence";
@@ -64,6 +80,7 @@ export type WorkbenchStoreSnapshot = {
   persistEnabled: boolean;
   warnings: string[];
   window: PersistedWorkbenchWindowV1;
+  template: WorkbenchTemplateState;
   drafts: DraftSnapshot;
 };
 
@@ -73,6 +90,7 @@ export type WorkbenchShellSnapshot = {
   hydrated: boolean;
   warnings: string[];
   window: PersistedWorkbenchWindowV1;
+  template: WorkbenchTemplateState;
 };
 
 type WorkbenchStoreListener = () => void;
@@ -98,13 +116,17 @@ export class WorkbenchStore {
   private snapshot: WorkbenchStoreSnapshot;
   private persistEnabled = true;
   private persistTimer: number | null = null;
+  private templatePersistTimer: number | null = null;
   private draftTimers = new Map<string, number>();
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
   private layoutDirtyBeforeHydrate = false;
+  private templateDirtyBeforeHydrate = false;
   private seededFromSessionStorage = false;
+  private seededTemplateFromSessionStorage = false;
   private shellSnapshotCache: {
     window: PersistedWorkbenchWindowV1;
+    template: WorkbenchTemplateState;
     warnings: string[];
     hydrated: boolean;
     value: WorkbenchShellSnapshot;
@@ -120,6 +142,7 @@ export class WorkbenchStore {
       persistEnabled: true,
       warnings: [],
       window: defaultWindowState(),
+      template: defaultWorkbenchTemplateState(),
       drafts: { byKey: {}, loadedKeys: {} },
     };
 
@@ -127,6 +150,11 @@ export class WorkbenchStore {
     if (sessionWindow) {
       this.snapshot = { ...this.snapshot, window: sessionWindow };
       this.seededFromSessionStorage = true;
+    }
+    const sessionTemplate = readSessionTemplateV1(workspaceId, windowId);
+    if (sessionTemplate) {
+      this.snapshot = { ...this.snapshot, template: sessionTemplate.template };
+      this.seededTemplateFromSessionStorage = true;
     }
   }
 
@@ -138,13 +166,19 @@ export class WorkbenchStore {
   getSnapshot = (): WorkbenchStoreSnapshot => this.snapshot;
 
   getShellSnapshot = (): WorkbenchShellSnapshot => {
-    const { workspaceId, windowId, hydrated, warnings, window } = this.snapshot;
+    const { workspaceId, windowId, hydrated, warnings, window, template } = this.snapshot;
     const cache = this.shellSnapshotCache;
-    if (cache && cache.window === window && cache.warnings === warnings && cache.hydrated === hydrated) {
+    if (
+      cache &&
+      cache.window === window &&
+      cache.template === template &&
+      cache.warnings === warnings &&
+      cache.hydrated === hydrated
+    ) {
       return cache.value;
     }
-    const value: WorkbenchShellSnapshot = { workspaceId, windowId, hydrated, warnings, window };
-    this.shellSnapshotCache = { window, warnings, hydrated, value };
+    const value: WorkbenchShellSnapshot = { workspaceId, windowId, hydrated, warnings, window, template };
+    this.shellSnapshotCache = { window, template, warnings, hydrated, value };
     return value;
   };
 
@@ -164,6 +198,12 @@ export class WorkbenchStore {
     }
   }
 
+  private markTemplateDirty() {
+    if (!this.snapshot.hydrated) {
+      this.templateDirtyBeforeHydrate = true;
+    }
+  }
+
   private addWarning(msg: string) {
     if (this.snapshot.warnings.includes(msg)) return;
     this.snapshot = { ...this.snapshot, warnings: [...this.snapshot.warnings, msg] };
@@ -178,6 +218,17 @@ export class WorkbenchStore {
     writeSessionWindowV1(this.snapshot.workspaceId, this.snapshot.windowId, next);
     this.publish();
     if (!opts?.skipPersist) this.schedulePersistWindow(opts?.persistDelayMs);
+  }
+
+  private setTemplate(
+    next: WorkbenchTemplateState,
+    opts?: { skipPersist?: boolean; persistDelayMs?: number },
+  ) {
+    this.snapshot = { ...this.snapshot, template: next };
+    const payload: PersistedWorkbenchTemplateV1 = { v: 1, template: next };
+    writeSessionTemplateV1(this.snapshot.workspaceId, this.snapshot.windowId, payload);
+    this.publish();
+    if (!opts?.skipPersist) this.schedulePersistTemplate(opts?.persistDelayMs);
   }
 
   private schedulePersistWindow(delayMs?: number) {
@@ -204,12 +255,42 @@ export class WorkbenchStore {
     }, waitMs);
   }
 
+  private schedulePersistTemplate(delayMs?: number) {
+    if (!this.persistEnabled) return;
+    if (this.templatePersistTimer) window.clearTimeout(this.templatePersistTimer);
+    const waitMs = Math.max(0, Math.min(5_000, typeof delayMs === "number" ? delayMs : 250));
+    if (waitMs === 0) {
+      const { workspaceId, windowId, template } = this.snapshot;
+      saveWorkbenchTemplateV1Immediate(workspaceId, windowId, { v: 1, template }).catch((e: unknown) => {
+        this.persistEnabled = false;
+        this.snapshot = { ...this.snapshot, persistEnabled: false };
+        this.addWarning(`Workbench template persistence disabled: ${errorMessage(e)}`);
+      });
+      return;
+    }
+    this.templatePersistTimer = window.setTimeout(() => {
+      this.templatePersistTimer = null;
+      const { workspaceId, windowId, template } = this.snapshot;
+      saveWorkbenchTemplateV1Immediate(workspaceId, windowId, { v: 1, template }).catch((e: unknown) => {
+        this.persistEnabled = false;
+        this.snapshot = { ...this.snapshot, persistEnabled: false };
+        this.addWarning(`Workbench template persistence disabled: ${errorMessage(e)}`);
+      });
+    }, waitMs);
+  }
+
   private async hydrate() {
     const { workspaceId, windowId } = this.snapshot;
     try {
-      const loaded = await loadWorkbenchWindowV1(workspaceId, windowId);
-      if (loaded && !this.layoutDirtyBeforeHydrate && !this.seededFromSessionStorage) {
-        this.snapshot = { ...this.snapshot, window: loaded };
+      const [loadedWindow, loadedTemplate] = await Promise.all([
+        loadWorkbenchWindowV1(workspaceId, windowId),
+        loadWorkbenchTemplateV1(workspaceId, windowId),
+      ]);
+      if (loadedWindow && !this.layoutDirtyBeforeHydrate && !this.seededFromSessionStorage) {
+        this.snapshot = { ...this.snapshot, window: loadedWindow };
+      }
+      if (loadedTemplate && !this.templateDirtyBeforeHydrate && !this.seededTemplateFromSessionStorage) {
+        this.snapshot = { ...this.snapshot, template: loadedTemplate.template };
       }
     } catch (e: unknown) {
       this.persistEnabled = false;
@@ -273,6 +354,57 @@ export class WorkbenchStore {
     if (!leaf) return null;
     return getActiveTabFromLeaf(leaf);
   }
+
+  getTemplateState = (): WorkbenchTemplateState => this.snapshot.template;
+
+  setTemplateId = (templateId: WorkbenchTemplateId): boolean => {
+    if (this.snapshot.template.id === templateId) return false;
+    this.markTemplateDirty();
+    this.setTemplate(defaultWorkbenchTemplateState(templateId), { persistDelayMs: 0 });
+    return true;
+  };
+
+  setTemplateState = (
+    next: WorkbenchTemplateState | ((prev: WorkbenchTemplateState) => WorkbenchTemplateState),
+  ): boolean => {
+    const resolved = typeof next === "function" ? next(this.snapshot.template) : next;
+    if (resolved === this.snapshot.template) return false;
+    this.markTemplateDirty();
+    this.setTemplate(resolved, { persistDelayMs: 0 });
+    return true;
+  };
+
+  focusLeaf = (leafId: string): boolean => {
+    const id = String(leafId || "").trim();
+    if (!id) return false;
+    const win = this.snapshot.window;
+    const next = focusLeaf(win, id);
+    if (next === win) return false;
+    this.bumpNavToken();
+    this.markLayoutDirty();
+    this.setWindow(next, { persistDelayMs: 0 });
+    return true;
+  };
+
+  splitFocusedLeaf = (direction: SplitDirection): boolean => {
+    const next = splitFocusedLeaf(this.snapshot.window, direction);
+    if (next === this.snapshot.window) return false;
+    this.bumpNavToken();
+    this.markLayoutDirty();
+    this.setWindow(next, { persistDelayMs: 0 });
+    return true;
+  };
+
+  resizeSplit = (splitId: string, ratio: number): boolean => {
+    const id = String(splitId || "").trim();
+    if (!id) return false;
+    const win = this.snapshot.window;
+    const nextLayout = resizeSplitRatio(win.layout, id, ratio);
+    if (nextLayout === win.layout) return false;
+    this.markLayoutDirty();
+    this.setWindow({ ...win, layout: nextLayout }, { persistDelayMs: 250 });
+    return true;
+  };
 
   getNavToken = (): WorkbenchNavToken => this.navEpoch;
 

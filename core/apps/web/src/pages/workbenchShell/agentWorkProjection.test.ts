@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ChangeSet, Contribution, PullRequestRef } from "@ctx/types";
+import type { ChangeSet, Contribution, PullRequestRef, Task } from "@ctx/types";
+import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import { normalizeWorkspaceAgentWork } from "../../state/workspaceAgentWorkStore";
-import { summarizeAgentWorkForTask } from "./agentWorkProjection";
+import { projectAgentWorkForTask, projectWorkbenchTaskBoard, summarizeAgentWorkForTask } from "./agentWorkProjection";
 
 const pr = (number: number): PullRequestRef => ({
   provider: "github",
@@ -22,7 +23,55 @@ const contribution = (overrides: Partial<Contribution> & Pick<Contribution, "id"
   ...overrides,
 });
 
+const taskItem = (
+  id: string,
+  overrides: {
+    task?: Partial<Task>;
+    sortAtMs?: number;
+  } = {},
+): WorkspaceActiveSnapshotItem => ({
+  id,
+  task: {
+    id,
+    workspace_id: "workspace-1",
+    title: id,
+    status: "ready",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides.task,
+  },
+  sessions: [],
+  sort_at: null,
+  sortAtMs: overrides.sortAtMs ?? 0,
+});
+
 describe("agentWorkProjection", () => {
+  it("projects an empty task detail for an empty graph", () => {
+    const graph = normalizeWorkspaceAgentWork({
+      change_sets: [],
+      contributions: [],
+    });
+
+    expect(projectAgentWorkForTask(graph, "task-missing")).toEqual({
+      taskId: "task-missing",
+      changeSetCount: 0,
+      contributionCount: 0,
+      linkedPullRequestCount: 0,
+      latestUpdateTimestamp: null,
+      counts: {
+        changeSets: 0,
+        contributions: 0,
+        linkedPullRequests: 0,
+      },
+      changeSetIds: [],
+      contributionIds: [],
+      linkedPullRequestKeys: [],
+      changeSets: [],
+      contributions: [],
+      linkedPullRequests: [],
+    });
+  });
+
   it("summarizes task-linked change sets, contributions, pull requests, and latest timestamp", () => {
     const graph = normalizeWorkspaceAgentWork({
       change_sets: [
@@ -220,5 +269,148 @@ describe("agentWorkProjection", () => {
       linkedPullRequestCount: 1,
       latestUpdateTimestamp: "2026-01-07T11:00:00Z",
     });
+  });
+
+  it("projects direct change_set_id links with records, counts, and timestamps", () => {
+    const graph = normalizeWorkspaceAgentWork({
+      change_sets: [
+        changeSet({
+          id: "change-set-direct",
+          created_at: "2026-02-01T10:00:00Z",
+          updated_at: "2026-02-02T10:00:00Z",
+        }),
+      ],
+      contributions: [
+        contribution({
+          id: "direct-link",
+          change_set_id: "change-set-direct",
+          updated_at: "2026-02-03T10:00:00Z",
+          subject: { kind: "task", task_id: "task-direct" },
+          target: { kind: "system", label: "ctx" },
+        }),
+      ],
+    });
+
+    const detail = projectAgentWorkForTask(graph, "task-direct");
+
+    expect(detail.counts).toEqual({
+      changeSets: 1,
+      contributions: 1,
+      linkedPullRequests: 0,
+    });
+    expect(detail.changeSetIds).toEqual(["change-set-direct"]);
+    expect(detail.contributionIds).toEqual(["direct-link"]);
+    expect(detail.changeSets.map((record) => record.id)).toEqual(["change-set-direct"]);
+    expect(detail.contributions.map((record) => record.id)).toEqual(["direct-link"]);
+    expect(detail.latestUpdateTimestamp).toBe("2026-02-03T10:00:00Z");
+  });
+
+  it("projects change sets linked through subject and target endpoints", () => {
+    const graph = normalizeWorkspaceAgentWork({
+      change_sets: [
+        changeSet({ id: "change-set-subject" }),
+        changeSet({ id: "change-set-target", updated_at: "2026-02-04T10:00:00Z" }),
+      ],
+      contributions: [
+        contribution({
+          id: "target-endpoint-link",
+          subject: { kind: "task", task_id: "task-endpoints" },
+          target: { kind: "change-set", id: "change-set-target" },
+        }),
+        contribution({
+          id: "subject-endpoint-link",
+          subject: { kind: "change_set", change_set_id: "change-set-subject" },
+          target: { kind: "task", task_id: "task-endpoints" },
+        }),
+      ],
+    });
+
+    const detail = projectAgentWorkForTask(graph, "task-endpoints");
+
+    expect(detail.changeSetIds).toEqual(["change-set-subject", "change-set-target"]);
+    expect(detail.contributionIds).toEqual(["subject-endpoint-link", "target-endpoint-link"]);
+    expect(projectAgentWorkForTask(graph, "task-missing").changeSetIds).toEqual([]);
+    expect(detail.linkedPullRequestKeys).toEqual([]);
+  });
+
+  it("aggregates pull requests from change sets and contributions without duplicates", () => {
+    const pullRequest = pr(50);
+    const graph = normalizeWorkspaceAgentWork({
+      change_sets: [
+        changeSet({
+          id: "change-set-pr",
+          updated_at: "2026-03-01T10:00:00Z",
+          pull_requests: [
+            { pull_request: pullRequest, kind: "result", state: "open" },
+            { pull_request: pullRequest, kind: "result", state: "open" },
+          ],
+        }),
+      ],
+      contributions: [
+        contribution({
+          id: "task-change-set",
+          subject: { kind: "task", task_id: "task-pr" },
+          target: { kind: "change_set", change_set_id: "change-set-pr" },
+        }),
+        contribution({
+          id: "task-pr-link",
+          updated_at: "2026-03-02T10:00:00Z",
+          subject: { kind: "task", task_id: "task-pr" },
+          target: { kind: "pull_request", pull_request: pullRequest },
+        }),
+      ],
+    });
+
+    const detail = projectAgentWorkForTask(graph, "task-pr");
+
+    expect(detail.linkedPullRequestCount).toBe(1);
+    expect(detail.linkedPullRequests).toHaveLength(1);
+    expect(detail.linkedPullRequests[0]).toMatchObject({
+      pullRequest,
+      changeSetIds: ["change-set-pr"],
+      contributionIds: ["task-pr-link"],
+      latestUpdateTimestamp: "2026-03-02T10:00:00Z",
+    });
+    expect(detail.linkedPullRequests[0].links).toEqual([{ pull_request: pullRequest, kind: "result", state: "open" }]);
+  });
+
+  it("groups task list items into deterministic board lanes", () => {
+    const graph = normalizeWorkspaceAgentWork({
+      change_sets: [
+        changeSet({
+          id: "review-change-set",
+          pull_requests: [{ pull_request: pr(60), kind: "result" }],
+        }),
+      ],
+      contributions: [
+        contribution({
+          id: "review-link",
+          subject: { kind: "task", task_id: "review-task" },
+          target: { kind: "change_set", change_set_id: "review-change-set" },
+        }),
+      ],
+    });
+    const board = projectWorkbenchTaskBoard(graph, [
+      taskItem("other-task", { sortAtMs: 4 }),
+      taskItem("active-task-low", { task: { status: "running" }, sortAtMs: 1 }),
+      taskItem("active-task-high", { task: { has_active_session: true }, sortAtMs: 3 }),
+      taskItem("archived-task", { task: { archived_at: "2026-03-01T00:00:00Z" }, sortAtMs: 5 }),
+      taskItem("review-task", { sortAtMs: 2 }),
+    ]);
+
+    expect(board.lanes.map((lane) => lane.id)).toEqual(["active", "needs-review", "archived", "other"]);
+    expect(board.lanes.find((lane) => lane.id === "active")?.cards.map((card) => card.taskId)).toEqual([
+      "active-task-high",
+      "active-task-low",
+    ]);
+    // PR-linked agent work is a temporary review signal until task summaries expose an explicit review state.
+    expect(board.lanes.find((lane) => lane.id === "needs-review")?.cards.map((card) => card.taskId)).toEqual([
+      "review-task",
+    ]);
+    expect(board.lanes.find((lane) => lane.id === "archived")?.cards.map((card) => card.taskId)).toEqual([
+      "archived-task",
+    ]);
+    expect(board.lanes.find((lane) => lane.id === "other")?.cards.map((card) => card.taskId)).toEqual(["other-task"]);
+    expect(board.cardsByTaskId["review-task"].agentWorkSummary.linkedPullRequestCount).toBe(1);
   });
 });
