@@ -511,6 +511,7 @@ rust_binary(
         "@crates//:chrono",
         "@crates//:clap",
         "@crates//:rustls",
+        "@crates//:serde_json",
         "@crates//:tokio",
         "@crates//:tracing",
         "@crates//:tracing-appender",

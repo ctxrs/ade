@@ -18,8 +18,8 @@ impl Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    #[command(name = "agent-work")]
-    AgentWork(AgentWorkCommand),
+    #[command(name = "work", visible_alias = "agent-work")]
+    Work(AgentWorkCommand),
     Serve {
         #[arg(long, action = clap::ArgAction::Append)]
         bind: Vec<String>,

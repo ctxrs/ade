@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
                 ctx_resource_utilization::process_limits::RECOMMENDED_DAEMON_OPEN_FILE_SOFT_LIMIT,
             ),
         ),
-        Commands::AgentWork(_) | Commands::Init { .. } | Commands::SelfUpdate { .. } => None,
+        Commands::Work(_) | Commands::Init { .. } | Commands::SelfUpdate { .. } => None,
     };
 
     let _file_guard = logging::init_logging_for_command(&cli.command)?;
@@ -49,8 +49,8 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::AgentWork(command) => {
-            agent_work_cli::run(command);
+        Commands::Work(command) => {
+            agent_work_cli::run(command)?;
         }
         Commands::Serve { bind, data_dir } => {
             ctx_http::serve(bind, data_dir).await?;

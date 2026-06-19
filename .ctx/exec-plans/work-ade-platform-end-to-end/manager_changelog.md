@@ -39,9 +39,15 @@ Record each local commit or integrated worker handoff here.
     dense task lists, and multipane split/focus/resize states.
   - Fixes the HTML topbar wrapper so the topbar host owns the shell grid area
     and the template switcher does not collapse into the sidebar column.
-- pending - Add repo-local plugin SDK.
+- `308fa83` - Add repo-local plugin SDK.
   - Adds `@ctx/plugin-sdk` as a repo-local, publishable-later TypeScript package
     for current v1 plugin manifests.
   - Adds ACP provider, review panel/command, importer action, deferred
     contribution examples, JSON-safe validation, adversarial tests, and Bazel
     coverage in the web test taxonomy.
+- pending - Add local Work CLI checks.
+  - Renames the public local CLI surface to `ctx work` while keeping
+    `ctx agent-work` as a compatibility alias.
+  - Adds local schema listing/printing, structural JSON validation, safe
+    metadata inspection, redaction preview, durable local diagnostics, and
+    explicit not-implemented diagnostics for list/show/capture/export/import.

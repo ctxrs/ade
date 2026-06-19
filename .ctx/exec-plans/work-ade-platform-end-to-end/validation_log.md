@@ -64,3 +64,24 @@ These baseline results must be rerun after subsequent implementation phases.
   - Result: passed, 2 Bazel targets. Initial failures exposed missing
     repo-level `tsconfig.json` runfiles wiring; fixed by adding a root
     `tsconfig_json` `js_library`.
+
+## Work CLI Slice
+
+- Before commit:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-http agent_work_cli`
+  - Result: failed after compiling all `ctx-http` test targets; 11 passed / 1
+    failed in the `ctx` binary unit tests. Failure was a case-sensitive
+    assertion in the new import-stub diagnostic test, not a product failure.
+- Before commit:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-http --bin ctx agent_work_cli`
+  - Result: passed, 12 tests. Conservative cap: MemoryMax=24G, one cargo job,
+    one test thread.
+- Before commit:
+  - `.buildkite/run-bazel.sh test //core/crates/ctx-http:bin_tests_root_help //core/crates/ctx-http:bin_tests_agent_work_help //core/crates/ctx-http:bin_tests_agent_work_schema`
+  - Result: failed to build because the Bazel `ctx` binary target was missing
+    its explicit `@crates//:serde_json` dependency. Cargo had already passed
+    because the Cargo manifest had the dependency.
+- Before commit:
+  - `.buildkite/run-bazel.sh test --jobs=2 //core/crates/ctx-http:bin_tests_root_help //core/crates/ctx-http:bin_tests_agent_work_help //core/crates/ctx-http:bin_tests_agent_work_schema`
+  - Result: passed, 3 Bazel smoke targets. The rerun used `--jobs=2` to reduce
+    local memory pressure.
