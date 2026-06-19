@@ -1136,120 +1136,11 @@ fn validate_work_bundle(value: &Value) -> Result<()> {
 }
 
 fn validate_plugin_manifest(value: &Value) -> Result<()> {
-    reject_plugin_manifest_unknown_properties(value)?;
     let manifest: PluginManifest =
         serde_json::from_value(value.clone()).context("plugin-manifest failed to deserialize")?;
     manifest
         .validate()
         .map_err(|error| anyhow::anyhow!("plugin-manifest failed structural validation: {error:?}"))
-}
-
-fn reject_plugin_manifest_unknown_properties(value: &Value) -> Result<()> {
-    validate_allowed_object_keys(
-        value,
-        "$",
-        &[
-            "schema_version",
-            "id",
-            "name",
-            "version",
-            "description",
-            "entrypoints",
-            "contributes",
-            "compatibility",
-        ],
-    )?;
-
-    if let Some(entrypoints) = value.get("entrypoints").and_then(Value::as_array) {
-        for (index, entrypoint) in entrypoints.iter().enumerate() {
-            validate_allowed_object_keys(
-                entrypoint,
-                &format!("$.entrypoints[{index}]"),
-                &["id", "kind", "command", "args", "cwd", "environment"],
-            )?;
-        }
-    }
-
-    if let Some(contributes) = value.get("contributes") {
-        validate_allowed_object_keys(
-            contributes,
-            "$.contributes",
-            &[
-                "providers",
-                "runtimes",
-                "commands",
-                "collectors",
-                "observers",
-                "ui_surfaces",
-            ],
-        )?;
-        validate_plugin_named_contribution_keys(contributes, "providers", &["capabilities"])?;
-        validate_plugin_named_contribution_keys(contributes, "runtimes", &["capabilities"])?;
-        validate_plugin_command_contribution_keys(contributes)?;
-        validate_plugin_named_contribution_keys(contributes, "collectors", &["events"])?;
-        validate_plugin_named_contribution_keys(contributes, "observers", &["events"])?;
-        validate_plugin_named_contribution_keys(
-            contributes,
-            "ui_surfaces",
-            &["surface", "contexts"],
-        )?;
-    }
-
-    if let Some(compatibility) = value.get("compatibility") {
-        validate_allowed_object_keys(
-            compatibility,
-            "$.compatibility",
-            &["min_ctx_version", "capabilities"],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn validate_plugin_named_contribution_keys(
-    contributes: &Value,
-    field: &str,
-    extra_allowed_keys: &[&str],
-) -> Result<()> {
-    let Some(contributions) = contributes.get(field).and_then(Value::as_array) else {
-        return Ok(());
-    };
-    let mut allowed = vec!["id", "name", "description", "entrypoint"];
-    allowed.extend_from_slice(extra_allowed_keys);
-    for (index, contribution) in contributions.iter().enumerate() {
-        validate_allowed_object_keys(
-            contribution,
-            &format!("$.contributes.{field}[{index}]"),
-            &allowed,
-        )?;
-    }
-    Ok(())
-}
-
-fn validate_plugin_command_contribution_keys(contributes: &Value) -> Result<()> {
-    let Some(commands) = contributes.get("commands").and_then(Value::as_array) else {
-        return Ok(());
-    };
-    for (index, command) in commands.iter().enumerate() {
-        validate_allowed_object_keys(
-            command,
-            &format!("$.contributes.commands[{index}]"),
-            &["id", "title", "description", "category", "entrypoint"],
-        )?;
-    }
-    Ok(())
-}
-
-fn validate_allowed_object_keys(value: &Value, path: &str, allowed_keys: &[&str]) -> Result<()> {
-    let object = value
-        .as_object()
-        .with_context(|| format!("{path} must be a JSON object"))?;
-    for key in object.keys() {
-        if !allowed_keys.contains(&key.as_str()) {
-            bail!("{path}.{key} is not part of the plugin-manifest schema");
-        }
-    }
-    Ok(())
 }
 
 fn validate_required_fields(value: &Value, path: &str, fields: &[&str]) -> Result<()> {
@@ -1805,6 +1696,81 @@ mod tests {
             error.contains("unexpected") || error.contains("plugin-manifest failed"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn validate_accepts_declarative_plugin_manifest_structure() {
+        let value = json!({
+            "schema_version": 1,
+            "id": "example.agent-tools",
+            "name": "Example Agent Tools",
+            "version": "0.1.0",
+            "entrypoints": [
+                {
+                    "id": "main",
+                    "command": "node"
+                }
+            ],
+            "contributes": {
+                "commands": [
+                    {
+                        "id": "example.agent-tools.say_hello",
+                        "title": "Say hello",
+                        "entrypoint": "main"
+                    }
+                ],
+                "templates": [
+                    {
+                        "id": "example.agent-tools.template",
+                        "name": "Template",
+                        "title": "Example template",
+                        "template": "host.example-template"
+                    }
+                ],
+                "toolbar_actions": [
+                    {
+                        "id": "example.agent-tools.say_hello_toolbar",
+                        "name": "Say hello toolbar",
+                        "title": "Say hello",
+                        "command": "example.agent-tools.say_hello"
+                    }
+                ],
+                "artifact_renderers": [
+                    {
+                        "id": "example.agent-tools.text_artifact",
+                        "name": "Text artifact",
+                        "artifact_types": ["text/plain"],
+                        "renderer": "host.text-artifact"
+                    }
+                ],
+                "card_renderers": [
+                    {
+                        "id": "example.agent-tools.work_summary_card",
+                        "name": "Work summary card",
+                        "card": "work.summary",
+                        "renderer": "host.work-summary-card"
+                    }
+                ],
+                "detail_sections": [
+                    {
+                        "id": "example.agent-tools.work_summary_section",
+                        "name": "Work summary section",
+                        "section": "work.summary",
+                        "renderer": "host.work-summary-section"
+                    }
+                ],
+                "review_sections": [
+                    {
+                        "id": "example.agent-tools.gate_state_section",
+                        "name": "Gate state section",
+                        "section": "review.gate-state",
+                        "renderer": "host.gate-state-section"
+                    }
+                ]
+            }
+        });
+
+        validate_value(AgentWorkSchemaKind::PluginManifest, &value).unwrap();
     }
 
     #[test]
