@@ -140,3 +140,13 @@ These baseline results must be rerun after subsequent implementation phases.
 - Manager validation:
   - `.buildkite/run-bazel.sh test --jobs=2 //core/crates/ctx-daemon:unit_tests_daemon`
   - Result: passed, 1 Bazel daemon unit target.
+
+## Harness Starter Hooks Slice
+
+- Worker validation:
+  - `git diff --check`
+  - `git diff --check HEAD~1..HEAD`
+  - Result: passed on worker branch `ctx/harness-hooks-20260619`.
+- Manager integration:
+  - `git cherry-pick b6ca1d93022338564f1bb8e0cf353f59d5d601ec`
+  - Result: passed; integrated as `725edbf`.

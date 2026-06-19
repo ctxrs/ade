@@ -13,7 +13,6 @@ This directory contains selected ctx documentation for GitHub browsing.
 - [ACP Provider Plugin Contract](acp-provider-plugin-contract.mdx)
 - [ACP v1 Conformance Target](acp-v1-conformance-target.mdx)
 - [Plugin Contribution Contract](plugin-contribution-contract.mdx)
-- [Harness Starter Boundaries](examples/harness-starter-boundaries.md)
 - [What Is a Worktree?](what-is-a-worktree.mdx)
 - [Containerization](containerization.mdx)
 
@@ -27,5 +26,9 @@ This directory contains selected ctx documentation for GitHub browsing.
 - `troubleshooting/`: help and support content
 - `legal/`: privacy, security, and terms pages
 - `blog/`: selected long-form writing
+
+## Examples
+
+- [Harness Starter Boundaries](examples/harness-starter-boundaries.md)
 
 Full rendered docs: https://ctx.rs

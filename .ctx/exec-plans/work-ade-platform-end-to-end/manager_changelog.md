@@ -71,10 +71,16 @@ Record each local commit or integrated worker handoff here.
     authority-bearing.
   - Keeps duplicate command/UI IDs loaded but emits warnings because current
     execution and registry surfaces are plugin-qualified.
-- pending - Preserve last-good plugin reloads.
+- `14d28c6` - Preserve last-good plugin reloads.
   - Keeps the last good loaded plugin active across recoverable manifest
     read/parse/validation failures.
   - Runs duplicate plugin/provider/runtime finalization after preservation so
     last-good recovery cannot bypass authority-bearing collision checks.
   - Adds regression tests for bad-manifest recovery, duplicate plugin ID, and
-    duplicate provider ID interactions.
+    duplicate provider/runtime ID interactions.
+- `725edbf` - Define ACP harness starter hooks.
+  - Integrated worker branch `ctx/harness-hooks-20260619`.
+  - Documents the future harness starter kit as ACP-compatible modular
+    primitives rather than a new ctx-specific agent protocol.
+  - Adds example module boundaries for optional shell/file/edit/sandbox,
+    transcript, artifact, and Work capture helpers.

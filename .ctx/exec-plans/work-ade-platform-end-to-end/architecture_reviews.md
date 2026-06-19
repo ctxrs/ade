@@ -44,3 +44,16 @@ Reviewer agents:
   overlapping plugin/provider/runtime workers should start until each write set
   is assigned explicitly.
 - Current contract base after this review is `8123c74`.
+
+## Harness Starter Hooks Review
+
+- Reviewer Linnaeus (`019ee13c-cf32-7380-99d1-da5531f859ae`) reviewed commit
+  `725edbf` and found no blockers.
+- Sign-off: OK to keep integrated.
+- Findings: the docs preserve ACP as the public provider protocol, keep CRP as
+  internal/native compatibility, describe the harness starter as optional future
+  scaffolding rather than a competing protocol, exclude hosted/team/enterprise
+  scope, and avoid trademark/positioning risk.
+- Non-blocking docs organization suggestion: move the harness boundary link out
+  of the top docs "Start here" list. The manager applied this by placing the
+  link under an Examples heading in `docs/README.md`.
