@@ -61,7 +61,6 @@ describe("pluginWorkbenchContributionProjection", () => {
           pluginRevision: "rev-z",
         },
         compatibility: { kind: "compatible" },
-        approvedActionIds: [],
       },
       {
         id: "plugin:alpha.tools/status",
@@ -80,7 +79,6 @@ describe("pluginWorkbenchContributionProjection", () => {
           pluginRevision: "rev-a",
         },
         compatibility: { kind: "compatible" },
-        approvedActionIds: [],
       },
     ]);
   });
@@ -162,12 +160,12 @@ describe("pluginWorkbenchContributionProjection", () => {
       revision: 1,
       ui_surfaces: [
         {
-          plugin_id: "review.tools",
+          plugin_id: "review/tools",
           plugin_name: "Review Tools",
           plugin_version: "0.1.0",
           plugin_path: "/plugins/review/ctx-plugin.json",
           contribution: {
-            id: "panel",
+            id: "panel/main",
             name: "Review Panel",
             surface: "panel",
             entrypoint: "main",
@@ -179,17 +177,16 @@ describe("pluginWorkbenchContributionProjection", () => {
     const projection = projectWorkbenchContributionProjection({
       loadState: { kind: "ready" },
       registry,
-      activeTemplateId: "plugin:review.tools/panel",
+      activeTemplateId: "plugin:review%2Ftools/panel%2Fmain",
     });
 
     expect(projection).toMatchObject({
       kind: "ready",
-      effectiveTemplateId: "plugin:review.tools/panel",
+      effectiveTemplateId: "plugin:review%2Ftools/panel%2Fmain",
       fallback: null,
       activeCandidate: {
-        id: "plugin:review.tools/panel",
+        id: "plugin:review%2Ftools/panel%2Fmain",
         entrypoint: "main",
-        approvedActionIds: [],
       },
     });
   });
@@ -198,7 +195,7 @@ describe("pluginWorkbenchContributionProjection", () => {
     const projection = projectWorkbenchContributionProjection({
       loadState: { kind: "ready" },
       registry: { revision: 3, ui_surfaces: [] },
-      activeTemplateId: "plugin:removed.tools/review",
+      activeTemplateId: "plugin:removed%2Ftools/review%2Fpanel",
     });
 
     expect(projection).toEqual({
@@ -207,10 +204,10 @@ describe("pluginWorkbenchContributionProjection", () => {
       activeCandidate: null,
       fallback: {
         kind: "removed_plugin",
-        requestedTemplateId: "plugin:removed.tools/review",
+        requestedTemplateId: "plugin:removed%2Ftools/review%2Fpanel",
         fallbackTemplateId: "classic",
-        pluginId: "removed.tools",
-        contributionId: "review",
+        pluginId: "removed/tools",
+        contributionId: "review/panel",
       },
       effectiveTemplateId: "classic",
     });
@@ -252,13 +249,19 @@ describe("pluginWorkbenchContributionProjection", () => {
   });
 
   it("round-trips plugin-qualified Workbench IDs", () => {
-    const id = toWorkbenchPluginTemplateId("review.tools", "panel");
+    const id = toWorkbenchPluginTemplateId("review/tools", "panel/main");
 
-    expect(id).toBe("plugin:review.tools/panel");
+    expect(id).toBe("plugin:review%2Ftools/panel%2Fmain");
     expect(isWorkbenchPluginTemplateId(id)).toBe(true);
     expect(parseWorkbenchPluginTemplateId(id)).toEqual({
-      pluginId: "review.tools",
-      contributionId: "panel",
+      pluginId: "review/tools",
+      contributionId: "panel/main",
     });
+  });
+
+  it("rejects malformed plugin-qualified Workbench IDs", () => {
+    expect(isWorkbenchPluginTemplateId("plugin:review.tools/panel/extra")).toBe(false);
+    expect(isWorkbenchPluginTemplateId("plugin:review.tools")).toBe(false);
+    expect(isWorkbenchPluginTemplateId("plugin:%E0%A4%A/panel")).toBe(false);
   });
 });

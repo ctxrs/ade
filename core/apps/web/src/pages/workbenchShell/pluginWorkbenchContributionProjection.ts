@@ -39,7 +39,6 @@ export type WorkbenchContributionCandidate = {
   entrypoint: string | null;
   source: WorkbenchContributionSource;
   compatibility: WorkbenchContributionCompatibility;
-  approvedActionIds: string[];
 };
 
 export type WorkbenchContributionFallback =
@@ -133,24 +132,55 @@ const candidateSortKey = (entry: WorkbenchContributionCandidate): string =>
     entry.id.toLowerCase(),
   ].join("\0");
 
+const PLUGIN_TEMPLATE_ID_PREFIX = "plugin:";
+const PLUGIN_TEMPLATE_ID_SEPARATOR = "/";
+
+const encodePluginTemplateIdPart = (value: string): string => encodeURIComponent(value);
+
+const decodePluginTemplateIdPart = (value: string): string | null => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+};
+
+const parsePluginTemplateIdParts = (
+  value: WorkbenchTemplateId | string,
+): { pluginId: string; contributionId: string } | null => {
+  if (!value.startsWith(PLUGIN_TEMPLATE_ID_PREFIX)) return null;
+
+  const body = value.slice(PLUGIN_TEMPLATE_ID_PREFIX.length);
+  const separator = body.indexOf(PLUGIN_TEMPLATE_ID_SEPARATOR);
+  if (separator <= 0 || separator !== body.lastIndexOf(PLUGIN_TEMPLATE_ID_SEPARATOR) || separator === body.length - 1) {
+    return null;
+  }
+
+  const pluginId = decodePluginTemplateIdPart(body.slice(0, separator));
+  const contributionId = decodePluginTemplateIdPart(body.slice(separator + 1));
+  if (!pluginId || !contributionId) return null;
+
+  return { pluginId, contributionId };
+};
+
 export const isWorkbenchPluginTemplateId = (value: WorkbenchTemplateId | string): value is WorkbenchPluginTemplateId =>
-  /^plugin:[^/]+\/[^/]+$/.test(value);
+  parsePluginTemplateIdParts(value) !== null;
 
 export const parseWorkbenchPluginTemplateId = (
   value: WorkbenchPluginTemplateId,
 ): { pluginId: string; contributionId: string } => {
-  const body = value.slice("plugin:".length);
-  const separator = body.indexOf("/");
-  return {
-    pluginId: body.slice(0, separator),
-    contributionId: body.slice(separator + 1),
-  };
+  const parsed = parsePluginTemplateIdParts(value);
+  if (!parsed) throw new Error(`Invalid Workbench plugin template ID: ${value}`);
+  return parsed;
 };
 
 export const toWorkbenchPluginTemplateId = (
   pluginId: string,
   contributionId: string,
-): WorkbenchPluginTemplateId => `plugin:${pluginId}/${contributionId}`;
+): WorkbenchPluginTemplateId =>
+  `${PLUGIN_TEMPLATE_ID_PREFIX}${encodePluginTemplateIdPart(pluginId)}${PLUGIN_TEMPLATE_ID_SEPARATOR}${encodePluginTemplateIdPart(
+    contributionId,
+  )}`;
 
 export const projectPluginWorkbenchContributions = (
   registry: PluginExtensionRegistry,
@@ -199,7 +229,6 @@ const projectPluginWorkbenchContribution = (
       pluginRevision: normalizeText(registration.plugin_revision) || null,
     },
     compatibility,
-    approvedActionIds: [],
   };
 };
 
