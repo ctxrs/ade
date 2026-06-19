@@ -43,3 +43,4 @@ Reviewer agents:
 - Worker write ownership remains manager-enforced per spawned worker; no broad
   overlapping plugin/provider/runtime workers should start until each write set
   is assigned explicitly.
+- Current contract base after this review is `8123c74`.

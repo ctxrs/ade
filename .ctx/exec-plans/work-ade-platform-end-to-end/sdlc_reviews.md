@@ -17,5 +17,5 @@ Record process, worktree, validation, and agent-workflow reviews.
 
 ## Contract Base
 
-- Broad implementation workers must base on `3d1b60a` unless the manager records
+- Broad implementation workers must base on `8123c74` unless the manager records
   a later contract base.
