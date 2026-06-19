@@ -144,3 +144,11 @@ Record each local commit or integrated worker handoff here.
   - Aligns provider labels with the harness catalog, covers provider/plugin
     command collision insertion with namespaced plugin tokens, and prevents
     duplicate autocomplete keys if duplicate descriptors leak through.
+- `aa0db81` - Add local plugin CLI dev loop.
+  - Adds `ctx plugin validate`, `ctx plugin list`, and `ctx plugin reload` as
+    local scanner/dev-loop commands on the single public `ctx` binary.
+  - Routes validation through the shared Rust plugin manifest model and keeps
+    list/reload output bounded to inventory metadata and diagnostics.
+  - Labels list/reload output as `local_scan`, aligns default/env root
+    semantics with the daemon runtime, and documents that this slice does not
+    mutate a running daemon.
