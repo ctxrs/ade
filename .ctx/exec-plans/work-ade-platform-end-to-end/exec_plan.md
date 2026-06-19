@@ -703,9 +703,15 @@ CLI/dev commands:
 
 - `ctx plugin list`
 - `ctx plugin validate <path>`
-- `ctx plugin reload [id]`
+- `ctx plugin reload`
 - `ctx plugin dev <path>`
 - `ctx plugin logs <id>`
+
+The first local CLI slice only implements scanner commands. `list` and `reload`
+run a local inventory scan, emit `mode: local_scan`, and do not mutate a running
+daemon. Daemon-connected reload/apply commands must be introduced with explicit
+wording and tests so users do not confuse offline diagnostics with live ADE
+state.
 
 Acceptance:
 

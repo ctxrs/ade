@@ -51,7 +51,10 @@ pub(crate) fn init_logging_for_command(
             };
             Some(data_root.join("logs"))
         }
-        Commands::Work(_) | Commands::Init { .. } | Commands::SelfUpdate { .. } => None,
+        Commands::Work(_)
+        | Commands::Plugin(_)
+        | Commands::Init { .. }
+        | Commands::SelfUpdate { .. } => None,
     };
 
     let Some(logs_dir) = logs_dir else {

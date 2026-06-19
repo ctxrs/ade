@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::agent_work_cli::AgentWorkCommand;
+use crate::plugin_cli::PluginCommand;
 
 #[derive(Parser)]
 #[command(name = "ctx")]
@@ -20,6 +21,7 @@ impl Cli {
 pub(crate) enum Commands {
     #[command(name = "work", visible_alias = "agent-work")]
     Work(AgentWorkCommand),
+    Plugin(PluginCommand),
     Serve {
         #[arg(long, action = clap::ArgAction::Append)]
         bind: Vec<String>,

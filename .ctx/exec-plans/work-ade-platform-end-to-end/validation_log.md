@@ -320,3 +320,32 @@ These baseline results must be rerun after subsequent implementation phases.
 - Manager validation:
   - `pnpm --dir core/apps/web typecheck`
   - Result: passed after `c9d0eb1`.
+
+## Local Plugin CLI Slice
+
+- Explorer:
+  - Nash (`019ee217-df9a-77e3-8b00-ee6b5db8f65e`) confirmed the daemon
+    already exposes inventory snapshot, extension registry, reload, command
+    execution, and provider-adapter sync primitives, but the public `ctx`
+    binary had no `ctx plugin` subcommand.
+- Worker implementation:
+  - Socrates (`019ee218-d021-7ad2-98c3-95d0327abe31`) added the initial
+    `ctx plugin validate/list/reload` patch in the manager branch worktree.
+- Reviewer:
+  - Epicurus (`019ee22c-c79e-7001-9fb2-8f3db819ba6e`) found no blockers, but
+    identified three corrections before commit: `reload` must be labeled as a
+    local scanner rather than a daemon mutation, empty `CTX_PLUGIN_ROOTS`
+    behavior must match the daemon, and human reload output should show roots.
+  - The manager applied all three corrections before validation.
+- Manager validation:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh fmt --manifest-path Cargo.toml --all`
+  - Result: passed through the host Cargo lock and low-I/O wrapper.
+- Manager validation:
+  - `git diff --check`
+  - Result: passed.
+- Manager validation:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-http --bin ctx plugin_cli`
+  - Result: passed, 8 tests. Covered manifest-file validation,
+    directory-manifest validation, invalid-manifest rejection, JSON list output,
+    empty `CTX_PLUGIN_ROOTS` daemon-parity behavior, JSON reload counts, and
+    human reload output naming `local_scan`, roots, and counts.

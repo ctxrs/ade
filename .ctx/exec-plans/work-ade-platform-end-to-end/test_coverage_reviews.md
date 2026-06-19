@@ -178,3 +178,20 @@ Record adversarial test coverage reviews and gaps.
   namespaced plugin slash commands.
 - Remaining gap: no browser/screen-reader audit yet for the visual source
   label pill; this should be included with the next Playwright screenshot pass.
+
+## Local Plugin CLI Review
+
+- Added binary-unit coverage for `ctx plugin list` clap parsing with repeated
+  roots and JSON mode.
+- Added manifest validation coverage for direct manifest files, plugin
+  directories, and invalid manifests rejected through the shared Rust manifest
+  model.
+- Added inventory JSON coverage for plugin id, load status, manifest path, and
+  diagnostics.
+- Added regression coverage for empty `CTX_PLUGIN_ROOTS` matching daemon root
+  semantics rather than falling back to the default root.
+- Added reload output coverage for JSON counts and human `local_scan` output
+  that names scanned roots and load-status counts.
+- Remaining gaps: daemon-connected reload/apply, in-flight command behavior,
+  plugin dev process management, plugin logs, and ADE-visible diagnostics need
+  separate tests when those lifecycle features are implemented.

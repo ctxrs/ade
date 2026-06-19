@@ -156,6 +156,32 @@ Plugin reload must handle:
 
 UI reload must not kill daemon-owned active sessions.
 
+## Local CLI Dev Loop
+
+The public local plugin workflow uses the single `ctx` binary:
+
+- `ctx plugin validate <manifest-or-directory>`;
+- `ctx plugin list [--root <path> ...] [--json]`;
+- `ctx plugin reload [--root <path> ...] [--json]`.
+
+`validate` reads a manifest file directly, or the first supported manifest name
+inside a plugin directory (`ctx-plugin.json`, then `plugin.json`), parses it
+through the Rust manifest model, and runs the same manifest validation used by
+the daemon loader.
+
+`list` and `reload` are local scanner commands. They do not contact or mutate a
+running daemon. Their output is labeled `local_scan` so users can distinguish
+offline diagnostics from daemon/UI hot reload. The root order is:
+
+- explicit `--root` values;
+- `CTX_PLUGIN_ROOTS`, with the same empty-entry normalization as the daemon;
+- `<prepared CTX_DATA_ROOT or ~/.ctx>/plugins`.
+
+The daemon-owned hot-reload path remains responsible for active-session safety,
+provider adapter sync, last-good preservation, and ADE updates. Future CLI
+commands that mutate a running daemon should use a different, explicit verb or
+option so local scanner behavior stays unsurprising.
+
 ## SDK Shape
 
 The repo-local SDK should start narrow and typed:

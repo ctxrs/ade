@@ -110,3 +110,20 @@ Record plugin, import/export, path, redaction, and capability security reviews.
   invocation still requires the namespaced plugin slash token.
 - Residual risk: future executable UI/webview contributions and richer
   diagnostics surfaces need separate security review before local-done.
+
+## Local Plugin CLI Slice
+
+- `ctx plugin validate` parses through the strict Rust manifest model and runs
+  manifest validation. Unknown fields and invalid contribution targets are
+  rejected by the shared model rather than accepted by ad hoc CLI parsing.
+- `ctx plugin list --json` and `ctx plugin reload --json` emit inventory
+  metadata only: plugin id, load status, manifest path, and diagnostics. They
+  do not emit plugin manifests, entrypoint command args, cwd, or environment
+  variables.
+- `list` and `reload` are local scanner commands. They do not execute plugin
+  entrypoints and do not mutate a live daemon, active sessions, provider
+  adapter ownership, or Work records.
+- Residual risk: daemon-connected plugin reload/apply, plugin log streaming,
+  executable UI/webview contributions, and plugin dev-mode process management
+  need separate permission, provenance, redaction, and lifecycle review before
+  local-done.

@@ -109,3 +109,21 @@ Reviewer agents:
   `resolvePluginCommandMessage`.
 - Residual architecture note: richer command collision diagnostics can later
   consume daemon plugin diagnostics, but this UI slice stays presentation-only.
+
+## Local Plugin CLI Review
+
+- Reviewer Epicurus confirmed the CLI validates manifests through the shared
+  Rust `PluginManifest` model plus `manifest.validate()`, matching the daemon
+  loader's core manifest contract.
+- The manager narrowed `ctx plugin list` and `ctx plugin reload` to explicit
+  local scanner semantics. Both human and JSON output now include
+  `local_scan`, so users do not confuse offline diagnostics with a live daemon
+  reload.
+- Default root resolution now delegates to `PluginInventoryRuntime::new` after
+  preparing the data root. That keeps explicit roots, `CTX_PLUGIN_ROOTS`, empty
+  env entries, and fallback data-root behavior aligned with daemon inventory
+  loading instead of maintaining duplicate root logic in the CLI.
+- The slice intentionally does not introduce daemon-connected reload/apply,
+  per-plugin reload, plugin dev processes, or log streaming. Those should be
+  added as separate lifecycle-aware slices that preserve active-session safety
+  and provider adapter sync semantics.
