@@ -142,6 +142,15 @@ const resolvePlaywrightBrowserName = (): PlaywrightBrowserName => {
   );
 };
 
+const resolvePlaywrightBrowserChannel = (): string | undefined => {
+  const raw = String(process.env.CTX_E2E_BROWSER_CHANNEL ?? "").trim();
+  return raw || undefined;
+};
+
+const resolvePlaywrightVideoMode = (): "off" | "retain-on-failure" => {
+  return parseBool(process.env.CTX_E2E_DISABLE_VIDEO) ? "off" : "retain-on-failure";
+};
+
 const resolveExternalBaseURL = (configuredBaseURL?: string): string => {
   const configured = String(configuredBaseURL ?? process.env.CTX_E2E_BASE_URL ?? "").trim();
   if (configured) {
@@ -247,6 +256,8 @@ export async function createCtxPlaywrightConfig(
     : path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
   const primaryReporter = process.env.CTX_E2E_REPORTER ?? "dot";
   const browserName = resolvePlaywrightBrowserName();
+  const browserChannel = resolvePlaywrightBrowserChannel();
+  const video = resolvePlaywrightVideoMode();
   const argosEnabled =
     parseBool(process.env.CTX_E2E_ARGOS) || hasValue(process.env.ARGOS_TOKEN);
   const reporter: PlaywrightTestConfig["reporter"] = [
@@ -301,6 +312,7 @@ export async function createCtxPlaywrightConfig(
     reporter,
     use: {
       browserName,
+      ...(browserChannel ? { channel: browserChannel } : {}),
       baseURL,
       extraHTTPHeaders: {
         authorization: `Bearer ${AUTH_TOKEN}`,
@@ -309,7 +321,7 @@ export async function createCtxPlaywrightConfig(
       ignoreHTTPSErrors: ignoreHTTPSErrors ?? baseURL.startsWith("https://"),
       screenshot: "only-on-failure",
       trace: "retain-on-failure",
-      video: "retain-on-failure",
+      video,
     },
     webServer: webServerEnv == null
       ? undefined

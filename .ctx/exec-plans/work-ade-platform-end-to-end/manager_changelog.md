@@ -34,3 +34,8 @@ Record each local commit or integrated worker handoff here.
   - Adds durable diagnostic events, old control-plane historical import
     boundaries, local ACP v1 conformance target, approved importer write actions,
     and ID-class collision rules.
+- `b83d8c9` - Add Workbench template visual coverage.
+  - Adds Playwright visual coverage for Classic, Kanban, Multipane, Review,
+    dense task lists, and multipane split/focus/resize states.
+  - Fixes the HTML topbar wrapper so the topbar host owns the shell grid area
+    and the template switcher does not collapse into the sidebar column.

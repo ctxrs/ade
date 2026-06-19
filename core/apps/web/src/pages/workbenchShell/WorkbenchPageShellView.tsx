@@ -307,7 +307,7 @@ export function WorkbenchPageShellView({
   ) : null;
 
   const topbar = useHtmlTopbar ? (
-    <div data-tauri-drag-region={desktopUi ? true : undefined}>
+    <div className="wb-topbar-host" data-tauri-drag-region={desktopUi ? true : undefined}>
       <WorkbenchTopbar {...topbarProps} />
     </div>
   ) : null;

@@ -226,9 +226,10 @@ const renderShell = (props: Props) =>
 
 describe("WorkbenchPageShellView templates", () => {
   it("renders the classic template as the default workbench body", () => {
-    renderShell(makeProps());
+    const { container } = renderShell(makeProps());
 
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    expect(container.querySelector(".wb-topbar-host")).toBeInTheDocument();
   });
 
   it("renders the kanban template from projected task work", () => {

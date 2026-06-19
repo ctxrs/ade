@@ -703,6 +703,12 @@
   min-height: 0;
 }
 
+.wb-topbar-host {
+  grid-area: topbar;
+  min-width: 0;
+  height: var(--wb-topbar-height);
+}
+
 .wb-topbar {
   grid-area: topbar;
   height: var(--wb-topbar-height);

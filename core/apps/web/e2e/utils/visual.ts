@@ -5,9 +5,12 @@ import { expect, type Locator, type Page } from "playwright/test";
 
 export type VisualTheme = "dark" | "light";
 export type VisualViewportName =
+  | "desktop-wide"
   | "desktop"
+  | "laptop"
   | "desktop-tight"
   | "narrow"
+  | "mobile-narrow"
   | "fullpage"
   | "diff-wide";
 
@@ -50,9 +53,12 @@ const VISUAL_STABILITY_CSS = `
 `;
 
 export const VISUAL_VIEWPORTS: Record<VisualViewportName, VisualViewport> = {
+  "desktop-wide": { width: 1600, height: 900, label: "desktop-wide" },
   desktop: { width: 1400, height: 900, label: "desktop" },
+  laptop: { width: 1200, height: 800, label: "laptop" },
   "desktop-tight": { width: 1000, height: 900, label: "desktop-tight" },
   narrow: { width: 760, height: 900, label: "narrow" },
+  "mobile-narrow": { width: 390, height: 844, label: "mobile-narrow" },
   fullpage: { width: 1280, height: 900, label: "fullpage" },
   "diff-wide": { width: 1600, height: 900, label: "diff-wide" },
 };
