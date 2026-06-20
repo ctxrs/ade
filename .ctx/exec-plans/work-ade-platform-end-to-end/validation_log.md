@@ -467,6 +467,20 @@ These baseline results must be rerun after subsequent implementation phases.
 
 ## Accepted Local Deferrals
 
+- Post done-ness local polish:
+  - Finding: `ctx work capture` still used an old schema-only-slice diagnostic
+    even though `list`, `show`, `export`, and `import` are now implemented as
+    local store commands.
+  - Resolution: the diagnostic now says capture needs live daemon/session
+    semantics and points users at the implemented local Work commands.
+  - Validation:
+    - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh fmt --package ctx-http`
+    - Result: passed.
+    - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-http --bin ctx agent_work_cli -- --test-threads=1`
+    - Result: passed, 27 tests.
+    - `git diff --check`
+    - Result: passed before and after the code change.
+
 - Hosted services, team sync, enterprise policy/enforcement, production release,
   remote push, PR creation, and merge are explicitly out of scope.
 - Broad uncached Rust workspace tests are not required on this host because the

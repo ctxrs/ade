@@ -306,7 +306,7 @@ fn not_implemented(command: &str) -> Result<()> {
             DiagnosticSeverity::Error,
             &format!("ctx.work.{command}.not_implemented"),
             &format!(
-                "ctx work {command} is not implemented in this local CLI slice yet; use `ctx work schema`, `ctx work validate`, `ctx work inspect`, or `ctx work redaction-preview` for local schema and bundle checks"
+                "ctx work {command} needs live daemon/session capture semantics and is not available as an offline store command yet; use `ctx work list`, `ctx work show`, `ctx work export`, `ctx work import`, `ctx work validate`, or `ctx work redaction-preview` for local Work records"
             ),
         )
     )
@@ -2460,7 +2460,9 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("not implemented in this local CLI slice yet"));
+        assert!(error.contains("needs live daemon/session capture semantics"));
+        assert!(error.contains("ctx work list"));
+        assert!(error.contains("ctx work export"));
         assert!(error.contains("ctx work validate"));
         assert!(error.contains("enforcement: none_local_diagnostic_only"));
     }
