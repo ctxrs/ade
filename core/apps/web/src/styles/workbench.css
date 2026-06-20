@@ -5482,9 +5482,9 @@
 .wb-contribution-projection-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-subtle);
@@ -5525,7 +5525,11 @@
   padding: 2px 6px;
   font-size: 10.5px;
   line-height: 14px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  justify-self: start;
 }
 
 .wb-contribution-projection-active {
