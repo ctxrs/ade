@@ -178,10 +178,10 @@ Import/export bundles must include:
 - size metadata;
 - compatibility metadata for `agent-work` v1 where applicable.
 
-## Old Control-Plane Import Boundary
+## Old Work Data Import Boundary
 
-Locally available old control-plane data may be imported only as historical Work
-records.
+Locally available old standalone Work/provenance data may be imported only as
+historical Work records.
 
 Allowed subset:
 
@@ -204,9 +204,9 @@ Not imported as active local enforcement:
 - hosted sync state;
 - organization policy gates.
 
-If an old control-plane gate is imported, it becomes historical evidence or a
-local gate record with provenance. It must not silently become an active hosted
-policy decision in the public local ADE.
+If an old gate record is imported, it becomes historical evidence or a local
+gate record with provenance. It must not silently become an active hosted policy
+decision in the public local ADE.
 
 ## ADE Projection Rule
 

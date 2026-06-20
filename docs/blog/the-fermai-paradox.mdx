@@ -111,11 +111,11 @@ That does not happen automatically. It only happens when the environment makes i
 
 If you only bolt an agent onto an existing editor and call it done, you miss most of the compounding effect.
 
-## The enterprise story is about control planes, not blessed agents
+## The enterprise story is about coordination, not blessed agents
 
 This becomes even more obvious inside larger organizations.
 
-Most companies do not actually want to standardize forever on one agent stack. And most developers do not even have broad experience across the agent ecosystem yet, because the switching cost is still too high. Different harnesses already have meaningfully different strengths, workflows, and capabilities. Right now the lock-in often starts at the harness layer and sometimes extends down into the model family and endpoint too. What teams really want is a stable control plane around that changing execution layer.
+Most companies do not actually want to standardize forever on one agent stack. And most developers do not even have broad experience across the agent ecosystem yet, because the switching cost is still too high. Different harnesses already have meaningfully different strengths, workflows, and capabilities. Right now the lock-in often starts at the harness layer and sometimes extends down into the model family and endpoint too. What teams really want is a stable coordination layer around that changing execution layer.
 
 That is why "pick one agent and standardize on it" is the wrong answer.
 
@@ -129,7 +129,7 @@ This is why I think coding agents need their IDE moment: an Agentic Development 
 
 An ADE is not interesting because it adds more AI. It is interesting because it gives AI coding work the same thing the IDE once gave text editing: a professional operating environment.
 
-That means first-class task and worktree management. Diff-first review. Artifact capture for things like UI screenshots. Durable transcripts and attribution. Verification loops. Bounded autonomy inside containers and network policy. Vendor-neutral harness and model choice. A control plane for many agents, not just one.
+That means first-class task and worktree management. Diff-first review. Artifact capture for things like UI screenshots. Durable transcripts and attribution. Verification loops. Bounded autonomy inside containers and network policy. Vendor-neutral harness and model choice. A coordination layer for many agents, not just one.
 
 ## So we built ctx
 
@@ -139,7 +139,7 @@ It is a local-first, vendor-neutral ADE for coding agents. You can bring your ow
 
 We think that is the missing layer.
 
-The capability wave is already here. What is still missing is the interface, the review loop, the trust model, and the control plane that let teams use that capability professionally.
+The capability wave is already here. What is still missing is the interface, the review loop, the trust model, and the coordination layer that let teams use that capability professionally.
 
 That is the gap we are trying to close.
 
