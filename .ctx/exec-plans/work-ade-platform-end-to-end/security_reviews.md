@@ -138,10 +138,15 @@ Record plugin, import/export, path, redaction, and capability security reviews.
   scope.
 - Unused `@supabase/supabase-js` web dependency metadata and Bazel data labels
   were removed after verifying there are no JavaScript imports.
-- Residual risk: lower-level org-policy crates, route contracts, and daemon
-  route handles still exist as internal compatibility code. They are not mounted
-  in the public HTTP API, but a future private extraction should remove or gate
-  them more aggressively once compatibility and migration impact are understood.
+- Follow-up extraction removed the lower-level public org-policy crates, route
+  contracts, route registrations, daemon handles, run-archive ingest routes, and
+  route tests from the public repo slice. Legacy SQLite migration slots are now
+  reserved/cleaned locally so old stores can open without preserving hosted/team
+  policy surfaces.
+- Residual risk: future hosted/team/private control-plane code must stay in
+  `ctx-private` or another private repo. Public local migrations may retain
+  cleanup code for old local stores, but should not reintroduce hosted authority
+  routes, tenant policy models, or team sync APIs.
 
 ## Strict Public Work Validation Follow-Up
 
@@ -154,3 +159,17 @@ Record plugin, import/export, path, redaction, and capability security reviews.
 - Residual risk: validation logic still exists in both schemas and Rust. The
   schema compilation gate and focused CLI tests reduce drift, but a generated
   validator or shared conformance fixture suite would be stronger.
+
+## Workbench Visual And Hot Reload Follow-Up
+
+- The hot-reload visual sequence exercises local plugin add, label change,
+  persisted plugin-template selection, page reload, plugin removal fallback, and
+  active composer draft preservation. This is still host-owned declarative UI
+  data, not arbitrary plugin-rendered code.
+- The mobile-narrow visual path now shims the mobile Tauri runtime so it tests
+  the actual mobile shell: task list drawer opens for selection, collapses after
+  focus, and the final capture avoids the squeezed desktop sidebar path.
+- Residual risk: daemon-connected per-plugin apply/reload, in-flight command
+  cancellation semantics, plugin log streaming, executable UI/webview
+  contributions, and permission prompts remain separate lifecycle/security
+  slices before they can be considered locally done.

@@ -127,3 +127,26 @@ Reviewer agents:
   per-plugin reload, plugin dev processes, or log streaming. Those should be
   added as separate lifecycle-aware slices that preserve active-session safety
   and provider adapter sync semantics.
+
+## Public Local Boundary And Workbench Composition Review
+
+- The public repo branch now treats hosted/team control-plane surfaces as out of
+  scope, not dormant public API. Organization policy, daemon enrollment, hosted
+  policy snapshot, run-archive ingest service routes, route contracts, public
+  crates, and Cargo/Bazel targets have been removed from the public local slice.
+- Legacy SQLite compatibility is handled as local migration repair and reserved
+  migration slots. This keeps existing local stores openable without preserving
+  hosted/team authority concepts in the public product model.
+- Workbench extensibility remains composability-first: built-in Classic, Kanban,
+  Multipane, and Review templates share host-owned primitives; plugins
+  contribute declarative data that projects into those primitives with source
+  labels and compatibility diagnostics.
+- Hot reload in this branch is a local inventory/declarative projection loop.
+  It can add/change/remove plugin contribution data and preserve active session
+  UI state, but it does not yet execute plugin UI code, mutate Work records from
+  plugin UI, or apply daemon-connected provider adapter changes in place.
+- Architecture confidence: this is the right local direction for unifying the
+  ADE and former control-plane concepts. Remaining uncertainty is not around the
+  substrate; it is around the next executable extension boundary. That should be
+  designed as a follow-on permission/lifecycle slice, not squeezed into the
+  current declarative projection work.

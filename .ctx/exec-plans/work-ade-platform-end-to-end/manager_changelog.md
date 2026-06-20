@@ -199,3 +199,27 @@ Record each local commit or integrated worker handoff here.
 - `d910367` - Remove stale Supabase web dependency.
   - Removes unused `@supabase/supabase-js` package metadata and Bazel data
     labels from the public web app after verifying no JavaScript imports remain.
+- `e5196c8` - Record latest local validation slices.
+  - Records the local validation state, review ledgers, and UI artifact notes
+    for the Workbench/plugin contribution and public-boundary slices.
+- `94ffce1` - Document host-owned Workbench contribution IDs.
+  - Updates the public plugin contribution contract with the supported
+    host-owned template and renderer IDs.
+- `9ab812f` - Remove hosted control-plane code from public core.
+  - Removes public org-policy, daemon enrollment, hosted policy snapshot, and
+    run-archive ingest crates/routes/contracts from the public core.
+  - Keeps old local SQLite stores openable through reserved migration slots and
+    migration repair tests.
+  - Validated through affected-crate Rust check/lib-test gates and Buildkite
+    source/analysis gates recorded in `validation_log.md`.
+- `b0fcd3b` - Remove hosted settings surfaces from public app.
+  - Removes public billing, team/enterprise, entitlement, account, and mobile
+    access settings sections/controllers/tests from the public app shell.
+  - Leaves legal/docs billing mentions and local mobile connection surfaces
+    outside the removed hosted settings UI.
+- `c546ed7` - Expand Workbench visual plugin coverage.
+  - Adds browser visual coverage for source-labeled command rows, unsupported
+    contribution diagnostics, plugin hot reload add/change/remove fallback, and
+    active draft preservation.
+  - Updates the mobile-narrow visual helper to exercise the actual mobile shell
+    instead of a squeezed desktop viewport.

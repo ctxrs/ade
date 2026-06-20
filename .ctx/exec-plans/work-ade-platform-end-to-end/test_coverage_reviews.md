@@ -204,11 +204,18 @@ Record adversarial test coverage reviews and gaps.
   projection data.
 - Covered desktop-tight contribution panel behavior and narrow Kanban behavior,
   including no-horizontal-overflow assertions and detail panel visibility.
-- Re-ran the full Workbench visual template suite after the contribution-row
-  layout fix: 16 Playwright visual tests passed.
-- Remaining gaps: source-labeled command surfaces are covered by unit tests but
-  not yet by browser screenshots; plugin diagnostics and daemon-connected hot
-  reload state screenshots should be added when those surfaces become UI.
+- Extended browser coverage for source-labeled command autocomplete,
+  unsupported declarative contribution diagnostics, exact-row source labels,
+  hot reload add/change/remove fallback, persisted plugin-template fallback,
+  and active-session composer draft preservation across reload/remove.
+- Updated the mobile-narrow case to exercise the actual mobile shell rather
+  than a viewport-only desktop shell. The helper opens the task-list drawer when
+  needed and the final capture verifies the collapsed mobile work surface.
+- Re-ran the full Workbench visual template suite after the helper and
+  hot-reload fixes: 20 Playwright visual tests passed.
+- Remaining gaps: daemon-connected plugin apply/reload, in-flight command
+  behavior, plugin dev processes/logs, executable UI/webview contributions, and
+  import/export/redaction preview screenshots remain future slices.
 
 ## Public Boundary And Shift-Left Coverage Review
 
@@ -220,9 +227,14 @@ Record adversarial test coverage reviews and gaps.
   Rust/web validation.
 - Removed unused Supabase JavaScript client dependency and validated the quick
   gate afterward.
-- Remaining gaps: lower-level org-policy compatibility code is not removed from
-  Rust crates yet; treat that as a future private-extraction migration rather
-  than a public-route blocker.
+- Follow-up extraction removed the lower-level public org-policy/run-archive
+  ingest crates, route contracts, daemon route handles, route tests, and Cargo/
+  Bazel targets from the public slice. Legacy migration cleanup is covered by
+  `ctx-store` tests.
+- Remaining gap: public docs and code still have compatibility naming around
+  `agent-work` in places. That is accepted as compatibility for this branch;
+  a future planned rename should move public-facing names to `Work` in one
+  compatibility migration.
 
 ## Strict Work CLI Validation Review
 

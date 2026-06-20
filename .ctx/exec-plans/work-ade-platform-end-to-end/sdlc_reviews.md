@@ -57,3 +57,20 @@ Record process, worktree, validation, and agent-workflow reviews.
 
 - Broad implementation workers must base on `8123c74` unless the manager records
   a later contract base.
+
+## Final Local Process Review
+
+- The manager kept broad Rust validation serialized through
+  `scripts/dev/cargo-safe.sh` with `CTX_CARGO_MEMORY_MAX_GIB=24`,
+  `CTX_CARGO_JOBS=1`, and `CTX_RUST_TEST_THREADS=1`, checking for active
+  Cargo/rustc/linker processes before each Rust-capable gate.
+- Managed Playwright visual runs now inherit the same safe wrapper path for
+  local-build server launches, so visual E2E no longer bypasses the host Cargo
+  lock.
+- The final local validation set intentionally favors affected-crate Rust gates,
+  full web gates, source-boundary scans, and targeted visual E2E over broad
+  concurrent workspace Cargo. This matches the user-provided host mitigation:
+  avoid multiple local Cargo invocations and avoid broad workspace tests on this
+  machine unless explicitly needed.
+- Buildkite/remote, pushing, PRs, release artifacts, hosted/team services, and
+  production promotion remain out of local scope for this branch.

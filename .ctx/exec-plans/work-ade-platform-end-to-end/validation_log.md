@@ -397,11 +397,10 @@ These baseline results must be rerun after subsequent implementation phases.
 
 ## Public Local Boundary And Shift-Left Gates
 
-- Manager public-route validation:
-  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh fmt --package ctx-http`
-  - Result: passed through the host Cargo lock and low-I/O wrapper.
-  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-http --lib org_policy_routes -- --test-threads=1`
-  - Result: passed, 2 tests after `fa30b3f`.
+- Earlier route-only validation was superseded by the later public-boundary
+  extraction work. The removed hosted/team route tests no longer exist as public
+  code; current validation is covered by the affected-crate Rust suite and
+  stale-symbol source scan below.
 - Manager schema/type gate validation:
   - `node schemas/validate-json-schemas.mjs $(rg --files schemas | rg '\\.schema\\.json$')`
   - Result: compiled 7 JSON schemas with AJV 2020.
@@ -419,3 +418,64 @@ These baseline results must be rerun after subsequent implementation phases.
     after `d910367`.
   - `git diff --check`
   - Result: passed.
+
+## Public Boundary Extraction, Workbench Visuals, And Final Local Gates
+
+- Manager source-boundary scan:
+  - `rg -n <stale public-boundary symbol regex> core/Cargo.toml core/Cargo.lock core/BUILD.bazel core/crates tools/bazel/rust_deps.generated.bzl docs .ctx/exec-plans -g '!target'`
+  - Result: no live public org-policy/run-archive service crate or route
+    references. Remaining hits are expected legal/docs exclusions, generic git
+    checkout text, observability enum labels, and reserved migration cleanup
+    tests for legacy local SQLite repair.
+- Manager web gates after settings/public-boundary cleanup and final visual
+  helper updates:
+  - `pnpm -C core/apps/web typecheck`
+  - Result: passed.
+  - `pnpm -C core/apps/web lint`
+  - Result: passed.
+  - `pnpm -C core/apps/web test`
+  - Result: passed, 251 files / 1946 tests.
+  - `pnpm -C core/apps/web build`
+  - Result: passed with existing Vite/Browserslist/chunk warnings.
+- Manager Buildkite/Bazel local gates:
+  - `.buildkite/validate-pipeline.sh`
+  - Result: passed. The installed `buildkite-agent` accepted
+    `pipeline upload --dry-run --reject-secrets`; the guard also confirmed no
+    GitHub Actions workflow usage and required Buildkite taxonomy commands.
+  - `.buildkite/run-bazel.sh test //:buildkite_config_test //:schemas`
+  - Result: passed, 8 tests.
+  - `.buildkite/run-bazel.sh build --nobuild --jobs=2 //:presubmit //:all-rust //:all-web //:e2e-premerge //:release //:release-artifacts`
+  - Result: passed analysis for 221 aggregate targets with 0 actions executed.
+- Manager Rust gates through the safe wrapper:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh fmt --manifest-path Cargo.toml --all -- --check`
+  - Result: passed.
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh check --manifest-path Cargo.toml --locked -p ctx-core -p ctx-store -p ctx-daemon -p ctx-http -p ctx-route-contracts`
+  - Result: passed.
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml --locked -p ctx-core -p ctx-store -p ctx-daemon -p ctx-http -p ctx-route-contracts --lib -- --test-threads=1`
+  - Result: passed. Covered `ctx-core` 45 tests, `ctx-daemon` 295 tests,
+    `ctx-route-contracts` 81 tests, and `ctx-store` 112 tests, including legacy
+    migration repair and local run archive audit behavior.
+- Manager Workbench visual validation:
+  - `CTX_CARGO_MEMORY_MAX_GIB=24 CTX_CARGO_JOBS=1 CTX_RUST_TEST_THREADS=1 CTX_E2E_BROWSER=chromium CTX_E2E_BROWSER_CHANNEL=chrome CTX_E2E_DISABLE_VIDEO=1 CTX_E2E_WORKERS=1 pnpm -C core/apps/web exec playwright test -c playwright.visual.config.ts e2e/visual-workbench-templates.spec.ts`
+  - Result: passed, 20 tests.
+  - Latest screenshot set manually sampled under
+    `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots`.
+  - Manual samples included Kanban desktop/narrow, Multipane split/focus/resize,
+    plugin hot reload add/change/remove fallback, source-labeled command
+    autocomplete, unsupported contribution diagnostics, and actual mobile-shell
+    `mobile-narrow` capture.
+
+## Accepted Local Deferrals
+
+- Hosted services, team sync, enterprise policy/enforcement, production release,
+  remote push, PR creation, and merge are explicitly out of scope.
+- Broad uncached Rust workspace tests are not required on this host because the
+  machine has demonstrated root-drive write-pressure freezes. Final local Rust
+  validation must remain affected-crate, serialized, and wrapped by
+  `scripts/dev/cargo-safe.sh` unless the user explicitly asks for broader
+  verification.
+- Arbitrary executable UI/webview plugins, plugin dev process management,
+  daemon-connected per-plugin apply/reload semantics, plugin logs, and future
+  harness starter-kit primitives remain follow-on slices. Current public plugin
+  UI contribution support is host-owned declarative data over existing
+  Workbench primitives.

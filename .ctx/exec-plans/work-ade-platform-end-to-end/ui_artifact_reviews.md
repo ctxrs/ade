@@ -2,7 +2,7 @@
 
 Record screenshot/video artifacts and visual review findings.
 
-## Pending Required Artifact Sets
+## Reviewed Artifact Sets
 
 - Classic template: initial desktop-wide screenshot exposed a topbar grid-area
   wrapper bug; after the host fix, the refreshed screenshot was manually viewed
@@ -30,7 +30,35 @@ Record screenshot/video artifacts and visual review findings.
   panel scrolling rather than horizontal overflow. Artifacts:
   `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-42467/argos-screenshots/workbench-contributions-panel-ready-dark-desktop-tight.png`,
   `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-42467/argos-screenshots/workbench-contributions-kanban-narrow-dark.png`.
-- Source-labeled command surfaces.
-- Plugin provider diagnostics.
-- Hot reload add/change/remove states.
-- Import/export errors and redaction preview.
+- Final Workbench visual rerun: 20 Playwright visual tests passed with the
+  latest screenshot set under
+  `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots`.
+- Source-labeled command surfaces: manually sampled
+  `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots/workbench-commands-source-labels-dark-desktop-tight.png`.
+  Provider and plugin rows carry row-specific source labels without changing
+  command routing.
+- Unsupported contribution diagnostics: manually sampled
+  `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots/workbench-contributions-unsupported-diagnostics-dark-desktop-tight.png`.
+  Unsupported renderer/template state is visible as host-owned diagnostic data,
+  not executable plugin UI.
+- Hot reload add/change/remove states: manually sampled the sequence under
+  `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots`:
+  `workbench-plugins-hot-reload-empty-dark-desktop-tight.png`,
+  `workbench-plugins-hot-reload-added-dark-desktop-tight.png`,
+  `workbench-plugins-hot-reload-changed-label-dark-desktop-tight.png`, and
+  `workbench-plugins-hot-reload-removed-fallback-dark-desktop-tight.png`.
+  The removed-plugin fallback preserves the active composer draft.
+- Mobile shell: manually sampled
+  `/tmp/ctx-3c22f3412cbc/volatile/tmp/ctx-e2e-visual-data-834633/argos-screenshots/workbench-template-classic-responsive-dark-mobile-narrow.png`.
+  The visual now exercises mobile Tauri shell behavior, including task-list
+  drawer selection and collapsed final layout, rather than a squeezed desktop
+  sidebar.
+
+## Accepted Missing Artifact Sets
+
+- Import/export errors and redaction preview screenshots are deferred because
+  those are CLI/store surfaces in the current local branch, not a Workbench UI
+  flow yet.
+- Plugin provider diagnostics beyond inert Workbench contribution diagnostics
+  are deferred until the daemon-connected plugin apply/reload and diagnostics UI
+  lifecycle slice.
