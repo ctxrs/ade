@@ -63,8 +63,8 @@ Planned implementation/review teams:
 
 ## Final local implementation status
 
-Local code head before this status note: `b3c6126 Test Work observability
-safety states`.
+Local code head before this status note: `47af33d Add Work observability
+mutation routes`.
 
 Landed commits for this pass:
 
@@ -73,6 +73,7 @@ Landed commits for this pass:
 - `297e667 Expose safe Work observability routes`
 - `f79d2d8 Add Work Report web surface`
 - `b3c6126 Test Work observability safety states`
+- `47af33d Add Work observability mutation routes`
 
 The P0 local Work observability slice is implemented in the public `ctx`
 worktree, without hosted/team sync, remote push, PR creation, or release work.
@@ -99,6 +100,13 @@ What landed:
   - Workspace Work route handles and HTTP routes for listing/fetching Work,
     context packs, reports, timeline, evidence, evidence creation, and
     summaries.
+  - `POST /api/workspaces/:id/work/:work_id/evidence` creates bounded,
+    redacted evidence records, appends a timeline event, indexes redacted search
+    text, and refreshes Work trust state.
+  - `POST /api/workspaces/:id/work/:work_id/summaries` creates local/manual or
+    deterministic summaries with claims, appends a timeline event, indexes
+    redacted search text, and rejects provider-backed/source-left-machine
+    summary requests for P0.
   - Route-contract DTOs intentionally avoid raw core payload exposure for
     events/evidence/report material.
   - Context and route text are bounded and redacted by default.
@@ -153,8 +161,14 @@ Adversarial review findings addressed during this pass:
   - Added focused tests for trust aggregation, summary freshness, route event
     redaction, CLI parsing/round-trips, Work client URLs, and Work Report
     rendering.
+  - Added focused route-contract tests for provider-backed summary rejection and
+    material revision keys ignoring bookkeeping timestamps/derived timeline
+    events.
 
-Final done-ness review is still required after this status note is committed.
+Final done-ness review attempt `019ee837-99c8-76c2-9212-5c9f5984f7c7`
+returned FAIL because the P0 daemon API was missing the required POST evidence
+and summary routes. Commit `47af33d` fixed that blocker. A final PASS review is
+still required after this status note is committed.
 
 ## Validation results
 
@@ -167,7 +181,7 @@ Passed:
   - 35 passed; 0 failed; 16 filtered.
 - `scripts/dev/cargo-safe.sh test --manifest-path Cargo.toml -p ctx-daemon
   --lib workspaces::route_contract::work::tests --locked`
-  - 1 passed; 0 failed; 573 filtered.
+  - 3 passed; 0 failed; 573 filtered.
   - Existing daemon unused-import/dead-code warnings were observed and left
     unchanged.
 - `pnpm -C core/apps/web exec vitest run
