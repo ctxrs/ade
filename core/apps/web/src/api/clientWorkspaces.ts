@@ -16,6 +16,7 @@ import type {
   WorkspaceWorkContextResponse,
   WorkspaceWorkDetailResponse,
   WorkspaceWorkEvidenceResponse,
+  WorkspaceWorkInspector,
   WorkspaceWorkListResponse,
   WorkspaceWorkReport,
   WorkspaceWorkTimelineResponse,
@@ -142,6 +143,11 @@ export const getWorkspaceWork = (workspaceId: string, workId: string) =>
 export const getWorkspaceWorkReport = (workspaceId: string, workId: string) =>
   apiAny<WorkspaceWorkReport>(
     workspaceWorkPath(workspaceId, `/${encodeURIComponent(workId)}/report`),
+  );
+
+export const getWorkspaceWorkInspector = (workspaceId: string, workId: string) =>
+  apiAny<WorkspaceWorkInspector>(
+    workspaceWorkPath(workspaceId, `/${encodeURIComponent(workId)}/inspector`),
   );
 
 export const getWorkspaceWorkContext = (

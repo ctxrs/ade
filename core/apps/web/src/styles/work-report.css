@@ -158,6 +158,38 @@
   color: var(--link, currentColor);
 }
 
+.work-report-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 1280px;
+  margin: 0 auto 16px;
+  padding: 6px;
+  border: 1px solid var(--border, #303744);
+  border-radius: 8px;
+  background: var(--surface, #171b22);
+}
+
+.work-report-tabs button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.work-report-tabs button[aria-selected="true"] {
+  border-color: var(--border, #303744);
+  background: var(--bg, #0f1115);
+}
+
+.work-report-tab-panel {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
 .work-report-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -206,6 +238,45 @@
   margin: 0;
   font-size: 16px;
   letter-spacing: 0;
+}
+
+.work-report-panel > h2 {
+  margin-bottom: 12px;
+}
+
+.work-report-panel > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.work-report-stack {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.work-report-message,
+.work-report-command {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border, #303744);
+  border-radius: 8px;
+}
+
+.work-report-message p,
+.work-report-command p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.work-report-command strong {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .work-report-evidence-list {
@@ -290,6 +361,22 @@
 .work-report-raw-warning {
   border-color: var(--warning-border, #9d6b2c);
   color: var(--text, inherit);
+}
+
+.work-report-json {
+  max-height: 520px;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border, #303744);
+  border-radius: 8px;
+  background: var(--bg, #0f1115);
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .work-report-timeline ol {

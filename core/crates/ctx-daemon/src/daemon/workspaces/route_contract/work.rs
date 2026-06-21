@@ -11,17 +11,21 @@ use ctx_core::models::{
 };
 use ctx_core::redaction::is_sensitive_key;
 use ctx_route_contracts::workspaces::{
-    WorkspaceRouteParams, WorkspaceWorkChangeSummaryRouteResponse, WorkspaceWorkContextRouteQuery,
+    WorkspaceRouteParams, WorkspaceWorkArtifactRouteItem,
+    WorkspaceWorkArtifactSummaryRouteResponse, WorkspaceWorkChangeSummaryRouteResponse,
+    WorkspaceWorkCommandPreviewRouteResponse, WorkspaceWorkContextRouteQuery,
     WorkspaceWorkContextRouteResponse, WorkspaceWorkDetailRouteResponse,
     WorkspaceWorkDuplicateStrongLinkRouteItem, WorkspaceWorkEventRouteItem,
     WorkspaceWorkEvidenceCreateRouteRequest, WorkspaceWorkEvidenceCreateRouteResponse,
     WorkspaceWorkEvidenceRouteItem, WorkspaceWorkEvidenceRouteResponse,
-    WorkspaceWorkEvidenceSummaryRouteResponse, WorkspaceWorkLinkRouteItem,
-    WorkspaceWorkListRouteQuery, WorkspaceWorkListRouteResponse, WorkspaceWorkRecordRouteItem,
-    WorkspaceWorkReportRouteResponse, WorkspaceWorkSummaryClaimCreateRouteRequest,
+    WorkspaceWorkEvidenceSummaryRouteResponse, WorkspaceWorkInspectorOverviewRouteResponse,
+    WorkspaceWorkInspectorRouteResponse, WorkspaceWorkLinkRouteItem, WorkspaceWorkListRouteQuery,
+    WorkspaceWorkListRouteResponse, WorkspaceWorkRecordRouteItem, WorkspaceWorkReportRouteResponse,
+    WorkspaceWorkSafeJsonRouteResponse, WorkspaceWorkSummaryClaimCreateRouteRequest,
     WorkspaceWorkSummaryClaimRouteItem, WorkspaceWorkSummaryCreateRouteRequest,
     WorkspaceWorkSummaryCreateRouteResponse, WorkspaceWorkSummaryRouteItem,
-    WorkspaceWorkTimelineRouteQuery, WorkspaceWorkTimelineRouteResponse,
+    WorkspaceWorkTimelineItemRouteResponse, WorkspaceWorkTimelineRouteQuery,
+    WorkspaceWorkTimelineRouteResponse, WorkspaceWorkTranscriptItemRouteResponse,
     WorkspaceWorkTrustRouteSummary,
 };
 use serde_json::{json, Map, Value};
@@ -33,6 +37,7 @@ use crate::daemon::WorkspaceWorkHandle;
 const REPORT_TEXT_LIMIT: usize = 16 * 1024;
 const CONTEXT_TEXT_LIMIT: usize = 6 * 1024;
 const EVENT_TEXT_LIMIT: usize = 8 * 1024;
+const COMMAND_OUTPUT_PREVIEW_LIMIT: usize = 4 * 1024;
 
 impl WorkspaceWorkHandle {
     pub async fn list_workspace_work_for_route(
@@ -124,6 +129,19 @@ impl WorkspaceWorkHandle {
             .await
             .map_err(workspace_store_route_error)?;
         build_report(&store, workspace_id, WorkRecordId::from_id(work_id)).await
+    }
+
+    pub async fn get_workspace_work_inspector_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+        work_id: String,
+    ) -> Result<WorkspaceWorkInspectorRouteResponse, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        let store = self
+            .existing_workspace_store(workspace_id)
+            .await
+            .map_err(workspace_store_route_error)?;
+        build_inspector(&store, workspace_id, WorkRecordId::from_id(work_id)).await
     }
 
     pub async fn get_workspace_work_context_for_route(
@@ -890,6 +908,183 @@ async fn build_report(
     })
 }
 
+async fn build_inspector(
+    store: &ctx_store::Store,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    work_id: WorkRecordId,
+) -> Result<WorkspaceWorkInspectorRouteResponse, WorkspaceRouteError> {
+    let raw = load_work_detail(store, workspace_id, work_id).await?;
+    let route_summaries = raw
+        .summaries
+        .iter()
+        .filter(|summary| is_default_route_summary(summary))
+        .collect::<Vec<_>>();
+    let material_key = material_revision_key(
+        &raw.work,
+        &raw.links,
+        &raw.events,
+        &raw.evidence,
+        &raw.change_sets,
+        &raw.contributions,
+    );
+    let summary_freshness = aggregate_summary_freshness_refs(&route_summaries, &material_key);
+    let trust = trust_summary(&raw.work, &raw.evidence);
+    let work = route_work_record(&raw.work, Some(trust.verdict), Some(summary_freshness));
+    let links = raw.links.iter().map(route_work_link).collect::<Vec<_>>();
+    let evidence = raw
+        .evidence
+        .iter()
+        .map(route_work_evidence)
+        .collect::<Vec<_>>();
+    let change_summary = WorkspaceWorkChangeSummaryRouteResponse {
+        change_sets: raw.change_sets.len(),
+        contributions: raw.contributions.len(),
+        pull_requests: pull_request_links(&raw.links),
+        commits: commit_links(&raw.links),
+    };
+    let change_sets = raw
+        .change_sets
+        .iter()
+        .map(redact_route_serializable)
+        .collect::<Vec<_>>();
+    let contributions = raw
+        .contributions
+        .iter()
+        .map(redact_route_serializable)
+        .collect::<Vec<_>>();
+    let summaries = route_summaries
+        .into_iter()
+        .map(|summary| route_work_summary(summary, &material_key, REPORT_TEXT_LIMIT))
+        .collect::<Vec<_>>();
+    let summary_claims = raw
+        .summary_claims
+        .iter()
+        .filter(|claim| {
+            raw.summaries.iter().any(|summary| {
+                is_default_route_summary(summary) && summary.summary_id == claim.summary_id
+            })
+        })
+        .map(|claim| route_work_summary_claim(claim, &material_key))
+        .collect::<Vec<_>>();
+    let timeline = raw.events.iter().map(route_work_event).collect::<Vec<_>>();
+    let transcript = inspector_transcript_items(&raw.events);
+    let commands = inspector_command_previews(&raw.evidence);
+    let artifacts = inspector_artifacts(&raw.links, &raw.events, &raw.evidence);
+    let artifact_summary = WorkspaceWorkArtifactSummaryRouteResponse {
+        total: artifacts.len(),
+        refs: artifacts
+            .iter()
+            .take(50)
+            .map(|artifact| {
+                safe_json_response(
+                    json!({
+                        "id": artifact.id,
+                        "kind": artifact.kind,
+                        "label": artifact.label,
+                        "url": artifact.url,
+                    }),
+                    vec![
+                        "artifact metadata only; local paths and raw refs are omitted".to_string(),
+                    ],
+                )
+            })
+            .collect(),
+    };
+    let timeline_items = inspector_timeline_items(&raw.events, &raw.evidence);
+    let duplicate_strong_links = raw
+        .duplicate_strong_links
+        .into_iter()
+        .map(|duplicate| WorkspaceWorkDuplicateStrongLinkRouteItem {
+            target_kind: duplicate.target_kind,
+            target_id: duplicate.target_id,
+            work_ids: duplicate.work_ids,
+        })
+        .collect::<Vec<_>>();
+    let overview = WorkspaceWorkInspectorOverviewRouteResponse {
+        title: work.title.clone(),
+        objective: work.objective.clone(),
+        lifecycle: work.lifecycle,
+        primary_branch: work.primary_branch.clone(),
+        base_commit: work.base_commit.clone(),
+        head_commit: work.head_commit.clone(),
+        created_at: work.created_at,
+        updated_at: work.updated_at,
+    };
+    let evidence_summary = evidence_summary(&raw.evidence);
+    let raw_transcript_available = raw.events.iter().any(|event| event.payload_json.is_some());
+    let context = safe_json_response(
+        inspector_context_value(
+            &work,
+            &trust,
+            &summaries,
+            &summary_claims,
+            &evidence,
+            &commands,
+            &artifacts,
+            &change_summary,
+            &duplicate_strong_links,
+        ),
+        vec!["agent handoff context is built from typed, redacted inspector fields".to_string()],
+    );
+    let safe_json_value = json!({
+        "work": &work,
+        "links": &links,
+        "overview": &overview,
+        "trust": &trust,
+        "context": &context.value,
+        "evidence_summary": &evidence_summary,
+        "change_summary": &change_summary,
+        "artifact_summary": &artifact_summary,
+        "transcript": &transcript,
+        "commands": &commands,
+        "artifacts": &artifacts,
+        "evidence": &evidence,
+        "change_sets": &change_sets,
+        "contributions": &contributions,
+        "summaries": &summaries,
+        "summary_claims": &summary_claims,
+        "timeline": &timeline,
+        "timeline_items": &timeline_items,
+        "duplicate_strong_links": &duplicate_strong_links,
+        "raw_transcript_available": raw_transcript_available,
+        "raw_transcript_included": false,
+    });
+    let safe_json = safe_json_response(
+        safe_json_value,
+        vec![
+            "whitelist projection only".to_string(),
+            "raw payload_json, raw transcript bodies, local artifact paths, and raw command output are excluded"
+                .to_string(),
+        ],
+    );
+
+    Ok(WorkspaceWorkInspectorRouteResponse {
+        work,
+        links,
+        overview,
+        trust,
+        context,
+        safe_json: safe_json.clone(),
+        raw_redacted_json: safe_json,
+        evidence_summary,
+        change_summary,
+        artifact_summary,
+        transcript,
+        commands,
+        artifacts,
+        evidence,
+        change_sets,
+        contributions,
+        summaries,
+        summary_claims,
+        timeline,
+        timeline_items,
+        duplicate_strong_links,
+        raw_transcript_available,
+        raw_transcript_included: false,
+    })
+}
+
 async fn load_work_detail(
     store: &ctx_store::Store,
     workspace_id: ctx_core::ids::WorkspaceId,
@@ -991,6 +1186,363 @@ async fn linked_graph_for_work(
     contributions.sort_by(|left, right| left.id.0.cmp(&right.id.0));
     contributions.dedup_by(|left, right| left.id == right.id);
     Ok((change_sets, contributions))
+}
+
+fn inspector_transcript_items(
+    events: &[WorkEvent],
+) -> Vec<WorkspaceWorkTranscriptItemRouteResponse> {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.event_type,
+                WorkEventType::Session
+                    | WorkEventType::UserMessage
+                    | WorkEventType::AssistantMessage
+                    | WorkEventType::ToolCallStart
+                    | WorkEventType::ToolCallEnd
+                    | WorkEventType::ToolOutput
+                    | WorkEventType::CommandCapture
+                    | WorkEventType::ArtifactCreated
+                    | WorkEventType::Note
+                    | WorkEventType::Other
+            )
+        })
+        .map(|event| WorkspaceWorkTranscriptItemRouteResponse {
+            event_id: event.event_id.clone(),
+            sequence: event.sequence,
+            event_type: event.event_type,
+            event_time: event.event_time,
+            actor_kind: event.actor_kind,
+            provider: event
+                .provider
+                .as_deref()
+                .map(|text| bounded_redacted_text(text, 200)),
+            harness: event
+                .harness
+                .as_deref()
+                .map(|text| bounded_redacted_text(text, 200)),
+            model: event
+                .model
+                .as_deref()
+                .map(|text| bounded_redacted_text(text, 200)),
+            redaction_class: event.redaction_class,
+            text_preview: event
+                .redacted_text
+                .as_deref()
+                .map(|text| bounded_redacted_text(text, EVENT_TEXT_LIMIT)),
+        })
+        .collect()
+}
+
+fn inspector_command_previews(
+    evidence: &[WorkEvidence],
+) -> Vec<WorkspaceWorkCommandPreviewRouteResponse> {
+    evidence
+        .iter()
+        .filter(|item| item.command.is_some() || !item.argv.is_empty())
+        .map(|item| {
+            let stdout_preview = item
+                .output_ref
+                .as_ref()
+                .and_then(|value| safe_output_preview(value, "stdout_redacted"));
+            let stderr_preview = item
+                .output_ref
+                .as_ref()
+                .and_then(|value| safe_output_preview(value, "stderr_redacted"));
+            let output_truncated = item
+                .output_ref
+                .as_ref()
+                .and_then(|value| value.get("truncated"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            WorkspaceWorkCommandPreviewRouteResponse {
+                evidence_id: item.evidence_id.clone(),
+                id: item.evidence_id.0.clone(),
+                command: item
+                    .command
+                    .as_deref()
+                    .map(|text| bounded_redacted_text(text, 2_000)),
+                argv: item
+                    .argv
+                    .iter()
+                    .take(128)
+                    .map(|arg| bounded_redacted_text(arg, 600))
+                    .collect(),
+                cwd: item
+                    .cwd
+                    .as_deref()
+                    .map(|text| bounded_redacted_text(text, 1_000)),
+                exit_code: item.exit_code,
+                status: item.status,
+                freshness: item.freshness,
+                stdout_preview,
+                stderr_preview,
+                output_truncated,
+                output_ref: item.output_ref.as_ref().map(redact_route_value),
+                started_at: Some(item.started_at),
+                finished_at: Some(item.finished_at),
+            }
+        })
+        .collect()
+}
+
+fn inspector_artifacts(
+    links: &[WorkRecordLink],
+    events: &[WorkEvent],
+    evidence: &[WorkEvidence],
+) -> Vec<WorkspaceWorkArtifactRouteItem> {
+    let mut artifacts = Vec::new();
+    for item in evidence {
+        if let Some(reference) = item.artifact_ref.as_ref().map(redact_route_value) {
+            artifacts.push(WorkspaceWorkArtifactRouteItem {
+                id: item.evidence_id.0.clone(),
+                kind: Some(enum_json_label(&item.kind)),
+                label: item
+                    .claim
+                    .as_deref()
+                    .or(item.command.as_deref())
+                    .map(|text| bounded_redacted_text(text, 300)),
+                url: extract_safe_url(&reference),
+                path: extract_safe_relative_path(&reference),
+                reference: Some(reference),
+                created_at: Some(item.created_at),
+            });
+        }
+    }
+    for event in events {
+        if let Some(reference) = event.artifact_ref.as_ref().map(redact_route_value) {
+            artifacts.push(WorkspaceWorkArtifactRouteItem {
+                id: event.event_id.0.clone(),
+                kind: Some(enum_json_label(&event.event_type)),
+                label: event
+                    .redacted_text
+                    .as_deref()
+                    .map(|text| bounded_redacted_text(text, 300)),
+                url: extract_safe_url(&reference),
+                path: extract_safe_relative_path(&reference),
+                reference: Some(reference),
+                created_at: Some(event.created_at),
+            });
+        }
+    }
+    for link in links {
+        if link.target_kind == ctx_core::models::WorkLinkTargetKind::Artifact {
+            let reference = link.target_json.as_ref().map(redact_route_value);
+            artifacts.push(WorkspaceWorkArtifactRouteItem {
+                id: link.link_id.0.clone(),
+                kind: Some("artifact".to_string()),
+                label: link
+                    .target_id
+                    .as_deref()
+                    .map(|text| bounded_redacted_text(text, 300)),
+                url: reference.as_ref().and_then(extract_safe_url),
+                path: reference.as_ref().and_then(extract_safe_relative_path),
+                reference,
+                created_at: Some(link.created_at),
+            });
+        }
+    }
+    artifacts.sort_by(|left, right| left.id.cmp(&right.id));
+    artifacts.dedup_by(|left, right| left.id == right.id);
+    artifacts
+}
+
+fn inspector_timeline_items(
+    events: &[WorkEvent],
+    evidence: &[WorkEvidence],
+) -> Vec<WorkspaceWorkTimelineItemRouteResponse> {
+    let mut items = events
+        .iter()
+        .map(|event| WorkspaceWorkTimelineItemRouteResponse {
+            sequence: event.sequence,
+            event_time: event.event_time,
+            kind: enum_json_label(&event.event_type),
+            title: event
+                .redacted_text
+                .as_deref()
+                .map(|text| bounded_redacted_text(text, 160))
+                .unwrap_or_else(|| enum_json_label(&event.event_type)),
+            detail: event
+                .source_kind
+                .as_deref()
+                .map(|kind| bounded_redacted_text(kind, 120)),
+            source_event_id: Some(event.event_id.clone()),
+            source_evidence_id: None,
+        })
+        .collect::<Vec<_>>();
+    items.extend(evidence.iter().map(|item| {
+        WorkspaceWorkTimelineItemRouteResponse {
+            sequence: i64::MAX,
+            event_time: item.finished_at,
+            kind: enum_json_label(&item.kind),
+            title: item
+                .claim
+                .as_deref()
+                .or(item.command.as_deref())
+                .map(|text| bounded_redacted_text(text, 160))
+                .unwrap_or_else(|| "Evidence observed".to_string()),
+            detail: Some(format!(
+                "{} / {}",
+                enum_json_label(&item.status),
+                enum_json_label(&item.freshness)
+            )),
+            source_event_id: None,
+            source_evidence_id: Some(item.evidence_id.clone()),
+        }
+    }));
+    items.sort_by(|left, right| {
+        left.event_time
+            .cmp(&right.event_time)
+            .then_with(|| left.sequence.cmp(&right.sequence))
+    });
+    items
+}
+
+#[allow(clippy::too_many_arguments)]
+fn inspector_context_value(
+    work: &WorkspaceWorkRecordRouteItem,
+    trust: &WorkspaceWorkTrustRouteSummary,
+    summaries: &[WorkspaceWorkSummaryRouteItem],
+    summary_claims: &[WorkspaceWorkSummaryClaimRouteItem],
+    evidence: &[WorkspaceWorkEvidenceRouteItem],
+    commands: &[WorkspaceWorkCommandPreviewRouteResponse],
+    artifacts: &[WorkspaceWorkArtifactRouteItem],
+    change_summary: &WorkspaceWorkChangeSummaryRouteResponse,
+    duplicate_strong_links: &[WorkspaceWorkDuplicateStrongLinkRouteItem],
+) -> Value {
+    json!({
+        "objective": work.objective.as_deref().or(work.title.as_deref()).unwrap_or("Untitled Work"),
+        "current_result": trust.reason,
+        "recommended_next_action": trust.recommended_next_action,
+        "open_risks": trust.open_risks,
+        "key_decisions": summaries.iter().take(8).map(|summary| {
+            json!({
+                "text": bounded_redacted_text(&summary.text, 1_200),
+                "freshness": summary.freshness,
+                "citations": [{
+                    "source_kind": "summary",
+                    "source_id": summary.summary_id,
+                    "freshness": summary.freshness,
+                }],
+            })
+        }).collect::<Vec<_>>(),
+        "summary_claims": summary_claims.iter().take(16).map(|claim| {
+            json!({
+                "claim_text": bounded_redacted_text(&claim.claim_text, 800),
+                "claim_kind": claim.claim_kind,
+                "source_kind": claim.source_kind,
+                "source_id": claim.source_id,
+                "freshness": claim.freshness,
+            })
+        }).collect::<Vec<_>>(),
+        "evidence": evidence.iter().take(16).map(|item| {
+            json!({
+                "evidence_id": item.evidence_id,
+                "kind": item.kind,
+                "status": item.status,
+                "freshness": item.freshness,
+                "claim": item.claim,
+                "command": item.command,
+                "exit_code": item.exit_code,
+            })
+        }).collect::<Vec<_>>(),
+        "commands": commands.iter().take(16).map(|item| {
+            json!({
+                "id": item.id,
+                "command": item.command,
+                "argv": item.argv,
+                "exit_code": item.exit_code,
+                "status": item.status,
+                "freshness": item.freshness,
+                "stdout_preview": item.stdout_preview,
+                "stderr_preview": item.stderr_preview,
+                "output_truncated": item.output_truncated,
+            })
+        }).collect::<Vec<_>>(),
+        "changes": {
+            "change_sets": change_summary.change_sets,
+            "contributions": change_summary.contributions,
+            "pull_requests": change_summary.pull_requests,
+            "commits": change_summary.commits,
+        },
+        "artifacts": artifacts.iter().take(16).map(|artifact| {
+            json!({
+                "id": artifact.id,
+                "kind": artifact.kind,
+                "label": artifact.label,
+                "url": artifact.url,
+            })
+        }).collect::<Vec<_>>(),
+        "duplicate_strong_links": duplicate_strong_links,
+        "raw_transcript_included": false,
+    })
+}
+
+fn safe_json_response(
+    value: Value,
+    redaction_notes: Vec<String>,
+) -> WorkspaceWorkSafeJsonRouteResponse {
+    WorkspaceWorkSafeJsonRouteResponse {
+        value: redact_route_value(&value),
+        redacted: true,
+        redaction_notes,
+    }
+}
+
+fn safe_output_preview(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|text| bounded_redacted_text(text, COMMAND_OUTPUT_PREVIEW_LIMIT))
+}
+
+fn enum_json_label<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn extract_safe_url(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    for key in ["url", "download_url", "thumbnail_url", "href"] {
+        if let Some(text) = object.get(key).and_then(Value::as_str) {
+            if let Some(url) = safe_http_url(text) {
+                return Some(url);
+            }
+        }
+    }
+    None
+}
+
+fn extract_safe_relative_path(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    for key in ["relative_path", "display_path", "name"] {
+        if let Some(text) = object.get(key).and_then(Value::as_str) {
+            let text = text.trim();
+            if !text.is_empty()
+                && !text.starts_with('/')
+                && !text.contains('\\')
+                && !text.contains("..")
+            {
+                return Some(bounded_redacted_text(text, 500));
+            }
+        }
+    }
+    None
+}
+
+fn safe_http_url(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.chars().any(char::is_control) {
+        return None;
+    }
+    if value.starts_with("https://") || value.starts_with("http://") {
+        Some(bounded_redacted_text(value, 2_000))
+    } else {
+        None
+    }
 }
 
 fn route_work_record(

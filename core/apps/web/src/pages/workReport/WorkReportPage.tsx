@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { WorkspaceWorkReport } from "@ctx/types";
-import { getWorkspaceWorkReport } from "../../api/clientWorkspaces";
-import { WorkReportView } from "./WorkReportView";
+import type { WorkspaceWorkInspector } from "@ctx/types";
+import { getWorkspaceWorkInspector } from "../../api/clientWorkspaces";
+import { WorkInspectorView } from "./WorkReportView";
 
-export default function WorkReportPage() {
-  const { id, workId } = useParams<{ id: string; workId: string }>();
-  const [report, setReport] = useState<WorkspaceWorkReport | null>(null);
+export function useWorkInspectorReport(workspaceId?: string, workId?: string) {
+  const [report, setReport] = useState<WorkspaceWorkInspector | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadReport = useCallback(async () => {
-    if (!id || !workId) {
+    if (!workspaceId || !workId) {
       setError("Missing Work route parameters.");
       setLoading(false);
       return;
@@ -19,18 +18,25 @@ export default function WorkReportPage() {
     setLoading(true);
     setError(null);
     try {
-      const next = await getWorkspaceWorkReport(id, workId);
+      const next = await getWorkspaceWorkInspector(workspaceId, workId);
       setReport(next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Work report.");
+      setError(err instanceof Error ? err.message : "Failed to load Work inspector.");
     } finally {
       setLoading(false);
     }
-  }, [id, workId]);
+  }, [workspaceId, workId]);
 
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  return { report, loading, error, reload: loadReport };
+}
+
+export function WorkInspectorPage() {
+  const { id, workId } = useParams<{ id: string; workId: string }>();
+  const { report, loading, error, reload } = useWorkInspectorReport(id, workId);
 
   if (!id || !workId) {
     return (
@@ -42,16 +48,16 @@ export default function WorkReportPage() {
   if (loading && !report) {
     return (
       <main className="work-report-page work-report-loading" aria-busy="true" role="status">
-        Loading Work report...
+        Loading Work inspector...
       </main>
     );
   }
   if (error && !report) {
     return (
       <main className="work-report-page work-report-error" role="alert">
-        <h1>Work report unavailable</h1>
+        <h1>Work inspector unavailable</h1>
         <p>{error}</p>
-        <button className="work-report-refresh" type="button" onClick={loadReport}>
+        <button className="work-report-refresh" type="button" onClick={reload}>
           Retry
         </button>
         <Link to={`/workspaces/${encodeURIComponent(id)}`}>Back to workspace</Link>
@@ -61,9 +67,12 @@ export default function WorkReportPage() {
   if (!report) {
     return (
       <main className="work-report-page" role="status">
-        No Work report is available.
+        No Work inspector is available.
       </main>
     );
   }
-  return <WorkReportView report={report} onRefresh={loadReport} />;
+  return <WorkInspectorView report={report} onRefresh={reload} />;
 }
+
+export { WorkInspectorPage as WorkReportPage };
+export default WorkInspectorPage;

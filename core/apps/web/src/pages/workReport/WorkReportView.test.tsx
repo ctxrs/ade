@@ -1,13 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { WorkspaceWorkReport } from "@ctx/types";
-import { WorkReportView } from "./WorkReportView";
+import type { WorkspaceWorkInspector } from "@ctx/types";
+import { WorkInspectorView } from "./WorkReportView";
 
-const baseReport = (): WorkspaceWorkReport => ({
+const baseReport = (): WorkspaceWorkInspector => ({
   work: {
     work_id: "wrk_1234567890",
     workspace_id: "workspace-1",
-    title: "Stabilize Work report route",
+    title: "Stabilize Work inspector route",
     objective: "Make local Work records legible",
     lifecycle: "ready_for_review",
     primary_branch: "ctx/work-observability",
@@ -20,11 +20,45 @@ const baseReport = (): WorkspaceWorkReport => ({
     schema_version: 1,
   },
   links: [],
+  overview: {
+    title: "Stabilize Work inspector route",
+    objective: "Make local Work records legible",
+    lifecycle: "ready_for_review",
+    primary_branch: "ctx/work-observability",
+    base_commit: null,
+    head_commit: "abcdef1234567890",
+    created_at: "2026-06-21T00:00:00Z",
+    updated_at: "2026-06-21T00:01:00Z",
+  },
   trust: {
     verdict: "failed",
     reason: "At least one linked evidence item failed.",
     recommended_next_action: "Fix the failing evidence before marking this ready.",
     open_risks: ["At least one linked evidence item failed."],
+  },
+  context: {
+    value: {
+      budget_tokens: 4000,
+      summary: "Only redacted context is present.",
+    },
+    redacted: true,
+    redaction_notes: ["test fixture"],
+  },
+  safe_json: {
+    value: {
+      safe_marker: "safe-visible-marker",
+      redacted: "[redacted:workspace_root]",
+    },
+    redacted: true,
+    redaction_notes: ["test fixture"],
+  },
+  raw_redacted_json: {
+    value: {
+      safe_marker: "safe-visible-marker",
+      redacted: "[redacted:workspace_root]",
+    },
+    redacted: true,
+    redaction_notes: ["test fixture"],
   },
   evidence_summary: {
     total: 2,
@@ -48,8 +82,8 @@ const baseReport = (): WorkspaceWorkReport => ({
       exit_code: 101,
       head_sha: "abcdef1234567890",
       branch: "ctx/work-observability",
-      output_ref: null,
-      artifact_ref: null,
+      output_ref: { log: "redacted failure output" },
+      artifact_ref: { path: "[redacted:artifact]" },
       source: "worktree",
       fidelity: "exact",
       trust: "medium",
@@ -94,12 +128,16 @@ const baseReport = (): WorkspaceWorkReport => ({
         owner: "ctxrs",
         repo: "ctx",
         number: 123,
-        title: "Review Work report route",
-        url: "https://github.com/ctxrs/ctx/pull/123",
+        title: "Unsafe stored PR",
+        url: "javascript:alert(1)",
         state: "draft",
       },
     ],
     commits: ["abcdef1234567890"],
+  },
+  artifact_summary: {
+    total: 1,
+    refs: [],
   },
   change_sets: [],
   contributions: [],
@@ -149,92 +187,113 @@ const baseReport = (): WorkspaceWorkReport => ({
       schema_version: 1,
     },
   ],
+  transcript: [
+    {
+      event_id: "msg_1",
+      sequence: 1,
+      event_type: "assistant_message",
+      actor_kind: "agent",
+      event_time: "2026-06-21T00:00:30Z",
+      redaction_class: "local_redacted",
+      text_preview: "I ran the focused tests.",
+    },
+  ],
+  commands: [
+    {
+      id: "cmd_1",
+      evidence_id: "wevdc_fail",
+      command: "cargo test -p ctx-http",
+      argv: ["cargo", "test", "-p", "ctx-http"],
+      cwd: "[redacted:workspace_root]",
+      exit_code: 101,
+      status: "observed_fail",
+      freshness: "stale",
+      stdout_preview: "1 failing test",
+      stderr_preview: null,
+      output_truncated: false,
+      started_at: "2026-06-21T00:00:00Z",
+      finished_at: "2026-06-21T00:01:00Z",
+      output_ref: { log: "redacted failure output" },
+    },
+  ],
+  artifacts: [
+    {
+      id: "artifact_1",
+      kind: "screenshot",
+      label: "Unsafe screenshot link",
+      url: "javascript:alert(1)",
+      path: "[redacted:artifact_path]",
+      ref: { mime: "image/png" },
+      created_at: "2026-06-21T00:05:00Z",
+    },
+  ],
+  timeline_items: [],
   duplicate_strong_links: [],
   raw_transcript_available: false,
   raw_transcript_included: false,
 });
 
-describe("WorkReportView", () => {
-  it("renders reviewer-critical trust, evidence, and raw-detail status", () => {
+describe("WorkInspectorView", () => {
+  it("renders the dashboard shell and overview metrics", () => {
     const onRefresh = vi.fn();
-    render(<WorkReportView report={baseReport()} onRefresh={onRefresh} />);
+    render(<WorkInspectorView report={baseReport()} onRefresh={onRefresh} />);
 
-    expect(screen.getByRole("heading", { name: "Stabilize Work report route" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Stabilize Work inspector route" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Raw redacted JSON" })).toBeInTheDocument();
     expect(screen.getByLabelText("Work trust")).toHaveTextContent("failed");
-    expect(screen.getByLabelText("Linked change")).toHaveTextContent("Review Work report route");
-    expect(screen.getByLabelText("Linked change")).toHaveTextContent("commit abcdef123456");
-    expect(screen.getByText("Fix the failing evidence before marking this ready.")).toBeInTheDocument();
-    expect(screen.getByText("Observed cargo test exited 101")).toBeInTheDocument();
+    expect(screen.getByLabelText("Evidence summary")).toHaveTextContent("Commands");
+    expect(screen.getByText("Raw transcripts are not available in this inspector response.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches between transcript, commands, and evidence tabs deterministically", () => {
+    render(<WorkInspectorView report={baseReport()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByRole("tab", { name: "Transcript" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("I ran the focused tests.");
+    expect(screen.queryByText("Observed cargo test exited 101")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Commands" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("cargo test -p ctx-http");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("exit 101");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Observed cargo test exited 101");
     expect(screen.getAllByText("worktree").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("exact").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("medium").length).toBeGreaterThan(0);
-    expect(screen.getByText("Raw transcripts are not available in this report response.")).toBeInTheDocument();
-    expect(screen.queryByText("payload_json")).not.toBeInTheDocument();
-    expect(screen.queryByText("/home/daddy")).not.toBeInTheDocument();
   });
 
-  it("renders first-viewport missing evidence and raw transcript availability states", () => {
-    const report = baseReport();
-    report.evidence_summary = {
-      total: 0,
-      passing: 0,
-      failing: 0,
-      stale: 0,
-      missing: 1,
-    };
-    report.evidence = [];
-    report.trust = {
-      verdict: "missing_evidence",
-      reason: "No evidence has been recorded for this Work record.",
-      recommended_next_action: "Add evidence with ctx work evidence.",
-      open_risks: ["No evidence has been recorded for this Work record."],
-    };
-    report.raw_transcript_available = true;
+  it("renders unsafe URLs as text in tab content", () => {
+    render(<WorkInspectorView report={baseReport()} />);
 
-    render(<WorkReportView report={report} />);
-
-    expect(screen.getByLabelText("Missing evidence")).toHaveTextContent("Evidence is missing");
-    expect(screen.getByLabelText("Evidence summary")).toHaveTextContent("Missing");
-    expect(screen.getByText("Raw transcripts are available locally but not included by default.")).toBeInTheDocument();
-    expect(screen.getAllByText("No evidence has been recorded for this Work record.").length).toBeGreaterThan(0);
-  });
-
-  it("renders pull request fallback links without activating unsafe stored URLs", () => {
-    const report = baseReport();
-    report.change_summary.pull_requests = [
-      {
-        provider: "github",
-        owner: "ctxrs",
-        repo: "ctx",
-        number: 123,
-        title: "Unsafe stored PR",
-        url: "javascript:alert(1)",
-        state: "draft",
-      },
-    ];
-    report.links = [
-      {
-        link_id: "wrl_1",
-        work_id: report.work.work_id,
-        workspace_id: report.work.workspace_id,
-        target_kind: "pull_request",
-        target_id: "github:ctxrs/ctx#456",
-        target_json: null,
-        role: "result",
-        source: "manual",
-        fidelity: "declared",
-        trust: "medium",
-        created_at: "2026-06-21T00:05:00Z",
-        updated_at: "2026-06-21T00:05:00Z",
-        schema_version: 1,
-      },
-    ];
-
-    render(<WorkReportView report={report} />);
-
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     expect(screen.queryByRole("link", { name: "Unsafe stored PR · draft" })).not.toBeInTheDocument();
     expect(screen.getByText("Unsafe stored PR · draft")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "github:ctxrs/ctx#456" })).not.toBeInTheDocument();
-    expect(screen.getByText("github:ctxrs/ctx#456")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Artifacts" }));
+    const artifacts = screen.getByRole("tabpanel");
+    expect(within(artifacts).queryByRole("link", { name: "javascript:alert(1)" })).not.toBeInTheDocument();
+    expect(within(artifacts).getByText("javascript:alert(1)")).toBeInTheDocument();
+  });
+
+  it("keeps raw redacted JSON collapsed and renders only safe_json when expanded", () => {
+    const report = baseReport();
+    const unsafePayload = { secret: "/home/daddy/private-token" };
+    (report.raw_redacted_json as typeof report.raw_redacted_json & { unsafe_json?: unknown }).unsafe_json = unsafePayload;
+
+    render(<WorkInspectorView report={report} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Raw redacted JSON" }));
+
+    expect(screen.getByRole("button", { name: "Expand JSON" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("safe-visible-marker")).not.toBeInTheDocument();
+    expect(screen.queryByText("/home/daddy/private-token")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand JSON" }));
+    expect(screen.getByRole("button", { name: "Collapse JSON" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/safe-visible-marker/)).toBeInTheDocument();
+    expect(screen.queryByText("/home/daddy/private-token")).not.toBeInTheDocument();
   });
 });

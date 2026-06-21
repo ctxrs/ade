@@ -16,6 +16,7 @@ import {
   getWorkspaceWork,
   getWorkspaceWorkContext,
   getWorkspaceWorkEvidence,
+  getWorkspaceWorkInspector,
   getWorkspaceWorkReport,
   getWorkspaceWorkTimeline,
   listWorkspaceWork,
@@ -31,6 +32,7 @@ describe("workspace Work API client", () => {
     await listWorkspaceWork("ws 1", { limit: 25 });
     await getWorkspaceWork("ws 1", "wrk/a");
     await getWorkspaceWorkReport("ws 1", "wrk/a");
+    await getWorkspaceWorkInspector("ws 1", "wrk/a");
     await getWorkspaceWorkContext("ws 1", "wrk/a", { budget: 4000 });
     await getWorkspaceWorkTimeline("ws 1", "wrk/a", { limit: 10 });
     await getWorkspaceWorkEvidence("ws 1", "wrk/a");
@@ -39,6 +41,7 @@ describe("workspace Work API client", () => {
       "/api/workspaces/ws%201/work?limit=25",
       "/api/workspaces/ws%201/work/wrk%2Fa",
       "/api/workspaces/ws%201/work/wrk%2Fa/report",
+      "/api/workspaces/ws%201/work/wrk%2Fa/inspector",
       "/api/workspaces/ws%201/work/wrk%2Fa/context?budget=4000",
       "/api/workspaces/ws%201/work/wrk%2Fa/timeline?limit=10",
       "/api/workspaces/ws%201/work/wrk%2Fa/evidence",

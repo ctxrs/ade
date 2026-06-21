@@ -362,6 +362,137 @@ pub struct WorkspaceWorkChangeSummaryRouteResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkSafeJsonRouteResponse {
+    pub value: Value,
+    pub redacted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redaction_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkTranscriptItemRouteResponse {
+    pub event_id: WorkEventId,
+    pub sequence: i64,
+    pub event_type: WorkEventType,
+    pub event_time: DateTime<Utc>,
+    pub actor_kind: WorkActorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub redaction_class: WorkRedactionClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkCommandPreviewRouteResponse {
+    pub evidence_id: WorkEvidenceId,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub status: WorkEvidenceStatus,
+    pub freshness: WorkEvidenceFreshness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_preview: Option<String>,
+    #[serde(default)]
+    pub output_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkArtifactRouteItem {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ref")]
+    pub reference: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkArtifactSummaryRouteResponse {
+    pub total: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<WorkspaceWorkSafeJsonRouteResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkTimelineItemRouteResponse {
+    pub sequence: i64,
+    pub event_time: DateTime<Utc>,
+    pub kind: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<WorkEventId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_evidence_id: Option<WorkEvidenceId>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkInspectorOverviewRouteResponse {
+    pub title: Option<String>,
+    pub objective: Option<String>,
+    pub lifecycle: WorkLifecycle,
+    pub primary_branch: Option<String>,
+    pub base_commit: Option<String>,
+    pub head_commit: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceWorkInspectorRouteResponse {
+    pub work: WorkspaceWorkRecordRouteItem,
+    pub links: Vec<WorkspaceWorkLinkRouteItem>,
+    pub overview: WorkspaceWorkInspectorOverviewRouteResponse,
+    pub trust: WorkspaceWorkTrustRouteSummary,
+    pub context: WorkspaceWorkSafeJsonRouteResponse,
+    pub safe_json: WorkspaceWorkSafeJsonRouteResponse,
+    pub raw_redacted_json: WorkspaceWorkSafeJsonRouteResponse,
+    pub evidence_summary: WorkspaceWorkEvidenceSummaryRouteResponse,
+    pub change_summary: WorkspaceWorkChangeSummaryRouteResponse,
+    pub artifact_summary: WorkspaceWorkArtifactSummaryRouteResponse,
+    pub transcript: Vec<WorkspaceWorkTranscriptItemRouteResponse>,
+    pub commands: Vec<WorkspaceWorkCommandPreviewRouteResponse>,
+    pub artifacts: Vec<WorkspaceWorkArtifactRouteItem>,
+    pub evidence: Vec<WorkspaceWorkEvidenceRouteItem>,
+    pub change_sets: Vec<Value>,
+    pub contributions: Vec<Value>,
+    pub summaries: Vec<WorkspaceWorkSummaryRouteItem>,
+    pub summary_claims: Vec<WorkspaceWorkSummaryClaimRouteItem>,
+    pub timeline: Vec<WorkspaceWorkEventRouteItem>,
+    pub timeline_items: Vec<WorkspaceWorkTimelineItemRouteResponse>,
+    pub duplicate_strong_links: Vec<WorkspaceWorkDuplicateStrongLinkRouteItem>,
+    pub raw_transcript_available: bool,
+    pub raw_transcript_included: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceWorkReportRouteResponse {
     pub work: WorkspaceWorkRecordRouteItem,
     pub links: Vec<WorkspaceWorkLinkRouteItem>,

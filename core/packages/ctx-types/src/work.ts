@@ -224,6 +224,109 @@ export type WorkspaceWorkChangeSummary = {
   commits: string[];
 };
 
+export type WorkspaceWorkSafeJson = {
+  value: JsonValue;
+  redacted: boolean;
+  redaction_notes: string[];
+};
+
+export type WorkspaceWorkInspectorTranscriptItem = {
+  event_id: string;
+  id?: string | null;
+  sequence: number;
+  event_type: WorkEventType;
+  event_time: string;
+  actor_kind: WorkActorKind;
+  provider?: string | null;
+  harness?: string | null;
+  model?: string | null;
+  redaction_class: WorkRedactionClass;
+  text_preview?: string | null;
+};
+
+export type WorkspaceWorkInspectorCommand = {
+  id: string;
+  evidence_id: string;
+  command?: string | null;
+  argv: string[];
+  cwd?: string | null;
+  exit_code?: number | null;
+  status: WorkEvidenceStatus;
+  freshness: WorkEvidenceFreshness;
+  stdout_preview?: string | null;
+  stderr_preview?: string | null;
+  output_truncated: boolean;
+  started_at?: string | null;
+  finished_at?: string | null;
+  output_ref?: JsonValue | null;
+};
+
+export type WorkspaceWorkInspectorArtifact = {
+  id: string;
+  kind?: string | null;
+  label?: string | null;
+  url?: string | null;
+  path?: string | null;
+  ref?: JsonValue | null;
+  created_at?: string | null;
+};
+
+export type WorkspaceWorkInspectorRawRedactedJson = {
+  safe_json: JsonValue;
+};
+
+export type WorkspaceWorkInspectorOverview = {
+  title?: string | null;
+  objective?: string | null;
+  lifecycle: WorkLifecycle;
+  primary_branch?: string | null;
+  base_commit?: string | null;
+  head_commit?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkspaceWorkInspectorTimelineItem = {
+  sequence: number;
+  event_time: string;
+  kind: string;
+  title: string;
+  detail?: string | null;
+  source_event_id?: string | null;
+  source_evidence_id?: string | null;
+};
+
+export type WorkspaceWorkArtifactSummary = {
+  total: number;
+  refs: WorkspaceWorkSafeJson[];
+};
+
+export type WorkspaceWorkInspector = {
+  work: WorkspaceWorkRecord;
+  links: WorkspaceWorkLink[];
+  overview: WorkspaceWorkInspectorOverview;
+  trust: WorkspaceWorkTrustSummary;
+  context: WorkspaceWorkSafeJson;
+  safe_json: WorkspaceWorkSafeJson;
+  raw_redacted_json: WorkspaceWorkSafeJson;
+  evidence_summary: WorkspaceWorkEvidenceSummary;
+  change_summary: WorkspaceWorkChangeSummary;
+  artifact_summary: WorkspaceWorkArtifactSummary;
+  transcript: WorkspaceWorkInspectorTranscriptItem[];
+  commands: WorkspaceWorkInspectorCommand[];
+  artifacts: WorkspaceWorkInspectorArtifact[];
+  evidence: WorkspaceWorkEvidence[];
+  change_sets: JsonValue[];
+  contributions: JsonValue[];
+  summaries: WorkspaceWorkSummary[];
+  summary_claims: WorkspaceWorkSummaryClaim[];
+  timeline: WorkspaceWorkEvent[];
+  timeline_items: WorkspaceWorkInspectorTimelineItem[];
+  duplicate_strong_links: WorkspaceWorkDuplicateStrongLink[];
+  raw_transcript_available: boolean;
+  raw_transcript_included: boolean;
+};
+
 export type WorkspaceWorkReport = {
   work: WorkspaceWorkRecord;
   links: WorkspaceWorkLink[];
