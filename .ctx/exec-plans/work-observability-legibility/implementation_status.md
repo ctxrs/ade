@@ -50,3 +50,13 @@ Planned implementation/review teams:
 - Repo-local `AGENTS.md` was not present in this worktree; parent workspace
   instructions apply.
 - Only uncommitted state at start was this plan directory.
+- Added first implementation slice:
+  - Work observability IDs and typed records;
+  - `0076_work_observability.sql` tables and FTS5 search table;
+  - `ctx-store` Work CRUD/search APIs;
+  - `ctx work` commands for search, context, report, timeline, evidence,
+    summarize, link-commit, and index rebuild;
+  - capture/link-pr/note now materialize durable Work records and redacted
+    timeline/search docs.
+- Validation: `scripts/dev/cargo-safe.sh check --manifest-path Cargo.toml -p
+  ctx-http --locked` passed under the global Cargo lock and capped memory.

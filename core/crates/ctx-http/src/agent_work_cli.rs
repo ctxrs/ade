@@ -5,17 +5,25 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Subcommand, ValueEnum};
-use ctx_core::ids::{ChangeSetId, ContributionId, WorkspaceId};
+use ctx_core::ids::{
+    ChangeSetId, ContributionId, WorkEventId, WorkEvidenceId, WorkRecordId, WorkRecordLinkId,
+    WorkSearchDocId, WorkSummaryClaimId, WorkSummaryId, WorkspaceId,
+};
 use ctx_core::models::PluginManifest;
 use ctx_core::models::{
     ChangeSet, Contribution, ContributionEndpoint, ContributionRole, GitFingerprint,
     PullRequestLink, PullRequestLinkKind, PullRequestRef, RecordFidelity, RecordOrigin,
-    RecordSource, RecordTrust, Sha256DigestValue, Workspace,
+    RecordSource, RecordTrust, Sha256DigestValue, WorkActorKind, WorkEvent, WorkEventType,
+    WorkEvidence, WorkEvidenceFreshness, WorkEvidenceKind, WorkEvidenceStatus, WorkLifecycle,
+    WorkLinkRole, WorkLinkTargetKind, WorkRecord, WorkRecordLink, WorkRedactionClass,
+    WorkSearchDoc, WorkSummary, WorkSummaryAudience, WorkSummaryClaim, WorkSummaryFreshness,
+    WorkSummaryGenerationMethod, WorkSummaryKind, WorkTrustVerdict, Workspace,
 };
-use ctx_store::{Store, StoreManager};
+use ctx_store::{Store, StoreManager, WorkSearchQuery};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Digest;
 use url::Url;
 
 #[derive(Debug, Args)]
@@ -46,6 +54,22 @@ pub(crate) enum AgentWorkSubcommand {
     Note(AgentWorkNoteArgs),
     /// Show recent local Work context.
     Recent(AgentWorkRecentArgs),
+    /// Search redacted local Work records.
+    Search(AgentWorkSearchArgs),
+    /// Build a bounded agent context pack for a Work record.
+    Context(AgentWorkContextArgs),
+    /// Render a reviewer-facing Work report.
+    Report(AgentWorkReportArgs),
+    /// Show the redacted Work timeline.
+    Timeline(AgentWorkTimelineArgs),
+    /// Add or inspect Work evidence.
+    Evidence(AgentWorkEvidenceArgs),
+    /// Generate a deterministic local Work summary.
+    Summarize(AgentWorkSummarizeArgs),
+    /// Link a commit SHA to a durable Work record.
+    LinkCommit(AgentWorkLinkCommitArgs),
+    /// Maintain the redacted local Work search index.
+    Index(AgentWorkIndexArgs),
     /// Export local Work records.
     Export(AgentWorkExportArgs),
     /// Import local Work records.
@@ -207,6 +231,208 @@ pub(crate) struct AgentWorkRecentArgs {
     /// Emit machine-readable JSON.
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkSearchArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Search query. Omit when using exact filters such as --pr or --commit.
+    pub(crate) query: Vec<String>,
+    /// Workspace-relative path filter.
+    #[arg(long)]
+    pub(crate) path: Option<String>,
+    /// Pull request URL filter.
+    #[arg(long)]
+    pub(crate) pr: Option<String>,
+    /// Commit SHA filter.
+    #[arg(long)]
+    pub(crate) commit: Option<String>,
+    /// Maximum search results.
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: usize,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkContextArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Work record id.
+    pub(crate) work_id: String,
+    /// Approximate token budget for the returned context.
+    #[arg(long, default_value_t = 12_000)]
+    pub(crate) budget: usize,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkReportArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Work record id.
+    pub(crate) work_id: String,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Emit Markdown.
+    #[arg(long)]
+    pub(crate) markdown: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkTimelineArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Work record id.
+    pub(crate) work_id: String,
+    /// Maximum timeline events.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) limit: usize,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkEvidenceArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Work record id.
+    pub(crate) work_id: String,
+    #[command(subcommand)]
+    pub(crate) command: AgentWorkEvidenceSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AgentWorkEvidenceSubcommand {
+    /// List evidence for a Work record.
+    List(AgentWorkEvidenceListArgs),
+    /// Attach a local artifact as evidence.
+    Add(AgentWorkEvidenceAddArgs),
+    /// Run a command and record evidence with a Git fingerprint.
+    Run(AgentWorkEvidenceRunArgs),
+    /// Recompute evidence freshness against the current workspace state.
+    Freshness(AgentWorkEvidenceFreshnessArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkEvidenceListArgs {
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkEvidenceAddArgs {
+    /// Evidence kind.
+    #[arg(long, value_enum, default_value = "log")]
+    pub(crate) kind: AgentWorkEvidenceKindArg,
+    /// Local file to attach. Must be under the workspace root and not a symlink.
+    #[arg(long)]
+    pub(crate) file: PathBuf,
+    /// Optional claim for this evidence.
+    #[arg(long)]
+    pub(crate) claim: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkEvidenceRunArgs {
+    /// Evidence kind.
+    #[arg(long, value_enum, default_value = "command")]
+    pub(crate) kind: AgentWorkEvidenceKindArg,
+    /// Working directory for the command. Defaults to the current directory.
+    #[arg(long)]
+    pub(crate) cwd: Option<PathBuf>,
+    /// Command and arguments after `--`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+    pub(crate) command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkEvidenceFreshnessArgs {
+    /// Working directory used for current Git fingerprint.
+    #[arg(long)]
+    pub(crate) cwd: Option<PathBuf>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkSummarizeArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Work record id.
+    pub(crate) work_id: String,
+    /// Summary kind.
+    #[arg(long, value_enum, default_value = "context")]
+    pub(crate) kind: AgentWorkSummaryKindArg,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkLinkCommitArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    /// Commit SHA to link.
+    pub(crate) sha: String,
+    /// Working directory used for repo/branch context.
+    #[arg(long)]
+    pub(crate) cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkIndexArgs {
+    #[command(flatten)]
+    pub(crate) store: AgentWorkStoreArgs,
+    #[command(subcommand)]
+    pub(crate) command: AgentWorkIndexSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AgentWorkIndexSubcommand {
+    /// Rebuild redacted search docs from local Work records.
+    Rebuild(AgentWorkIndexRebuildArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentWorkIndexRebuildArgs {
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AgentWorkEvidenceKindArg {
+    Command,
+    Test,
+    Lint,
+    Format,
+    Typecheck,
+    Build,
+    Screenshot,
+    Recording,
+    Log,
+    ManualReview,
+    AgentReview,
+    CiResult,
+    ArtifactInspection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AgentWorkSummaryKindArg {
+    Live,
+    Context,
+    Report,
+    DecisionLog,
+    Evidence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -402,6 +628,30 @@ async fn run_with_writer(command: AgentWorkCommand, writer: &mut dyn Write) -> R
         AgentWorkSubcommand::Recent(args) => {
             show_recent_work(args, writer).await?;
         }
+        AgentWorkSubcommand::Search(args) => {
+            search_work(args, writer).await?;
+        }
+        AgentWorkSubcommand::Context(args) => {
+            show_work_context(args, writer).await?;
+        }
+        AgentWorkSubcommand::Report(args) => {
+            show_work_report(args, writer).await?;
+        }
+        AgentWorkSubcommand::Timeline(args) => {
+            show_work_timeline(args, writer).await?;
+        }
+        AgentWorkSubcommand::Evidence(args) => {
+            handle_work_evidence(args, writer).await?;
+        }
+        AgentWorkSubcommand::Summarize(args) => {
+            summarize_work(args, writer).await?;
+        }
+        AgentWorkSubcommand::LinkCommit(args) => {
+            link_commit(args, writer).await?;
+        }
+        AgentWorkSubcommand::Index(args) => {
+            handle_work_index(args, writer).await?;
+        }
         AgentWorkSubcommand::Export(args) => {
             export_work_records(args, writer).await?;
         }
@@ -440,6 +690,12 @@ async fn capture_command(args: AgentWorkCaptureCommandArgs, writer: &mut dyn Wri
     } else {
         None
     };
+    let work = if let Some(pr) = pr.as_ref() {
+        ensure_work_record_for_pr(&context, pr, &cwd, pr.title.as_deref()).await?
+    } else {
+        ensure_ambient_work_record(&context, &cwd).await?
+    };
+    let classification = classify_captured_command(tool, &argv);
     let metadata = json!({
         "kind": "ctx.work.command_capture",
         "tool": tool.as_str(),
@@ -449,7 +705,7 @@ async fn capture_command(args: AgentWorkCaptureCommandArgs, writer: &mut dyn Wri
         "repo_root": facts.repo_root,
         "branch": facts.branch,
         "head_sha": facts.head_sha,
-        "classification": classify_captured_command(tool, &argv),
+        "classification": classification,
         "pull_request": pr.as_ref(),
     });
     let target = pr
@@ -490,7 +746,73 @@ async fn capture_command(args: AgentWorkCaptureCommandArgs, writer: &mut dyn Wri
         schema_version: AGENT_WORK_SCHEMA_VERSION,
     };
     let contribution = context.store.upsert_contribution(&contribution).await?;
+    upsert_work_link(
+        &context,
+        &work.work_id,
+        WorkLinkTargetKind::Contribution,
+        Some(contribution.id.0.clone()),
+        Some(serde_json::to_value(&contribution)?),
+        WorkLinkRole::Context,
+        contribution.source,
+        contribution.fidelity,
+        contribution.trust,
+    )
+    .await?;
+    append_capture_work_event(
+        &context,
+        &work.work_id,
+        tool,
+        &argv,
+        exit_code,
+        &cwd,
+        pr.as_ref(),
+        Some(&contribution.id),
+    )
+    .await?;
+    if let Some(kind) = evidence_kind_for_captured_command(&classification) {
+        let now = Utc::now();
+        let fingerprint = git_fingerprint(&cwd);
+        let evidence = WorkEvidence {
+            evidence_id: WorkEvidenceId::new(),
+            work_id: work.work_id.clone(),
+            workspace_id: context.workspace_id,
+            kind,
+            status: if exit_code == 0 {
+                WorkEvidenceStatus::ObservedPass
+            } else {
+                WorkEvidenceStatus::ObservedFail
+            },
+            freshness: if fingerprint.is_some() {
+                WorkEvidenceFreshness::Fresh
+            } else {
+                WorkEvidenceFreshness::Unknown
+            },
+            claim: contribution.summary.clone(),
+            command: Some(redact_argv(&argv).join(" ")),
+            argv: redact_argv(&argv),
+            cwd: Some(redact_work_text(&context, &cwd.to_string_lossy())),
+            exit_code: Some(exit_code),
+            repo_root: git_facts(&cwd).repo_root,
+            head_sha: git_facts(&cwd).head_sha,
+            branch: git_facts(&cwd).branch,
+            fingerprint: fingerprint.clone(),
+            current_fingerprint: fingerprint,
+            output_ref: None,
+            artifact_ref: None,
+            source: RecordSource::External,
+            fidelity: RecordFidelity::Declared,
+            trust: RecordTrust::Low,
+            started_at: now,
+            finished_at: now,
+            created_at: now,
+            updated_at: now,
+            schema_version: AGENT_WORK_SCHEMA_VERSION,
+        };
+        let evidence = context.store.upsert_work_evidence(&evidence).await?;
+        append_evidence_event_and_index(&context, &work.work_id, &evidence).await?;
+    }
     writeln!(writer, "captured: {}", contribution.id)?;
+    writeln!(writer, "work: {}", work.work_id)?;
     write_diagnostic(
         writer,
         DiagnosticSeverity::Info,
@@ -535,8 +857,64 @@ async fn link_pull_request(args: AgentWorkLinkPrArgs, writer: &mut dyn Write) ->
     let change_set = context.store.upsert_change_set(&change_set).await?;
     let contribution =
         upsert_pr_link_contribution(&context.store, context.workspace_id, &change_set, &pr).await?;
+    let work = ensure_work_record_for_pr(&context, &pr, &cwd, args.title.as_deref()).await?;
+    upsert_work_link(
+        &context,
+        &work.work_id,
+        WorkLinkTargetKind::ChangeSet,
+        Some(change_set.id.0.clone()),
+        Some(serde_json::to_value(&change_set)?),
+        WorkLinkRole::Result,
+        change_set.source,
+        change_set.fidelity,
+        change_set.trust,
+    )
+    .await?;
+    upsert_work_link(
+        &context,
+        &work.work_id,
+        WorkLinkTargetKind::Contribution,
+        Some(contribution.id.0.clone()),
+        Some(serde_json::to_value(&contribution)?),
+        WorkLinkRole::Result,
+        contribution.source,
+        contribution.fidelity,
+        contribution.trust,
+    )
+    .await?;
+    let now = Utc::now();
+    let event = WorkEvent {
+        event_id: WorkEventId::new(),
+        work_id: work.work_id.clone(),
+        workspace_id: context.workspace_id,
+        sequence: 0,
+        source_kind: Some("pull_request".to_string()),
+        source_id: Some(pull_request_target_id(&pr)),
+        event_type: WorkEventType::PullRequestLinked,
+        event_time: now,
+        actor_kind: WorkActorKind::System,
+        provider: Some("github".to_string()),
+        harness: None,
+        model: None,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        source: RecordSource::PullRequest,
+        fidelity: RecordFidelity::Declared,
+        trust: RecordTrust::Medium,
+        payload_json: Some(ctx_core::redaction::redact_json_value(json!({
+            "pull_request": &pr,
+            "change_set_id": &change_set.id,
+            "contribution_id": &contribution.id,
+        }))),
+        redacted_text: Some(format!("Linked PR {}/{}#{}", pr.owner, pr.repo, pr.number)),
+        artifact_ref: None,
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let event = context.store.append_work_event(&event).await?;
+    index_work_event(&context, &event).await?;
 
     writeln!(writer, "change_set: {}", change_set.id)?;
+    writeln!(writer, "work: {}", work.work_id)?;
     writeln!(
         writer,
         "pull_request: {}/{}/#{}",
@@ -553,7 +931,8 @@ async fn link_pull_request(args: AgentWorkLinkPrArgs, writer: &mut dyn Write) ->
 }
 
 async fn add_work_note(args: AgentWorkNoteArgs, writer: &mut dyn Write) -> Result<()> {
-    let context = open_work_store(&args.store).await?;
+    let cwd = std::env::current_dir()?;
+    let context = open_work_store_for_path(&args.store, Some(&cwd)).await?;
     let target = if let Some(change_set_id) = args.change_set_id {
         ContributionEndpoint::ChangeSet {
             change_set_id: ChangeSetId::from_id(change_set_id),
@@ -593,7 +972,66 @@ async fn add_work_note(args: AgentWorkNoteArgs, writer: &mut dyn Write) -> Resul
         schema_version: AGENT_WORK_SCHEMA_VERSION,
     };
     let contribution = context.store.upsert_contribution(&contribution).await?;
+    let work = match &contribution.target {
+        ContributionEndpoint::ChangeSet { change_set_id } => {
+            if let Some(existing) = context
+                .store
+                .find_work_record_by_link(
+                    context.workspace_id,
+                    WorkLinkTargetKind::ChangeSet,
+                    &change_set_id.0,
+                )
+                .await?
+            {
+                existing
+            } else {
+                ensure_ambient_work_record(&context, &cwd).await?
+            }
+        }
+        _ => ensure_ambient_work_record(&context, &cwd).await?,
+    };
+    upsert_work_link(
+        &context,
+        &work.work_id,
+        WorkLinkTargetKind::Contribution,
+        Some(contribution.id.0.clone()),
+        Some(serde_json::to_value(&contribution)?),
+        WorkLinkRole::Context,
+        contribution.source,
+        contribution.fidelity,
+        contribution.trust,
+    )
+    .await?;
+    let now = Utc::now();
+    let event = WorkEvent {
+        event_id: WorkEventId::new(),
+        work_id: work.work_id.clone(),
+        workspace_id: context.workspace_id,
+        sequence: 0,
+        source_kind: Some("note".to_string()),
+        source_id: Some(contribution.id.0.clone()),
+        event_type: WorkEventType::Note,
+        event_time: now,
+        actor_kind: WorkActorKind::Agent,
+        provider: None,
+        harness: None,
+        model: None,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        source: RecordSource::Manual,
+        fidelity: RecordFidelity::Declared,
+        trust: RecordTrust::Medium,
+        payload_json: Some(ctx_core::redaction::redact_json_value(json!({
+            "contribution_id": &contribution.id,
+        }))),
+        redacted_text: contribution.summary.clone(),
+        artifact_ref: None,
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let event = context.store.append_work_event(&event).await?;
+    index_work_event(&context, &event).await?;
     writeln!(writer, "contribution: {}", contribution.id)?;
+    writeln!(writer, "work: {}", work.work_id)?;
     write_diagnostic(
         writer,
         DiagnosticSeverity::Info,
@@ -650,6 +1088,609 @@ async fn show_recent_work(args: AgentWorkRecentArgs, writer: &mut dyn Write) -> 
         }
     }
     Ok(())
+}
+
+async fn search_work(args: AgentWorkSearchArgs, writer: &mut dyn Write) -> Result<()> {
+    let context = open_work_store(&args.store).await?;
+    let pr = args
+        .pr
+        .as_deref()
+        .map(parse_github_pull_request_url)
+        .transpose()?;
+    let query_text = (!args.query.is_empty()).then(|| args.query.join(" "));
+    let hits = context
+        .store
+        .search_work_docs(
+            context.workspace_id,
+            WorkSearchQuery {
+                text: query_text.clone(),
+                path: args.path.clone(),
+                pr_owner: pr.as_ref().map(|pr| pr.owner.clone()),
+                pr_repo: pr.as_ref().map(|pr| pr.repo.clone()),
+                pr_number: pr.as_ref().map(|pr| pr.number),
+                commit_sha: args.commit.clone(),
+                freshness: None,
+                limit: Some(args.limit),
+            },
+        )
+        .await?;
+
+    let mut results = Vec::new();
+    for hit in hits {
+        let work = context
+            .store
+            .get_workspace_work_record(context.workspace_id, hit.doc.work_id.clone())
+            .await?;
+        let linked_prs = linked_pr_urls_for_work(
+            &context.store,
+            context.workspace_id,
+            hit.doc.work_id.clone(),
+        )
+        .await?;
+        results.push(json!({
+            "work_id": hit.doc.work_id,
+            "title": hit.doc.title.or_else(|| work.as_ref().and_then(|work| work.title.clone())),
+            "score": hit.score,
+            "matched_fields": [hit.doc.doc_type],
+            "workspace_id": hit.doc.workspace_id,
+            "repo_root": hit.doc.repo_root,
+            "state": work.as_ref().map(|work| work.lifecycle),
+            "trust_verdict": work.as_ref().map(|work| work.trust_verdict),
+            "summary_freshness": work.as_ref().map(|work| work.summary_freshness),
+            "linked_prs": linked_prs,
+            "citations": [{
+                "source_kind": hit.doc.source_kind,
+                "source_id": hit.doc.source_id,
+                "freshness": hit.doc.freshness
+            }],
+        }));
+    }
+
+    if args.json {
+        serde_json::to_writer_pretty(
+            &mut *writer,
+            &json!({
+                "query": query_text,
+                "results": results,
+                "suggested_next_commands": if results.is_empty() {
+                    vec![
+                        "ctx work index rebuild --json",
+                        "ctx work link-pr <url>",
+                        "ctx work evidence <work-id> run -- <command>",
+                    ]
+                } else {
+                    Vec::<&str>::new()
+                },
+            }),
+        )?;
+        writeln!(writer)?;
+    } else if results.is_empty() {
+        writeln!(writer, "no matching Work records")?;
+        writeln!(writer, "next: ctx work index rebuild --json")?;
+    } else {
+        for result in results {
+            writeln!(
+                writer,
+                "{} - {}",
+                result
+                    .get("work_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                result
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Untitled Work")
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn show_work_context(args: AgentWorkContextArgs, writer: &mut dyn Write) -> Result<()> {
+    let context = open_work_store(&args.store).await?;
+    let value = build_work_context_value(
+        &context.store,
+        context.workspace_id,
+        WorkRecordId::from_id(args.work_id.clone()),
+        args.budget,
+    )
+    .await?;
+    if args.json {
+        serde_json::to_writer_pretty(&mut *writer, &value)?;
+        writeln!(writer)?;
+    } else {
+        writeln!(writer, "work: {}", args.work_id)?;
+        if let Some(objective) = value.pointer("/context/objective").and_then(Value::as_str) {
+            writeln!(writer, "objective: {objective}")?;
+        }
+        if let Some(result) = value
+            .pointer("/context/current_result")
+            .and_then(Value::as_str)
+        {
+            writeln!(writer, "current_result: {result}")?;
+        }
+    }
+    Ok(())
+}
+
+async fn show_work_report(args: AgentWorkReportArgs, writer: &mut dyn Write) -> Result<()> {
+    let context = open_work_store(&args.store).await?;
+    let value = build_work_report_value(
+        &context.store,
+        context.workspace_id,
+        WorkRecordId::from_id(args.work_id.clone()),
+    )
+    .await?;
+    if args.markdown {
+        write_work_report_markdown(&value, writer)?;
+    } else if args.json {
+        serde_json::to_writer_pretty(&mut *writer, &value)?;
+        writeln!(writer)?;
+    } else {
+        let work = value.get("work").and_then(Value::as_object);
+        writeln!(
+            writer,
+            "work: {}",
+            work.and_then(|work| work.get("work_id"))
+                .and_then(Value::as_str)
+                .unwrap_or(args.work_id.as_str())
+        )?;
+        writeln!(
+            writer,
+            "title: {}",
+            work.and_then(|work| work.get("title"))
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled Work")
+        )?;
+        writeln!(
+            writer,
+            "trust: {}",
+            value
+                .pointer("/trust/verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )?;
+        writeln!(
+            writer,
+            "next: {}",
+            value
+                .pointer("/trust/recommended_next_action")
+                .and_then(Value::as_str)
+                .unwrap_or("Review the linked evidence.")
+        )?;
+    }
+    Ok(())
+}
+
+async fn show_work_timeline(args: AgentWorkTimelineArgs, writer: &mut dyn Write) -> Result<()> {
+    let context = open_work_store(&args.store).await?;
+    let events = context
+        .store
+        .list_work_events(
+            context.workspace_id,
+            WorkRecordId::from_id(args.work_id.clone()),
+            Some(args.limit),
+        )
+        .await?;
+    if args.json {
+        serde_json::to_writer_pretty(
+            &mut *writer,
+            &json!({
+                "work_id": args.work_id,
+                "events": events,
+                "raw_transcript_included": false,
+            }),
+        )?;
+        writeln!(writer)?;
+    } else {
+        for event in events {
+            writeln!(
+                writer,
+                "{} {} {}",
+                event.sequence,
+                serde_json::to_string(&event.event_type)?.trim_matches('"'),
+                event.redacted_text.unwrap_or_default()
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_work_evidence(args: AgentWorkEvidenceArgs, writer: &mut dyn Write) -> Result<()> {
+    match args.command {
+        AgentWorkEvidenceSubcommand::List(list_args) => {
+            list_work_evidence(args.store, args.work_id, list_args, writer).await
+        }
+        AgentWorkEvidenceSubcommand::Add(add_args) => {
+            add_work_evidence(args.store, args.work_id, add_args, writer).await
+        }
+        AgentWorkEvidenceSubcommand::Run(run_args) => {
+            run_work_evidence(args.store, args.work_id, run_args, writer).await
+        }
+        AgentWorkEvidenceSubcommand::Freshness(freshness_args) => {
+            refresh_work_evidence(args.store, args.work_id, freshness_args, writer).await
+        }
+    }
+}
+
+async fn list_work_evidence(
+    store_args: AgentWorkStoreArgs,
+    work_id: String,
+    args: AgentWorkEvidenceListArgs,
+    writer: &mut dyn Write,
+) -> Result<()> {
+    let context = open_work_store(&store_args).await?;
+    let evidence = context
+        .store
+        .list_work_evidence(context.workspace_id, WorkRecordId::from_id(work_id.clone()))
+        .await?;
+    if args.json {
+        serde_json::to_writer_pretty(
+            &mut *writer,
+            &json!({
+                "work_id": work_id,
+                "evidence": evidence,
+            }),
+        )?;
+        writeln!(writer)?;
+    } else {
+        writeln!(writer, "evidence: {}", evidence.len())?;
+        for item in evidence {
+            writeln!(
+                writer,
+                "- {} {} {}",
+                item.evidence_id,
+                serde_json::to_string(&item.status)?.trim_matches('"'),
+                item.claim.unwrap_or_default()
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn add_work_evidence(
+    store_args: AgentWorkStoreArgs,
+    work_id: String,
+    args: AgentWorkEvidenceAddArgs,
+    writer: &mut dyn Write,
+) -> Result<()> {
+    let context = open_work_store(&store_args).await?;
+    let work_id = WorkRecordId::from_id(work_id);
+    let artifact = inspect_evidence_file(&context, &args.file)?;
+    let now = Utc::now();
+    let evidence = WorkEvidence {
+        evidence_id: WorkEvidenceId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        kind: args.kind.into_work_kind(),
+        status: WorkEvidenceStatus::ObservedPass,
+        freshness: WorkEvidenceFreshness::Fresh,
+        claim: args.claim.map(|claim| redact_work_text(&context, &claim)),
+        command: None,
+        argv: Vec::new(),
+        cwd: None,
+        exit_code: None,
+        repo_root: None,
+        head_sha: None,
+        branch: None,
+        fingerprint: None,
+        current_fingerprint: None,
+        output_ref: None,
+        artifact_ref: Some(artifact),
+        source: RecordSource::Manual,
+        fidelity: RecordFidelity::Declared,
+        trust: RecordTrust::Medium,
+        started_at: now,
+        finished_at: now,
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let evidence = context.store.upsert_work_evidence(&evidence).await?;
+    append_evidence_event_and_index(&context, &work_id, &evidence).await?;
+    writeln!(writer, "evidence: {}", evidence.evidence_id)?;
+    Ok(())
+}
+
+async fn run_work_evidence(
+    store_args: AgentWorkStoreArgs,
+    work_id: String,
+    args: AgentWorkEvidenceRunArgs,
+    writer: &mut dyn Write,
+) -> Result<()> {
+    let cwd = args.cwd.unwrap_or(std::env::current_dir()?);
+    let context = open_work_store_for_path(&store_args, Some(&cwd)).await?;
+    let work_id = WorkRecordId::from_id(work_id);
+    context
+        .store
+        .get_workspace_work_record(context.workspace_id, work_id.clone())
+        .await?
+        .with_context(|| format!("work record {} not found", work_id.0))?;
+    let Some((program, argv)) = args.command.split_first() else {
+        bail!("evidence run requires a command after --");
+    };
+    let started_at = Utc::now();
+    let output = Command::new(program)
+        .args(argv)
+        .current_dir(&cwd)
+        .output()
+        .with_context(|| format!("running evidence command `{program}`"))?;
+    let finished_at = Utc::now();
+    let exit_code = output.status.code().unwrap_or(-1);
+    let fingerprint = git_fingerprint(&cwd);
+    let facts = git_facts(&cwd);
+    let status = if output.status.success() {
+        WorkEvidenceStatus::ObservedPass
+    } else {
+        WorkEvidenceStatus::ObservedFail
+    };
+    let freshness = if fingerprint.is_some() {
+        WorkEvidenceFreshness::Fresh
+    } else {
+        WorkEvidenceFreshness::Unknown
+    };
+    let mut full_argv = vec![program.clone()];
+    full_argv.extend(argv.iter().cloned());
+    let redacted_argv = redact_argv(&full_argv);
+    let output_ref = json!({
+        "stdout_redacted": redact_work_text(&context, &bounded_lossy(&output.stdout, 64 * 1024)),
+        "stderr_redacted": redact_work_text(&context, &bounded_lossy(&output.stderr, 64 * 1024)),
+        "truncated": output.stdout.len() > 64 * 1024 || output.stderr.len() > 64 * 1024,
+    });
+    let now = Utc::now();
+    let evidence = WorkEvidence {
+        evidence_id: WorkEvidenceId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        kind: args.kind.into_work_kind(),
+        status,
+        freshness,
+        claim: Some(format!(
+            "Observed `{}` exited {}",
+            redacted_argv.join(" "),
+            exit_code
+        )),
+        command: Some(redacted_argv.join(" ")),
+        argv: redacted_argv,
+        cwd: Some(redact_work_text(&context, &cwd.to_string_lossy())),
+        exit_code: Some(exit_code),
+        repo_root: facts.repo_root,
+        head_sha: facts.head_sha,
+        branch: facts.branch,
+        fingerprint: fingerprint.clone(),
+        current_fingerprint: fingerprint,
+        output_ref: Some(output_ref),
+        artifact_ref: None,
+        source: RecordSource::Worktree,
+        fidelity: RecordFidelity::Exact,
+        trust: RecordTrust::Medium,
+        started_at,
+        finished_at,
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let evidence = context.store.upsert_work_evidence(&evidence).await?;
+    update_work_trust_from_evidence(&context.store, context.workspace_id, &work_id, &evidence)
+        .await?;
+    append_evidence_event_and_index(&context, &work_id, &evidence).await?;
+    writeln!(writer, "evidence: {}", evidence.evidence_id)?;
+    writeln!(
+        writer,
+        "status: {}",
+        serde_json::to_string(&evidence.status)?.trim_matches('"')
+    )?;
+    Ok(())
+}
+
+async fn refresh_work_evidence(
+    store_args: AgentWorkStoreArgs,
+    work_id: String,
+    args: AgentWorkEvidenceFreshnessArgs,
+    writer: &mut dyn Write,
+) -> Result<()> {
+    let cwd = args.cwd.unwrap_or(std::env::current_dir()?);
+    let context = open_work_store_for_path(&store_args, Some(&cwd)).await?;
+    let work_id = WorkRecordId::from_id(work_id);
+    let current = git_fingerprint(&cwd);
+    let mut evidence = context
+        .store
+        .list_work_evidence(context.workspace_id, work_id.clone())
+        .await?;
+    for item in &mut evidence {
+        item.current_fingerprint = current.clone();
+        item.freshness = evidence_freshness(item.fingerprint.as_ref(), current.as_ref());
+        item.updated_at = Utc::now();
+        context.store.upsert_work_evidence(item).await?;
+    }
+    if args.json {
+        serde_json::to_writer_pretty(
+            &mut *writer,
+            &json!({
+                "work_id": work_id,
+                "evidence": evidence,
+            }),
+        )?;
+        writeln!(writer)?;
+    } else {
+        writeln!(writer, "refreshed_evidence: {}", evidence.len())?;
+    }
+    Ok(())
+}
+
+async fn summarize_work(args: AgentWorkSummarizeArgs, writer: &mut dyn Write) -> Result<()> {
+    let context = open_work_store(&args.store).await?;
+    let work_id = WorkRecordId::from_id(args.work_id.clone());
+    let report =
+        build_work_report_value(&context.store, context.workspace_id, work_id.clone()).await?;
+    let text = deterministic_summary_text(&report);
+    let now = Utc::now();
+    let summary = WorkSummary {
+        summary_id: WorkSummaryId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        kind: args.kind.into_work_kind(),
+        audience: match args.kind {
+            AgentWorkSummaryKindArg::Context => WorkSummaryAudience::Agent,
+            AgentWorkSummaryKindArg::Report => WorkSummaryAudience::Reviewer,
+            _ => WorkSummaryAudience::Human,
+        },
+        text,
+        structured_json: Some(json!({
+            "source": "deterministic_local",
+            "raw_transcript_included": false,
+        })),
+        generation_method: WorkSummaryGenerationMethod::Deterministic,
+        provider: None,
+        model: None,
+        template: Some("ctx.work.deterministic.v1".to_string()),
+        source_material_left_machine: false,
+        freshness: WorkSummaryFreshness::Fresh,
+        source_revision_key: Some(report_revision_key(&report)),
+        generated_at: now,
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let summary = context.store.upsert_work_summary(&summary).await?;
+    let claim = WorkSummaryClaim {
+        claim_id: WorkSummaryClaimId::new(),
+        summary_id: summary.summary_id.clone(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        claim_text: summary
+            .text
+            .lines()
+            .next()
+            .unwrap_or("Work summary generated")
+            .to_string(),
+        claim_kind: Some("summary".to_string()),
+        source_kind: "work_report".to_string(),
+        source_id: work_id.0.clone(),
+        record_hash: Some(report_revision_key(&report)),
+        freshness: WorkSummaryFreshness::Fresh,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_summary_claim(&claim).await?;
+    index_work_summary(&context, &summary).await?;
+    if let Some(mut work) = context
+        .store
+        .get_workspace_work_record(context.workspace_id, work_id.clone())
+        .await?
+    {
+        work.summary_freshness = WorkSummaryFreshness::Fresh;
+        work.updated_at = Utc::now();
+        context.store.upsert_work_record(&work).await?;
+    }
+    if args.json {
+        serde_json::to_writer_pretty(
+            &mut *writer,
+            &json!({
+                "work_id": work_id,
+                "summary": summary,
+                "claims": [claim],
+            }),
+        )?;
+        writeln!(writer)?;
+    } else {
+        writeln!(writer, "summary: {}", summary.summary_id)?;
+    }
+    Ok(())
+}
+
+async fn link_commit(args: AgentWorkLinkCommitArgs, writer: &mut dyn Write) -> Result<()> {
+    let cwd = args.cwd.unwrap_or(std::env::current_dir()?);
+    let context = open_work_store_for_path(&args.store, Some(&cwd)).await?;
+    let work = ensure_work_record_for_commit(&context, &args.sha, &cwd).await?;
+    let now = Utc::now();
+    let event = WorkEvent {
+        event_id: WorkEventId::new(),
+        work_id: work.work_id.clone(),
+        workspace_id: context.workspace_id,
+        sequence: 0,
+        source_kind: Some("commit".to_string()),
+        source_id: Some(args.sha.clone()),
+        event_type: WorkEventType::CommitLinked,
+        event_time: now,
+        actor_kind: WorkActorKind::System,
+        provider: Some("git".to_string()),
+        harness: None,
+        model: None,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        source: RecordSource::Worktree,
+        fidelity: RecordFidelity::Commit,
+        trust: RecordTrust::Medium,
+        payload_json: Some(json!({ "commit": args.sha })),
+        redacted_text: Some(format!("Linked commit {}", args.sha)),
+        artifact_ref: None,
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let event = context.store.append_work_event(&event).await?;
+    index_work_event(&context, &event).await?;
+    writeln!(writer, "work: {}", work.work_id)?;
+    writeln!(writer, "commit: {}", args.sha)?;
+    Ok(())
+}
+
+async fn handle_work_index(args: AgentWorkIndexArgs, writer: &mut dyn Write) -> Result<()> {
+    match args.command {
+        AgentWorkIndexSubcommand::Rebuild(rebuild) => {
+            let context = open_work_store(&args.store).await?;
+            let deleted = context
+                .store
+                .delete_workspace_work_search_docs(context.workspace_id)
+                .await?;
+            let mut inserted = 0usize;
+            for work in context
+                .store
+                .list_workspace_work_records(context.workspace_id, Some(5_000))
+                .await?
+            {
+                index_work_record(&context, &work).await?;
+                inserted += 1;
+                for event in context
+                    .store
+                    .list_work_events(context.workspace_id, work.work_id.clone(), Some(5_000))
+                    .await?
+                {
+                    index_work_event(&context, &event).await?;
+                    inserted += 1;
+                }
+                for evidence in context
+                    .store
+                    .list_work_evidence(context.workspace_id, work.work_id.clone())
+                    .await?
+                {
+                    index_work_evidence(&context, &evidence).await?;
+                    inserted += 1;
+                }
+                for summary in context
+                    .store
+                    .list_work_summaries(context.workspace_id, work.work_id.clone())
+                    .await?
+                {
+                    index_work_summary(&context, &summary).await?;
+                    inserted += 1;
+                }
+            }
+            if rebuild.json {
+                serde_json::to_writer_pretty(
+                    &mut *writer,
+                    &json!({
+                        "deleted": deleted,
+                        "inserted": inserted,
+                    }),
+                )?;
+                writeln!(writer)?;
+            } else {
+                writeln!(writer, "rebuilt Work search index: {inserted} docs")?;
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -759,6 +1800,955 @@ fn git_fingerprint(cwd: &Path) -> Option<GitFingerprint> {
     })
 }
 
+impl AgentWorkEvidenceKindArg {
+    fn into_work_kind(self) -> WorkEvidenceKind {
+        match self {
+            Self::Command => WorkEvidenceKind::Command,
+            Self::Test => WorkEvidenceKind::Test,
+            Self::Lint => WorkEvidenceKind::Lint,
+            Self::Format => WorkEvidenceKind::Format,
+            Self::Typecheck => WorkEvidenceKind::Typecheck,
+            Self::Build => WorkEvidenceKind::Build,
+            Self::Screenshot => WorkEvidenceKind::Screenshot,
+            Self::Recording => WorkEvidenceKind::Recording,
+            Self::Log => WorkEvidenceKind::Log,
+            Self::ManualReview => WorkEvidenceKind::ManualReview,
+            Self::AgentReview => WorkEvidenceKind::AgentReview,
+            Self::CiResult => WorkEvidenceKind::CiResult,
+            Self::ArtifactInspection => WorkEvidenceKind::ArtifactInspection,
+        }
+    }
+}
+
+impl AgentWorkSummaryKindArg {
+    fn into_work_kind(self) -> WorkSummaryKind {
+        match self {
+            Self::Live => WorkSummaryKind::LiveSummary,
+            Self::Context => WorkSummaryKind::ContextSummary,
+            Self::Report => WorkSummaryKind::ReportSummary,
+            Self::DecisionLog => WorkSummaryKind::DecisionLog,
+            Self::Evidence => WorkSummaryKind::EvidenceSummary,
+        }
+    }
+}
+
+async fn ensure_work_record_for_pr(
+    context: &WorkStoreContext,
+    pr: &PullRequestRef,
+    cwd: &Path,
+    title: Option<&str>,
+) -> Result<WorkRecord> {
+    let target_id = pull_request_target_id(pr);
+    if let Some(existing) = context
+        .store
+        .find_work_record_by_link(
+            context.workspace_id,
+            WorkLinkTargetKind::PullRequest,
+            &target_id,
+        )
+        .await?
+    {
+        return Ok(existing);
+    }
+
+    let facts = git_facts(cwd);
+    let now = Utc::now();
+    let record = WorkRecord {
+        work_id: WorkRecordId::new(),
+        workspace_id: context.workspace_id,
+        title: Some(
+            title
+                .map(ToOwned::to_owned)
+                .or_else(|| pr.title.clone())
+                .unwrap_or_else(|| format!("PR {}/{}#{}", pr.owner, pr.repo, pr.number)),
+        ),
+        objective: None,
+        lifecycle: WorkLifecycle::Active,
+        primary_repo_root: facts.repo_root.clone(),
+        primary_branch: facts.branch.clone(),
+        base_commit: None,
+        head_commit: facts.head_sha.clone(),
+        current_diff_fingerprint: git_fingerprint(cwd),
+        trust_verdict: WorkTrustVerdict::UntrustedLocalCapture,
+        summary_freshness: WorkSummaryFreshness::Missing,
+        metadata_json: Some(json!({
+            "created_by": "ctx work",
+            "grouping": "pull_request",
+        })),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let record = context.store.upsert_work_record(&record).await?;
+    upsert_work_link(
+        context,
+        &record.work_id,
+        WorkLinkTargetKind::PullRequest,
+        Some(target_id),
+        Some(serde_json::to_value(pr)?),
+        WorkLinkRole::Result,
+        RecordSource::PullRequest,
+        RecordFidelity::Declared,
+        RecordTrust::Medium,
+    )
+    .await?;
+    index_work_record(context, &record).await?;
+    Ok(record)
+}
+
+async fn ensure_work_record_for_commit(
+    context: &WorkStoreContext,
+    sha: &str,
+    cwd: &Path,
+) -> Result<WorkRecord> {
+    let sha = sha.trim();
+    if sha.is_empty() {
+        bail!("commit SHA must not be empty");
+    }
+    if let Some(existing) = context
+        .store
+        .find_work_record_by_link(context.workspace_id, WorkLinkTargetKind::Commit, sha)
+        .await?
+    {
+        return Ok(existing);
+    }
+
+    let facts = git_facts(cwd);
+    let now = Utc::now();
+    let record = WorkRecord {
+        work_id: WorkRecordId::new(),
+        workspace_id: context.workspace_id,
+        title: Some(format!("Commit {sha}")),
+        objective: None,
+        lifecycle: WorkLifecycle::Active,
+        primary_repo_root: facts.repo_root.clone(),
+        primary_branch: facts.branch.clone(),
+        base_commit: None,
+        head_commit: Some(sha.to_string()),
+        current_diff_fingerprint: git_fingerprint(cwd),
+        trust_verdict: WorkTrustVerdict::Partial,
+        summary_freshness: WorkSummaryFreshness::Missing,
+        metadata_json: Some(json!({
+            "created_by": "ctx work link-commit",
+            "grouping": "commit",
+        })),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let record = context.store.upsert_work_record(&record).await?;
+    upsert_work_link(
+        context,
+        &record.work_id,
+        WorkLinkTargetKind::Commit,
+        Some(sha.to_string()),
+        Some(json!({ "sha": sha })),
+        WorkLinkRole::Result,
+        RecordSource::Worktree,
+        RecordFidelity::Commit,
+        RecordTrust::Medium,
+    )
+    .await?;
+    index_work_record(context, &record).await?;
+    Ok(record)
+}
+
+async fn ensure_ambient_work_record(context: &WorkStoreContext, cwd: &Path) -> Result<WorkRecord> {
+    let facts = git_facts(cwd);
+    let target_id = ambient_work_target_id(context, &facts, cwd);
+    if let Some(existing) = context
+        .store
+        .find_work_record_by_link(context.workspace_id, WorkLinkTargetKind::Branch, &target_id)
+        .await?
+    {
+        return Ok(existing);
+    }
+
+    let now = Utc::now();
+    let title = facts
+        .branch
+        .as_ref()
+        .map(|branch| format!("Local Work on {branch}"))
+        .unwrap_or_else(|| "Local Work".to_string());
+    let record = WorkRecord {
+        work_id: WorkRecordId::new(),
+        workspace_id: context.workspace_id,
+        title: Some(title),
+        objective: None,
+        lifecycle: WorkLifecycle::Active,
+        primary_repo_root: facts.repo_root.clone(),
+        primary_branch: facts.branch.clone(),
+        base_commit: None,
+        head_commit: facts.head_sha.clone(),
+        current_diff_fingerprint: git_fingerprint(cwd),
+        trust_verdict: WorkTrustVerdict::UntrustedLocalCapture,
+        summary_freshness: WorkSummaryFreshness::Missing,
+        metadata_json: Some(json!({
+            "created_by": "ctx work capture",
+            "grouping": "ambient_branch",
+        })),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let record = context.store.upsert_work_record(&record).await?;
+    upsert_work_link(
+        context,
+        &record.work_id,
+        WorkLinkTargetKind::Branch,
+        Some(target_id),
+        Some(json!({
+            "repo_root": facts.repo_root,
+            "branch": facts.branch,
+            "head_sha": facts.head_sha,
+        })),
+        WorkLinkRole::Source,
+        RecordSource::Worktree,
+        RecordFidelity::Declared,
+        RecordTrust::Low,
+    )
+    .await?;
+    index_work_record(context, &record).await?;
+    Ok(record)
+}
+
+async fn upsert_work_link(
+    context: &WorkStoreContext,
+    work_id: &WorkRecordId,
+    target_kind: WorkLinkTargetKind,
+    target_id: Option<String>,
+    target_json: Option<Value>,
+    role: WorkLinkRole,
+    source: RecordSource,
+    fidelity: RecordFidelity,
+    trust: RecordTrust,
+) -> Result<WorkRecordLink> {
+    let now = Utc::now();
+    let link = WorkRecordLink {
+        link_id: WorkRecordLinkId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        target_kind,
+        target_id,
+        target_json,
+        role,
+        source,
+        fidelity,
+        trust,
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_record_link(&link).await
+}
+
+async fn append_capture_work_event(
+    context: &WorkStoreContext,
+    work_id: &WorkRecordId,
+    tool: AgentWorkCaptureTool,
+    argv: &[String],
+    exit_code: i32,
+    cwd: &Path,
+    pr: Option<&PullRequestRef>,
+    contribution_id: Option<&ContributionId>,
+) -> Result<WorkEvent> {
+    let facts = git_facts(cwd);
+    let now = Utc::now();
+    let redacted_argv = redact_argv(argv);
+    let text = format!(
+        "Observed {} {} exited {}",
+        tool.as_str(),
+        redacted_argv.join(" "),
+        exit_code
+    );
+    let event = WorkEvent {
+        event_id: WorkEventId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        sequence: 0,
+        source_kind: Some("command".to_string()),
+        source_id: contribution_id.map(|id| id.0.clone()),
+        event_type: WorkEventType::CommandCapture,
+        event_time: now,
+        actor_kind: WorkActorKind::System,
+        provider: Some(tool.as_str().to_string()),
+        harness: None,
+        model: None,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        source: if tool == AgentWorkCaptureTool::Gh {
+            RecordSource::PullRequest
+        } else {
+            RecordSource::External
+        },
+        fidelity: RecordFidelity::Declared,
+        trust: RecordTrust::Low,
+        payload_json: Some(ctx_core::redaction::redact_json_value(json!({
+            "tool": tool.as_str(),
+            "argv": redacted_argv,
+            "exit_code": exit_code,
+            "cwd": redact_work_text(context, &cwd.to_string_lossy()),
+            "repo_root": facts.repo_root,
+            "branch": facts.branch,
+            "head_sha": facts.head_sha,
+            "pull_request": pr,
+        }))),
+        redacted_text: Some(redact_work_text(context, &text)),
+        artifact_ref: None,
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let event = context.store.append_work_event(&event).await?;
+    index_work_event(context, &event).await?;
+    Ok(event)
+}
+
+async fn append_evidence_event_and_index(
+    context: &WorkStoreContext,
+    work_id: &WorkRecordId,
+    evidence: &WorkEvidence,
+) -> Result<()> {
+    let now = Utc::now();
+    let event = WorkEvent {
+        event_id: WorkEventId::new(),
+        work_id: work_id.clone(),
+        workspace_id: context.workspace_id,
+        sequence: 0,
+        source_kind: Some("evidence".to_string()),
+        source_id: Some(evidence.evidence_id.0.clone()),
+        event_type: WorkEventType::EvidenceObserved,
+        event_time: now,
+        actor_kind: WorkActorKind::System,
+        provider: None,
+        harness: None,
+        model: None,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        source: evidence.source,
+        fidelity: evidence.fidelity,
+        trust: evidence.trust,
+        payload_json: Some(ctx_core::redaction::redact_json_value(
+            serde_json::to_value(evidence)?,
+        )),
+        redacted_text: evidence.claim.clone(),
+        artifact_ref: evidence.artifact_ref.clone(),
+        created_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    let event = context.store.append_work_event(&event).await?;
+    index_work_event(context, &event).await?;
+    index_work_evidence(context, evidence).await
+}
+
+async fn build_work_context_value(
+    store: &Store,
+    workspace_id: WorkspaceId,
+    work_id: WorkRecordId,
+    budget_tokens: usize,
+) -> Result<Value> {
+    let report = build_work_report_value(store, workspace_id, work_id.clone()).await?;
+    let evidence = report
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let summaries = report
+        .get("summaries")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let work = report
+        .get("work")
+        .cloned()
+        .context("report missing work record")?;
+    let objective = work
+        .get("objective")
+        .or_else(|| work.get("title"))
+        .and_then(Value::as_str)
+        .unwrap_or("Untitled Work");
+    let current_result = report
+        .pointer("/trust/reason")
+        .and_then(Value::as_str)
+        .unwrap_or("No trust state has been computed.");
+    Ok(json!({
+        "work_id": work_id,
+        "budget_tokens": budget_tokens,
+        "title": work.get("title").cloned().unwrap_or(Value::Null),
+        "state": work.get("lifecycle").cloned().unwrap_or(Value::Null),
+        "trust_verdict": work.get("trust_verdict").cloned().unwrap_or(Value::Null),
+        "context": {
+            "objective": objective,
+            "current_result": current_result,
+            "key_decisions": summaries.iter().take(3).map(|summary| {
+                json!({
+                    "text": summary.get("text").cloned().unwrap_or(Value::Null),
+                    "citations": [{
+                        "source_kind": "summary",
+                        "source_id": summary.get("summary_id").cloned().unwrap_or(Value::Null),
+                        "freshness": summary.get("freshness").cloned().unwrap_or(Value::Null),
+                    }]
+                })
+            }).collect::<Vec<_>>(),
+            "evidence": evidence.iter().take(8).map(|item| {
+                json!({
+                    "evidence_id": item.get("evidence_id").cloned().unwrap_or(Value::Null),
+                    "claim": item.get("claim").cloned().unwrap_or(Value::Null),
+                    "freshness": item.get("freshness").cloned().unwrap_or(Value::Null),
+                    "status": item.get("status").cloned().unwrap_or(Value::Null),
+                })
+            }).collect::<Vec<_>>(),
+            "open_risks": report.pointer("/trust/open_risks").cloned().unwrap_or_else(|| json!([])),
+        },
+        "raw_transcript_available": false,
+        "raw_transcript_included": false,
+    }))
+}
+
+async fn build_work_report_value(
+    store: &Store,
+    workspace_id: WorkspaceId,
+    work_id: WorkRecordId,
+) -> Result<Value> {
+    let work = store
+        .get_workspace_work_record(workspace_id, work_id.clone())
+        .await?
+        .with_context(|| format!("work record {} not found", work_id.0))?;
+    let links = store
+        .list_work_record_links(workspace_id, work_id.clone())
+        .await?;
+    let events = store
+        .list_work_events(workspace_id, work_id.clone(), Some(500))
+        .await?;
+    let evidence = store
+        .list_work_evidence(workspace_id, work_id.clone())
+        .await?;
+    let summaries = store
+        .list_work_summaries(workspace_id, work_id.clone())
+        .await?;
+    let claims = store
+        .list_work_summary_claims(workspace_id, None, work_id.clone())
+        .await?;
+    let (change_sets, contributions) = linked_graph_for_work(store, workspace_id, &links).await?;
+    let evidence_summary = evidence_summary_value(&evidence);
+    let trust = trust_report_value(&work, &evidence);
+    Ok(json!({
+        "work": work,
+        "links": links,
+        "trust": trust,
+        "evidence_summary": evidence_summary,
+        "evidence": evidence,
+        "change_summary": {
+            "change_sets": change_sets.len(),
+            "contributions": contributions.len(),
+            "files_changed_known": change_sets.iter().any(|change_set| change_set.fingerprint.is_some()),
+            "pull_requests": pull_request_links_from_work_links(&links),
+            "commits": commit_links_from_work_links(&links),
+        },
+        "change_sets": change_sets,
+        "contributions": contributions,
+        "summaries": summaries,
+        "summary_claims": claims,
+        "timeline": events,
+        "raw_transcript_available": false,
+        "raw_transcript_included": false,
+    }))
+}
+
+async fn linked_graph_for_work(
+    store: &Store,
+    workspace_id: WorkspaceId,
+    links: &[WorkRecordLink],
+) -> Result<(Vec<ChangeSet>, Vec<Contribution>)> {
+    let mut change_sets = Vec::new();
+    let mut contributions = Vec::new();
+    for link in links {
+        match (link.target_kind, link.target_id.as_deref()) {
+            (WorkLinkTargetKind::ChangeSet, Some(id)) => {
+                if let Some(change_set) = store
+                    .get_workspace_change_set(workspace_id, ChangeSetId::from_id(id))
+                    .await?
+                {
+                    change_sets.push(change_set);
+                }
+            }
+            (WorkLinkTargetKind::Contribution, Some(id)) => {
+                if let Some(contribution) =
+                    store.get_contribution(ContributionId::from_id(id)).await?
+                {
+                    if contribution.workspace_id == workspace_id {
+                        contributions.push(contribution);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    change_sets.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+    change_sets.dedup_by(|left, right| left.id == right.id);
+    contributions.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+    contributions.dedup_by(|left, right| left.id == right.id);
+    Ok((change_sets, contributions))
+}
+
+fn evidence_summary_value(evidence: &[WorkEvidence]) -> Value {
+    let passing = evidence
+        .iter()
+        .filter(|item| item.status == WorkEvidenceStatus::ObservedPass)
+        .count();
+    let failing = evidence
+        .iter()
+        .filter(|item| item.status == WorkEvidenceStatus::ObservedFail)
+        .count();
+    let stale = evidence
+        .iter()
+        .filter(|item| item.freshness == WorkEvidenceFreshness::Stale)
+        .count();
+    let missing = usize::from(evidence.is_empty());
+    json!({
+        "total": evidence.len(),
+        "passing": passing,
+        "failing": failing,
+        "stale": stale,
+        "missing": missing,
+    })
+}
+
+fn trust_report_value(work: &WorkRecord, evidence: &[WorkEvidence]) -> Value {
+    let verdict = if evidence
+        .iter()
+        .any(|item| item.status == WorkEvidenceStatus::ObservedFail)
+    {
+        WorkTrustVerdict::Failed
+    } else if evidence.is_empty() {
+        WorkTrustVerdict::MissingEvidence
+    } else if evidence
+        .iter()
+        .any(|item| item.freshness == WorkEvidenceFreshness::Stale)
+    {
+        WorkTrustVerdict::Stale
+    } else {
+        work.trust_verdict
+    };
+    let reason = match verdict {
+        WorkTrustVerdict::Verified => "Fresh evidence is present for this Work record.",
+        WorkTrustVerdict::Stale => "Some evidence no longer matches the current Work fingerprint.",
+        WorkTrustVerdict::MissingEvidence => "No evidence has been recorded for this Work record.",
+        WorkTrustVerdict::Partial => "Some evidence or source material is incomplete.",
+        WorkTrustVerdict::UntrustedLocalCapture => {
+            "This record includes user-space local capture; treat it as context, not proof."
+        }
+        WorkTrustVerdict::Failed => "At least one linked evidence item failed.",
+    };
+    let recommended_next_action = match verdict {
+        WorkTrustVerdict::Verified => "Review the diff and citations.",
+        WorkTrustVerdict::Stale => "Rerun the stale evidence commands before review.",
+        WorkTrustVerdict::MissingEvidence => {
+            "Add evidence with `ctx work evidence <work-id> run -- <command>`."
+        }
+        WorkTrustVerdict::Partial => "Add missing fingerprints, artifacts, or citations.",
+        WorkTrustVerdict::UntrustedLocalCapture => "Link a PR/commit and add fresh evidence.",
+        WorkTrustVerdict::Failed => "Fix the failing evidence before marking this ready.",
+    };
+    let open_risks = match verdict {
+        WorkTrustVerdict::Verified => Vec::<String>::new(),
+        _ => vec![reason.to_string()],
+    };
+    json!({
+        "verdict": verdict,
+        "reason": reason,
+        "recommended_next_action": recommended_next_action,
+        "open_risks": open_risks,
+    })
+}
+
+fn pull_request_links_from_work_links(links: &[WorkRecordLink]) -> Vec<Value> {
+    links
+        .iter()
+        .filter(|link| link.target_kind == WorkLinkTargetKind::PullRequest)
+        .filter_map(|link| link.target_json.clone())
+        .collect()
+}
+
+fn commit_links_from_work_links(links: &[WorkRecordLink]) -> Vec<String> {
+    links
+        .iter()
+        .filter(|link| link.target_kind == WorkLinkTargetKind::Commit)
+        .filter_map(|link| link.target_id.clone())
+        .collect()
+}
+
+async fn linked_pr_urls_for_work(
+    store: &Store,
+    workspace_id: WorkspaceId,
+    work_id: WorkRecordId,
+) -> Result<Vec<String>> {
+    let links = store.list_work_record_links(workspace_id, work_id).await?;
+    Ok(links
+        .into_iter()
+        .filter(|link| link.target_kind == WorkLinkTargetKind::PullRequest)
+        .filter_map(|link| {
+            link.target_json.and_then(|value| {
+                value
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+        })
+        .collect())
+}
+
+fn write_work_report_markdown(value: &Value, writer: &mut dyn Write) -> Result<()> {
+    let title = value
+        .pointer("/work/title")
+        .and_then(Value::as_str)
+        .unwrap_or("Untitled Work");
+    writeln!(writer, "# {title}")?;
+    writeln!(writer)?;
+    writeln!(
+        writer,
+        "- Work: `{}`",
+        value
+            .pointer("/work/work_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )?;
+    writeln!(
+        writer,
+        "- Trust: `{}`",
+        value
+            .pointer("/trust/verdict")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )?;
+    writeln!(
+        writer,
+        "- Next: {}",
+        value
+            .pointer("/trust/recommended_next_action")
+            .and_then(Value::as_str)
+            .unwrap_or("Review linked evidence.")
+    )?;
+    writeln!(writer)?;
+    writeln!(writer, "## Evidence")?;
+    if let Some(items) = value.get("evidence").and_then(Value::as_array) {
+        if items.is_empty() {
+            writeln!(writer, "- No evidence recorded.")?;
+        }
+        for item in items {
+            writeln!(
+                writer,
+                "- `{}` `{}` `{}` {}",
+                item.get("evidence_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                item.get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                item.get("freshness")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                item.get("claim").and_then(Value::as_str).unwrap_or("")
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn deterministic_summary_text(report: &Value) -> String {
+    let title = report
+        .pointer("/work/title")
+        .and_then(Value::as_str)
+        .unwrap_or("Untitled Work");
+    let verdict = report
+        .pointer("/trust/verdict")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let evidence_total = report
+        .pointer("/evidence_summary/total")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let next = report
+        .pointer("/trust/recommended_next_action")
+        .and_then(Value::as_str)
+        .unwrap_or("Review linked evidence.");
+    format!("{title}\n\nTrust verdict: {verdict}. Evidence items: {evidence_total}. Next action: {next}")
+}
+
+fn report_revision_key(report: &Value) -> String {
+    let bytes = serde_json::to_vec(report).unwrap_or_default();
+    let digest = sha2::Sha256::digest(&bytes);
+    hex::encode(digest)
+}
+
+async fn update_work_trust_from_evidence(
+    store: &Store,
+    workspace_id: WorkspaceId,
+    work_id: &WorkRecordId,
+    evidence: &WorkEvidence,
+) -> Result<()> {
+    let Some(mut work) = store
+        .get_workspace_work_record(workspace_id, work_id.clone())
+        .await?
+    else {
+        return Ok(());
+    };
+    work.trust_verdict = match evidence.status {
+        WorkEvidenceStatus::ObservedFail => WorkTrustVerdict::Failed,
+        WorkEvidenceStatus::ObservedPass if evidence.freshness == WorkEvidenceFreshness::Fresh => {
+            WorkTrustVerdict::Verified
+        }
+        WorkEvidenceStatus::ObservedPass => WorkTrustVerdict::Partial,
+        _ => work.trust_verdict,
+    };
+    work.updated_at = Utc::now();
+    store.upsert_work_record(&work).await?;
+    Ok(())
+}
+
+fn evidence_freshness(
+    recorded: Option<&GitFingerprint>,
+    current: Option<&GitFingerprint>,
+) -> WorkEvidenceFreshness {
+    match (recorded, current) {
+        (Some(left), Some(right)) if left == right => WorkEvidenceFreshness::Fresh,
+        (Some(_), Some(_)) => WorkEvidenceFreshness::Stale,
+        (Some(_), None) => WorkEvidenceFreshness::Unknown,
+        (None, Some(_)) => WorkEvidenceFreshness::Partial,
+        (None, None) => WorkEvidenceFreshness::Unknown,
+    }
+}
+
+fn redact_work_text(context: &WorkStoreContext, value: &str) -> String {
+    let redacted = ctx_core::redaction::redact_sensitive(value);
+    let root = context.workspace.root_path.as_str();
+    if root.is_empty() {
+        redacted
+    } else {
+        redacted.replace(root, "[redacted:workspace_root]")
+    }
+}
+
+fn inspect_evidence_file(context: &WorkStoreContext, file: &Path) -> Result<Value> {
+    const MAX_EVIDENCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
+    let metadata = std::fs::symlink_metadata(file)
+        .with_context(|| format!("reading metadata for {}", file.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("evidence file must not be a symlink");
+    }
+    if !metadata.is_file() {
+        bail!("evidence file must be a regular file");
+    }
+    if metadata.len() > MAX_EVIDENCE_FILE_BYTES {
+        bail!(
+            "evidence file is too large: {} bytes (max {})",
+            metadata.len(),
+            MAX_EVIDENCE_FILE_BYTES
+        );
+    }
+    let workspace_root = Path::new(&context.workspace.root_path)
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "canonicalizing workspace root {}",
+                context.workspace.root_path
+            )
+        })?;
+    let canonical = file
+        .canonicalize()
+        .with_context(|| format!("canonicalizing evidence file {}", file.display()))?;
+    if !canonical.starts_with(&workspace_root) {
+        bail!("evidence file must be inside the workspace root");
+    }
+    let bytes = std::fs::read(&canonical)
+        .with_context(|| format!("reading evidence file {}", canonical.display()))?;
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let relative_path = canonical
+        .strip_prefix(&workspace_root)
+        .unwrap_or(&canonical)
+        .to_string_lossy()
+        .replace('\\', "/");
+    validate_safe_relative_path(&relative_path, "evidence file")?;
+    Ok(json!({
+        "relative_path": relative_path,
+        "sha256": digest,
+        "size_bytes": bytes.len(),
+        "mime": mime_guess::from_path(&canonical).first_raw().unwrap_or("application/octet-stream"),
+        "redaction_class": "local_private",
+    }))
+}
+
+fn bounded_lossy(bytes: &[u8], max: usize) -> String {
+    let end = bytes.len().min(max);
+    let mut text = String::from_utf8_lossy(&bytes[..end]).to_string();
+    if bytes.len() > max {
+        text.push_str("\n[truncated]");
+    }
+    text
+}
+
+async fn index_work_record(context: &WorkStoreContext, work: &WorkRecord) -> Result<()> {
+    let text = [
+        work.title.as_deref().unwrap_or(""),
+        work.objective.as_deref().unwrap_or(""),
+        work.primary_branch.as_deref().unwrap_or(""),
+        work.head_commit.as_deref().unwrap_or(""),
+    ]
+    .join("\n");
+    let now = Utc::now();
+    let doc = WorkSearchDoc {
+        doc_id: stable_search_doc_id("work_record", &work.work_id.0),
+        workspace_id: work.workspace_id,
+        work_id: work.work_id.clone(),
+        doc_type: "work_record".to_string(),
+        source_id: work.work_id.0.clone(),
+        source_kind: "work_record".to_string(),
+        event_time: work.updated_at,
+        repo_root: work.primary_repo_root.clone(),
+        path: None,
+        branch: work.primary_branch.clone(),
+        commit_sha: work.head_commit.clone(),
+        pr_owner: None,
+        pr_repo: None,
+        pr_number: None,
+        agent_provider: None,
+        freshness: WorkEvidenceFreshness::Unknown,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        title: work.title.clone(),
+        search_text_redacted: redact_work_text(context, &text),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_search_doc(&doc).await?;
+    Ok(())
+}
+
+async fn index_work_event(context: &WorkStoreContext, event: &WorkEvent) -> Result<()> {
+    let now = Utc::now();
+    let doc = WorkSearchDoc {
+        doc_id: stable_search_doc_id("work_event", &event.event_id.0),
+        workspace_id: event.workspace_id,
+        work_id: event.work_id.clone(),
+        doc_type: "event".to_string(),
+        source_id: event.event_id.0.clone(),
+        source_kind: "event".to_string(),
+        event_time: event.event_time,
+        repo_root: None,
+        path: None,
+        branch: None,
+        commit_sha: None,
+        pr_owner: None,
+        pr_repo: None,
+        pr_number: None,
+        agent_provider: event.provider.clone(),
+        freshness: WorkEvidenceFreshness::Unknown,
+        redaction_class: event.redaction_class,
+        title: Some(format!("{:?}", event.event_type)),
+        search_text_redacted: event.redacted_text.clone().unwrap_or_default(),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_search_doc(&doc).await?;
+    Ok(())
+}
+
+async fn index_work_evidence(context: &WorkStoreContext, evidence: &WorkEvidence) -> Result<()> {
+    let now = Utc::now();
+    let doc = WorkSearchDoc {
+        doc_id: stable_search_doc_id("work_evidence", &evidence.evidence_id.0),
+        workspace_id: evidence.workspace_id,
+        work_id: evidence.work_id.clone(),
+        doc_type: "evidence".to_string(),
+        source_id: evidence.evidence_id.0.clone(),
+        source_kind: "evidence".to_string(),
+        event_time: evidence.finished_at,
+        repo_root: evidence.repo_root.clone(),
+        path: None,
+        branch: evidence.branch.clone(),
+        commit_sha: evidence.head_sha.clone(),
+        pr_owner: None,
+        pr_repo: None,
+        pr_number: None,
+        agent_provider: None,
+        freshness: evidence.freshness,
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        title: evidence.claim.clone(),
+        search_text_redacted: redact_work_text(
+            context,
+            &[
+                evidence.claim.as_deref().unwrap_or(""),
+                evidence.command.as_deref().unwrap_or(""),
+                &evidence.argv.join(" "),
+            ]
+            .join("\n"),
+        ),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_search_doc(&doc).await?;
+    Ok(())
+}
+
+async fn index_work_summary(context: &WorkStoreContext, summary: &WorkSummary) -> Result<()> {
+    let now = Utc::now();
+    let doc = WorkSearchDoc {
+        doc_id: stable_search_doc_id("work_summary", &summary.summary_id.0),
+        workspace_id: summary.workspace_id,
+        work_id: summary.work_id.clone(),
+        doc_type: "summary".to_string(),
+        source_id: summary.summary_id.0.clone(),
+        source_kind: "summary".to_string(),
+        event_time: summary.generated_at,
+        repo_root: None,
+        path: None,
+        branch: None,
+        commit_sha: None,
+        pr_owner: None,
+        pr_repo: None,
+        pr_number: None,
+        agent_provider: summary.provider.clone(),
+        freshness: match summary.freshness {
+            WorkSummaryFreshness::Fresh | WorkSummaryFreshness::Locked => {
+                WorkEvidenceFreshness::Fresh
+            }
+            WorkSummaryFreshness::Stale => WorkEvidenceFreshness::Stale,
+            WorkSummaryFreshness::Partial => WorkEvidenceFreshness::Partial,
+            WorkSummaryFreshness::Missing => WorkEvidenceFreshness::Unknown,
+        },
+        redaction_class: WorkRedactionClass::LocalRedacted,
+        title: Some(format!("{:?}", summary.kind)),
+        search_text_redacted: redact_work_text(context, &summary.text),
+        created_at: now,
+        updated_at: now,
+        schema_version: AGENT_WORK_SCHEMA_VERSION,
+    };
+    context.store.upsert_work_search_doc(&doc).await?;
+    Ok(())
+}
+
+fn stable_search_doc_id(kind: &str, source_id: &str) -> WorkSearchDocId {
+    let digest = sha2::Sha256::digest(format!("{kind}:{source_id}").as_bytes());
+    let hex = hex::encode(digest);
+    WorkSearchDocId::from_id(format!("wsd_{}", &hex[..32]))
+}
+
+fn pull_request_target_id(pr: &PullRequestRef) -> String {
+    format!("{}:{}/{}#{}", pr.provider, pr.owner, pr.repo, pr.number)
+}
+
+fn ambient_work_target_id(context: &WorkStoreContext, facts: &GitFacts, cwd: &Path) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        facts
+            .repo_root
+            .as_deref()
+            .unwrap_or(context.workspace.root_path.as_str()),
+        facts.branch.as_deref().unwrap_or("(detached)"),
+        facts.head_sha.as_deref().unwrap_or("(unknown-head)"),
+        cwd.to_string_lossy()
+    )
+}
+
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
     git_output_lossy(cwd, args).map(|output| output.trim().to_string())
 }
@@ -808,6 +2798,23 @@ fn classify_captured_command(tool: AgentWorkCaptureTool, argv: &[String]) -> Str
             [area] => format!("gh.{area}"),
             [] => "gh.unknown".to_string(),
         },
+    }
+}
+
+fn evidence_kind_for_captured_command(classification: &str) -> Option<WorkEvidenceKind> {
+    let lower = classification.to_ascii_lowercase();
+    if lower.contains("test") {
+        Some(WorkEvidenceKind::Test)
+    } else if lower.contains("lint") || lower.contains("clippy") {
+        Some(WorkEvidenceKind::Lint)
+    } else if lower.contains("fmt") || lower.contains("format") {
+        Some(WorkEvidenceKind::Format)
+    } else if lower.contains("typecheck") || lower.contains("check") {
+        Some(WorkEvidenceKind::Typecheck)
+    } else if lower.contains("build") {
+        Some(WorkEvidenceKind::Build)
+    } else {
+        None
     }
 }
 
@@ -1329,6 +3336,7 @@ impl AgentWorkSchemaKind {
 struct WorkStoreContext {
     data_root: PathBuf,
     workspace_id: WorkspaceId,
+    workspace: Workspace,
     store: Store,
 }
 
@@ -1345,7 +3353,8 @@ async fn open_work_store_for_path(
     let manager = StoreManager::open(&data_root)
         .await
         .with_context(|| format!("opening ctx store at {}", data_root.display()))?;
-    let workspace_id = resolve_workspace_id(&manager, args.workspace_id.as_deref(), cwd).await?;
+    let workspace = resolve_workspace(&manager, args.workspace_id.as_deref(), cwd).await?;
+    let workspace_id = workspace.id;
     let store = manager
         .workspace(workspace_id)
         .await
@@ -1353,6 +3362,7 @@ async fn open_work_store_for_path(
     Ok(WorkStoreContext {
         data_root,
         workspace_id,
+        workspace,
         store,
     })
 }
@@ -1371,13 +3381,18 @@ fn resolve_data_root(data_dir: Option<&Path>) -> Result<PathBuf> {
     ctx_http_auth::daemon::prepare_daemon_data_root(raw)
 }
 
-async fn resolve_workspace_id(
+async fn resolve_workspace(
     manager: &StoreManager,
     workspace_id: Option<&str>,
     cwd: Option<&Path>,
-) -> Result<WorkspaceId> {
+) -> Result<Workspace> {
     if let Some(workspace_id) = workspace_id {
-        return parse_workspace_id(workspace_id);
+        let workspace_id = parse_workspace_id(workspace_id)?;
+        return manager
+            .global()
+            .get_workspace(workspace_id)
+            .await?
+            .with_context(|| format!("workspace {} is not registered", workspace_id.0));
     }
 
     let workspaces = manager
@@ -1387,11 +3402,11 @@ async fn resolve_workspace_id(
         .context("listing local ctx workspaces")?;
     if let Some(cwd) = cwd {
         if let Some(workspace) = workspace_for_cwd(&workspaces, cwd) {
-            return Ok(workspace.id);
+            return Ok(workspace.clone());
         }
     }
     match workspaces.as_slice() {
-        [workspace] => Ok(workspace.id),
+        [workspace] => Ok(workspace.clone()),
         [] => bail!("no ctx workspaces are registered in the selected data root"),
         _ => {
             let available = workspaces

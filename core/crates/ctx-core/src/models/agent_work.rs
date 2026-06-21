@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::ids::*;
 
 pub const AGENT_WORK_EXPORT_SCHEMA_VERSION: i64 = 1;
+pub const WORK_OBSERVABILITY_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -322,6 +323,484 @@ pub enum ContributionEndpoint {
 
 pub type ContributionSubject = ContributionEndpoint;
 pub type ContributionTarget = ContributionEndpoint;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkLifecycle {
+    #[default]
+    Active,
+    Waiting,
+    Blocked,
+    ReadyForReview,
+    Merged,
+    Abandoned,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkTrustVerdict {
+    Verified,
+    Stale,
+    #[default]
+    MissingEvidence,
+    Partial,
+    UntrustedLocalCapture,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSummaryFreshness {
+    #[default]
+    Missing,
+    Fresh,
+    Stale,
+    Partial,
+    Locked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkLinkTargetKind {
+    Task,
+    Session,
+    Run,
+    ChangeSet,
+    Contribution,
+    PullRequest,
+    Commit,
+    Branch,
+    Worktree,
+    Artifact,
+    Evidence,
+    Summary,
+    File,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkLinkRole {
+    Source,
+    Result,
+    Evidence,
+    Context,
+    Parent,
+    Child,
+    #[default]
+    Related,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkEventType {
+    Session,
+    UserMessage,
+    AssistantMessage,
+    ToolCallStart,
+    ToolCallEnd,
+    ToolOutput,
+    CommandCapture,
+    ArtifactCreated,
+    ChangeSetUpdated,
+    PullRequestLinked,
+    CommitLinked,
+    EvidenceObserved,
+    SummaryGenerated,
+    Import,
+    Export,
+    Note,
+    #[default]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkActorKind {
+    Human,
+    Agent,
+    Subagent,
+    #[default]
+    System,
+    Plugin,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkRedactionClass {
+    Public,
+    #[default]
+    LocalRedacted,
+    LocalPrivate,
+    Sensitive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkEvidenceKind {
+    #[default]
+    Command,
+    Test,
+    Lint,
+    Format,
+    Typecheck,
+    Build,
+    Screenshot,
+    Recording,
+    Log,
+    ManualReview,
+    AgentReview,
+    CiResult,
+    ArtifactInspection,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkEvidenceStatus {
+    ObservedPass,
+    ObservedFail,
+    Skipped,
+    #[default]
+    Unknown,
+    Stale,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkEvidenceFreshness {
+    Fresh,
+    Stale,
+    Partial,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSummaryKind {
+    #[default]
+    LiveSummary,
+    ContextSummary,
+    ReportSummary,
+    DecisionLog,
+    EvidenceSummary,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSummaryAudience {
+    Agent,
+    #[default]
+    Human,
+    Reviewer,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSummaryGenerationMethod {
+    #[default]
+    Deterministic,
+    AgentSubmitted,
+    ProviderLlm,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkRecord {
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_work_lifecycle")]
+    pub lifecycle: WorkLifecycle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_repo_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_diff_fingerprint: Option<GitFingerprint>,
+    #[serde(default, skip_serializing_if = "is_default_work_trust_verdict")]
+    pub trust_verdict: WorkTrustVerdict,
+    #[serde(default, skip_serializing_if = "is_default_work_summary_freshness")]
+    pub summary_freshness: WorkSummaryFreshness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_json: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkRecordLink {
+    pub link_id: WorkRecordLinkId,
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    pub target_kind: WorkLinkTargetKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "is_default_work_link_role")]
+    pub role: WorkLinkRole,
+    #[serde(default, skip_serializing_if = "is_default_record_source")]
+    pub source: RecordSource,
+    #[serde(default, skip_serializing_if = "is_default_record_fidelity")]
+    pub fidelity: RecordFidelity,
+    #[serde(default, skip_serializing_if = "is_default_record_trust")]
+    pub trust: RecordTrust,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkEvent {
+    pub event_id: WorkEventId,
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    pub sequence: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_work_event_type")]
+    pub event_type: WorkEventType,
+    pub event_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "is_default_work_actor_kind")]
+    pub actor_kind: WorkActorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_work_redaction_class")]
+    pub redaction_class: WorkRedactionClass,
+    #[serde(default, skip_serializing_if = "is_default_record_source")]
+    pub source: RecordSource,
+    #[serde(default, skip_serializing_if = "is_default_record_fidelity")]
+    pub fidelity: RecordFidelity,
+    #[serde(default, skip_serializing_if = "is_default_record_trust")]
+    pub trust: RecordTrust,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkEvidence {
+    pub evidence_id: WorkEvidenceId,
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "is_default_work_evidence_kind")]
+    pub kind: WorkEvidenceKind,
+    #[serde(default, skip_serializing_if = "is_default_work_evidence_status")]
+    pub status: WorkEvidenceStatus,
+    #[serde(default, skip_serializing_if = "is_default_work_evidence_freshness")]
+    pub freshness: WorkEvidenceFreshness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<GitFingerprint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_fingerprint: Option<GitFingerprint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "is_default_record_source")]
+    pub source: RecordSource,
+    #[serde(default, skip_serializing_if = "is_default_record_fidelity")]
+    pub fidelity: RecordFidelity,
+    #[serde(default, skip_serializing_if = "is_default_record_trust")]
+    pub trust: RecordTrust,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkSummary {
+    pub summary_id: WorkSummaryId,
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "is_default_work_summary_kind")]
+    pub kind: WorkSummaryKind,
+    #[serde(default, skip_serializing_if = "is_default_work_summary_audience")]
+    pub audience: WorkSummaryAudience,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_json: Option<serde_json::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_work_summary_generation_method"
+    )]
+    pub generation_method: WorkSummaryGenerationMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub source_material_left_machine: bool,
+    #[serde(default, skip_serializing_if = "is_default_work_summary_freshness")]
+    pub freshness: WorkSummaryFreshness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision_key: Option<String>,
+    pub generated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkSummaryClaim {
+    pub claim_id: WorkSummaryClaimId,
+    pub summary_id: WorkSummaryId,
+    pub work_id: WorkRecordId,
+    pub workspace_id: WorkspaceId,
+    pub claim_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_kind: Option<String>,
+    pub source_kind: String,
+    pub source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_work_summary_freshness")]
+    pub freshness: WorkSummaryFreshness,
+    #[serde(default, skip_serializing_if = "is_default_work_redaction_class")]
+    pub redaction_class: WorkRedactionClass,
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkSearchDoc {
+    pub doc_id: WorkSearchDocId,
+    pub workspace_id: WorkspaceId,
+    pub work_id: WorkRecordId,
+    pub doc_type: String,
+    pub source_id: String,
+    pub source_kind: String,
+    pub event_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_work_evidence_freshness")]
+    pub freshness: WorkEvidenceFreshness,
+    #[serde(default, skip_serializing_if = "is_default_work_redaction_class")]
+    pub redaction_class: WorkRedactionClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub search_text_redacted: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_work_observability_schema_version")]
+    pub schema_version: i64,
+}
+
+fn is_default_work_lifecycle(v: &WorkLifecycle) -> bool {
+    *v == WorkLifecycle::default()
+}
+
+fn is_default_work_trust_verdict(v: &WorkTrustVerdict) -> bool {
+    *v == WorkTrustVerdict::default()
+}
+
+fn is_default_work_summary_freshness(v: &WorkSummaryFreshness) -> bool {
+    *v == WorkSummaryFreshness::default()
+}
+
+fn is_default_work_link_role(v: &WorkLinkRole) -> bool {
+    *v == WorkLinkRole::default()
+}
+
+fn is_default_work_event_type(v: &WorkEventType) -> bool {
+    *v == WorkEventType::default()
+}
+
+fn is_default_work_actor_kind(v: &WorkActorKind) -> bool {
+    *v == WorkActorKind::default()
+}
+
+fn is_default_work_redaction_class(v: &WorkRedactionClass) -> bool {
+    *v == WorkRedactionClass::default()
+}
+
+fn is_default_work_evidence_kind(v: &WorkEvidenceKind) -> bool {
+    *v == WorkEvidenceKind::default()
+}
+
+fn is_default_work_evidence_status(v: &WorkEvidenceStatus) -> bool {
+    *v == WorkEvidenceStatus::default()
+}
+
+fn is_default_work_evidence_freshness(v: &WorkEvidenceFreshness) -> bool {
+    *v == WorkEvidenceFreshness::default()
+}
+
+fn is_default_work_summary_kind(v: &WorkSummaryKind) -> bool {
+    *v == WorkSummaryKind::default()
+}
+
+fn is_default_work_summary_audience(v: &WorkSummaryAudience) -> bool {
+    *v == WorkSummaryAudience::default()
+}
+
+fn is_default_work_summary_generation_method(v: &WorkSummaryGenerationMethod) -> bool {
+    *v == WorkSummaryGenerationMethod::default()
+}
+
+fn default_work_observability_schema_version() -> i64 {
+    WORK_OBSERVABILITY_SCHEMA_VERSION
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChangeSet {

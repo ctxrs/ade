@@ -53,6 +53,7 @@ mod tests_runtime_shutdown;
 mod turn_projection;
 mod turns;
 mod turns_session_heads;
+mod work_observability;
 mod workspace;
 mod worktree_vcs;
 mod worktrees;
@@ -63,4 +64,5 @@ pub use mobile::{
     MobileAccessConfig, MobileDeviceSeqAdvance, MobileDeviceUpsert, RuntimeSettingsDocument,
 };
 pub use turns::SessionTurnToolCountDeltas;
+pub use work_observability::{WorkSearchHit, WorkSearchQuery};
 pub use worktrees::WorktreeBootstrapResultUpdate;

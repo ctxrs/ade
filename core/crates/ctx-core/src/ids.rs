@@ -120,3 +120,10 @@ macro_rules! string_id_type {
 string_id_type!(ChangeSetId, "chg_");
 string_id_type!(ContributionId, "con_");
 string_id_type!(AgentWorkSourceRecordId, "rec_");
+string_id_type!(WorkRecordId, "wrk_");
+string_id_type!(WorkRecordLinkId, "wln_");
+string_id_type!(WorkEventId, "wev_");
+string_id_type!(WorkEvidenceId, "wevdc_");
+string_id_type!(WorkSummaryId, "wsum_");
+string_id_type!(WorkSummaryClaimId, "wclm_");
+string_id_type!(WorkSearchDocId, "wsd_");
