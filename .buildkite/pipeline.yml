@@ -94,6 +94,12 @@ steps:
   - label: "desktop: package macos arm64"
     key: "desktop-macos-arm64"
     command: "CTX_EXPECTED_HOST_ARCH=arm64 .buildkite/run-desktop-package-macos.sh"
+    plugins:
+      - custom-checkout#v1.8.0:
+          skip_checkout: true
+          interpolate_checkout_path: "${TMPDIR:-/tmp}/ctx-public-release-verification-${BUILDKITE_BUILD_NUMBER}-${BUILDKITE_JOB_ID}"
+          repos:
+            - url: "https://github.com/ctxrs/ctx.git"
     agents:
       queue: "ctx-mac-gui-shared-arm64"
     artifact_paths:
@@ -103,6 +109,12 @@ steps:
   - label: "desktop: package macos x64"
     key: "desktop-macos-x64"
     command: "CTX_EXPECTED_HOST_ARCH=x86_64 .buildkite/run-desktop-package-macos.sh"
+    plugins:
+      - custom-checkout#v1.8.0:
+          skip_checkout: true
+          interpolate_checkout_path: "${TMPDIR:-/tmp}/ctx-public-release-verification-${BUILDKITE_BUILD_NUMBER}-${BUILDKITE_JOB_ID}"
+          repos:
+            - url: "https://github.com/ctxrs/ctx.git"
     agents:
       queue: "ctx-mac-gui-shared-x64"
     artifact_paths:
