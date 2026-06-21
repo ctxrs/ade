@@ -167,8 +167,9 @@ Adversarial review findings addressed during this pass:
 
 Final done-ness review attempt `019ee837-99c8-76c2-9212-5c9f5984f7c7`
 returned FAIL because the P0 daemon API was missing the required POST evidence
-and summary routes. Commit `47af33d` fixed that blocker. A final PASS review is
-still required after this status note is committed.
+and summary routes. Commit `47af33d` fixed that blocker. Final done-ness review
+attempt `019ee845-4d9f-7911-b259-2e8efdadc99c` returned PASS after commit
+`ea5edfb`.
 
 ## Validation results
 
