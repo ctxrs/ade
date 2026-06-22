@@ -198,11 +198,13 @@ impl TestDaemon {
                 .bind(session_id.0.to_string())
                 .fetch_one(store.pool())
                 .await?;
-        let tool_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM session_turn_tools WHERE session_id = ?")
-                .bind(session_id.0.to_string())
-                .fetch_one(store.pool())
-                .await?;
+        let tool_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_turn_tools \
+             WHERE session_id = ? AND tool_call_id LIKE 'ctx-ui-tool-%'",
+        )
+        .bind(session_id.0.to_string())
+        .fetch_one(store.pool())
+        .await?;
         let message_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id = ?")
                 .bind(session_id.0.to_string())

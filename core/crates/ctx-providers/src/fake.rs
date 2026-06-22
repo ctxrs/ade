@@ -170,6 +170,7 @@ impl ProviderAdapter for FakeProviderAdapter {
             };
 
             let slow = input.content.contains("slow-diff-test");
+            let hold_after_tool_call = input.content.contains("hold-after-tool-call");
             let stream_assistant_partials =
                 input.content.contains(STREAM_ASSISTANT_PARTIALS_MARKER);
             let live_context_window = live_context_window_metrics(&input.content);
@@ -246,6 +247,9 @@ impl ProviderAdapter for FakeProviderAdapter {
                     } else {
                         let tool_call_id = Uuid::new_v4().to_string();
                         send(SessionEventType::ToolCall, json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}})).await;
+                        if hold_after_tool_call {
+                            std::future::pending::<()>().await;
+                        }
                         sleep(delay).await;
                         send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
                         sleep(delay).await;

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use ctx_core::models::Worktree;
+use ctx_core::models::{VcsKind, Worktree};
 use ctx_fs::vcs;
 
 use super::WorktreeVcsStructuredStatus;
@@ -20,11 +20,10 @@ impl<'a> LocalWorktreeVcsSource<'a> {
     }
 
     pub async fn has_vcs_repo(&self) -> Result<bool> {
-        let driver = match vcs::driver_for_path(self.root).await {
-            Ok(driver) => driver,
-            Err(err) if is_no_vcs_repo_error(&err) => return Ok(false),
-            Err(err) => return Err(err),
-        };
+        if !root_has_vcs_marker(self.root, self.worktree.vcs_kind.clone()) {
+            return Ok(false);
+        }
+        let driver = vcs::driver_for_kind(self.worktree.vcs_kind.clone());
         match driver.assert_repo(self.root).await {
             Ok(()) => Ok(true),
             Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
@@ -101,6 +100,14 @@ impl<'a> LocalWorktreeVcsSource<'a> {
     }
 }
 
+fn root_has_vcs_marker(root: &Path, kind: Option<VcsKind>) -> bool {
+    match kind {
+        Some(VcsKind::Jj) => root.join(".jj").exists(),
+        Some(_) => root.join(".git").exists(),
+        None => root.join(".jj").exists() || root.join(".git").exists(),
+    }
+}
+
 #[async_trait::async_trait]
 impl WorktreeVcsDiffPathSource for LocalWorktreeVcsSource<'_> {
     async fn diff_name_status(
@@ -162,6 +169,18 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let worktree = worktree(temp.path());
         let source = LocalWorktreeVcsSource::new(&worktree, temp.path());
+
+        assert!(!source.has_vcs_repo().await.expect("check repo"));
+    }
+
+    #[tokio::test]
+    async fn local_source_does_not_inherit_parent_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        git(&["init"], temp.path());
+        let child = temp.path().join("nested-worktree");
+        std::fs::create_dir(&child).expect("create nested worktree root");
+        let worktree = worktree(&child);
+        let source = LocalWorktreeVcsSource::new(&worktree, &child);
 
         assert!(!source.has_vcs_repo().await.expect("check repo"));
     }

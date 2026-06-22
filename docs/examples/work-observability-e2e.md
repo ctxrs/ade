@@ -19,11 +19,11 @@ git checkout -b e2e/ping-pong-game
 git add .
 git commit -m "Add sample ping pong game"
 
-ctx work capture command --data-dir "$CTX_DATA_ROOT" --tool git --cwd "$PWD" \
-  --exit-code 0 -- commit -m "Add sample ping pong game"
+COMMIT_SHA=$(git rev-parse HEAD)
+ctx work link-commit --data-dir "$CTX_DATA_ROOT" --cwd "$PWD" "$COMMIT_SHA"
 ```
 
-Use the `work: <work-id>` line printed by capture:
+Use the `work: <work-id>` line printed by `link-commit`:
 
 ```bash
 WORK_ID=<work-id>
@@ -57,7 +57,9 @@ CTX_WEB_DIST=/path/to/ctx/core/apps/web/dist \
 
 The Inspector shows overview, transcript, commands, evidence, timeline, changes,
 artifacts, context, and whitelist redacted JSON. Default surfaces omit raw
-transcripts, raw command output, host roots, and raw artifact paths.
+transcripts, raw command output, host roots, and raw artifact paths. Bounded
+previews, artifact names, project names, and command text can still reveal
+project-specific details.
 
 If a disposable private remote is available, push a branch and link the draft PR:
 

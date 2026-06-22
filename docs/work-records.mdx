@@ -103,6 +103,19 @@ and deterministic PR references such as explicit GitHub PR URLs or
 `gh pr view 123 --repo owner/repo`. It cannot infer every intent or every PR
 created by a command. Use `ctx work link-pr` when the PR URL is known.
 
+## Capture Sources
+
+Different Work fields come from different capture paths. ctx does not infer
+missing context after the fact.
+
+| Capture path | Captures | Limits |
+| --- | --- | --- |
+| ADE session projection, including `ctx work project session/task` | persisted task/session/worktree/run links, durable transcript events, tool-call events, session artifacts, subagent relations | only projects state already stored by the ADE; transient stream-only chunks are not reconstructed |
+| `ctx setup workspace` shims for `git` and `gh` | argv, cwd, exit status, Git facts, and allowlisted PR/commit metadata | best-effort and low-trust; shims do not capture arbitrary intent or every side effect |
+| `ctx work evidence <workId> run -- ...` | observed command, exit status, Git fingerprint, bounded stdout/stderr previews, preview sizes, hashes, and freshness inputs | evidence is local observation, not tamper-proof proof; raw output is not indexed by default |
+| `ctx work link-pr` and `ctx work link-commit` | explicit durable source-control anchors | requires the user or agent to provide the PR URL or commit SHA |
+| `ctx work note`, import, and summaries | manual context, imported records, deterministic local summaries with citations | manual/imported context carries its source and trust; provider-backed LLM summaries are not part of this public local slice |
+
 ## Observe, Search, Context, Report
 
 The P0 Work observability surface is local and CLI-first:
@@ -112,7 +125,7 @@ The P0 Work observability surface is local and CLI-first:
   citations, evidence freshness, and no raw transcript payloads.
 - `ctx work report <work-id> --markdown` renders a reviewer-facing summary of
   trust, evidence, linked changes, and the redacted timeline.
-- The desktop Work Inspector at `/workspaces/:id/work/:work_id` opens the same
+- The desktop Work Inspector at `/workspaces/:id/work/:workId` opens the same
   Work record as a tabbed local review surface for overview, transcript,
   commands, evidence, timeline, changes, artifacts, context, and redacted JSON.
 - `ctx work evidence <work-id> run -- ...` records an observed local command,
@@ -134,6 +147,25 @@ The daemon exposes the same local Work report/context/timeline/evidence data to
 the desktop UI through redacted workspace-scoped routes. Those routes are
 full-daemon-token desktop routes for now; scoped MCP/agent access to Work records
 is intentionally not part of this P0 public slice.
+
+## Artifacts And Retention
+
+Artifact metadata in default Work Inspector responses is a safe projection:
+names, MIME types, sizes, missing-state, and same-origin local Inspector URLs.
+It omits absolute host paths and does not expose arbitrary files. Artifact
+downloads are authorized through the local daemon route for the specific
+workspace and Work record; preview-unsafe types are served as downloads with
+`nosniff`.
+
+Artifact contents can still contain sensitive project data. Treat opened or
+downloaded artifacts the same way you would treat local screenshots, logs, or
+build outputs from the repo.
+
+Fine-grained per-record purge controls are not part of this public local slice
+yet. For disposable runs, use an isolated `CTX_DATA_ROOT` and remove that data
+root when finished. After removing local Work data by trusted-machine
+maintenance, run `ctx work index rebuild --json` so the redacted search index is
+rebuilt from the remaining records.
 
 ## Agent Usage
 
@@ -181,13 +213,13 @@ records. They are not a hosted API and are not scoped MCP tools.
 
 ```text
 GET  /api/workspaces/:id/work
-GET  /api/workspaces/:id/work/:work_id
-GET  /api/workspaces/:id/work/:work_id/context
-GET  /api/workspaces/:id/work/:work_id/report
-GET  /api/workspaces/:id/work/:work_id/timeline
-GET  /api/workspaces/:id/work/:work_id/evidence
-POST /api/workspaces/:id/work/:work_id/evidence
-POST /api/workspaces/:id/work/:work_id/summaries
+GET  /api/workspaces/:id/work/:workId
+GET  /api/workspaces/:id/work/:workId/context
+GET  /api/workspaces/:id/work/:workId/report
+GET  /api/workspaces/:id/work/:workId/timeline
+GET  /api/workspaces/:id/work/:workId/evidence
+POST /api/workspaces/:id/work/:workId/evidence
+POST /api/workspaces/:id/work/:workId/summaries
 ```
 
 Default route responses are redacted and bounded. The typed Work Inspector route
@@ -195,7 +227,7 @@ adds a whitelist projection for transcript items, command previews, artifacts,
 timeline items, context, and a raw-redacted JSON tab:
 
 ```text
-GET  /api/workspaces/:id/work/:work_id/inspector
+GET  /api/workspaces/:id/work/:workId/inspector
 ```
 
 That route does not expose raw `payload_json`, raw transcript bodies, raw

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use ctx_core::models::VcsKind;
 use ctx_fs::git::git_default_branch;
 use ctx_fs::vcs;
@@ -42,11 +43,7 @@ pub async fn prepare_workspace_registration(
         ))
     })?;
 
-    let driver = vcs::driver_for_path(&root_path)
-        .await
-        .map_err(|error| WorkspaceRegistrationError::new(error.to_string()))?;
-    driver
-        .assert_repo(&root_path)
+    let driver = driver_for_workspace_root(&root_path)
         .await
         .map_err(|error| WorkspaceRegistrationError::new(error.to_string()))?;
 
@@ -70,8 +67,7 @@ pub async fn prepare_workspace_registration(
 }
 
 pub async fn validate_workspace_root_repo(root_path: &Path) -> anyhow::Result<VcsKind> {
-    let driver = vcs::driver_for_path(root_path).await?;
-    driver.assert_repo(root_path).await?;
+    let driver = driver_for_workspace_root(root_path).await?;
     Ok(driver.kind())
 }
 
@@ -86,7 +82,7 @@ pub async fn validate_workspace_primary_branch(
         ));
     }
 
-    let driver = vcs::driver_for_path(root_path)
+    let driver = driver_for_workspace_root(root_path)
         .await
         .map_err(|error| WorkspaceRegistrationError::new(error.to_string()))?;
     driver
@@ -98,6 +94,18 @@ pub async fn validate_workspace_primary_branch(
             ))
         })?;
     Ok(primary_branch.to_string())
+}
+
+async fn driver_for_workspace_root(root_path: &Path) -> anyhow::Result<Arc<dyn vcs::VcsDriver>> {
+    let driver = if root_path.join(".jj").exists() {
+        vcs::driver_for_kind(Some(VcsKind::Jj))
+    } else if root_path.join(".git").exists() {
+        vcs::driver_for_kind(Some(VcsKind::Git))
+    } else {
+        bail!("no vcs repo found at {}", root_path.display());
+    };
+    driver.assert_repo(root_path).await?;
+    Ok(driver)
 }
 
 fn expand_workspace_root(raw_root_path: &str) -> Result<PathBuf, WorkspaceRegistrationError> {
@@ -154,8 +162,18 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        expand_workspace_root, normalize_detected_primary_branch, validate_workspace_primary_branch,
+        expand_workspace_root, normalize_detected_primary_branch,
+        validate_workspace_primary_branch, validate_workspace_root_repo, VcsKind,
     };
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
 
     #[test]
     fn normalize_detected_primary_branch_trims_git_output() {
@@ -181,5 +199,34 @@ mod tests {
             .await
             .expect_err("empty branch");
         assert_eq!(error.message(), "primary_branch is required");
+    }
+
+    #[tokio::test]
+    async fn validate_workspace_root_repo_accepts_git_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        git(&["init"], temp.path());
+
+        let vcs_kind = validate_workspace_root_repo(temp.path())
+            .await
+            .expect("validate git root");
+
+        assert_eq!(vcs_kind, VcsKind::Git);
+    }
+
+    #[tokio::test]
+    async fn validate_workspace_root_repo_does_not_inherit_parent_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        git(&["init"], temp.path());
+        let child = temp.path().join("child");
+        std::fs::create_dir(&child).expect("create child dir");
+
+        let error = validate_workspace_root_repo(&child)
+            .await
+            .expect_err("child without root marker should not inherit parent repo");
+
+        assert!(
+            error.to_string().contains("no vcs repo found"),
+            "unexpected error: {error:#}"
+        );
     }
 }

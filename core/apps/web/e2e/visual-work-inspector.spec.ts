@@ -9,7 +9,8 @@ import {
 } from "./utils/visual";
 
 const THEMES = ["dark", "light"] as const satisfies VisualTheme[];
-const workspaceId = "visual-workspace";
+const workspaceId = "22222222-2222-4222-8222-222222222222";
+const artifactId = "33333333-3333-4333-8333-333333333333";
 const png1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
 
@@ -85,7 +86,7 @@ function inspectorReport(opts: {
       : [
           {
             id: "artifact_visual",
-            artifact_id: "22222222-2222-4222-8222-222222222222",
+            artifact_id: artifactId,
             source_kind: "evidence",
             source_id: "wev_visual_test",
             kind: "screenshot",
@@ -95,10 +96,10 @@ function inspectorReport(opts: {
             bytes: 2048,
             missing: false,
             render_kind: "raster_image",
-            open_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/artifact_visual`,
-            download_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/artifact_visual`,
-            thumbnail_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/artifact_visual`,
-            preview_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/artifact_visual`,
+            open_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/${artifactId}`,
+            download_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/${artifactId}`,
+            thumbnail_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/${artifactId}`,
+            preview_url: `/api/workspaces/${workspaceId}/work/${opts.workId}/artifacts/${artifactId}`,
             created_at: "2026-06-21T13:03:00Z",
           },
         ];

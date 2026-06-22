@@ -57,7 +57,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
         &app,
         Method::POST,
         format!("/api/sessions/{}/messages", session.id.0),
-        Some(json!({"content":"first slow-diff-test"})),
+        Some(json!({"content":"first hold-after-tool-call"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -321,7 +321,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         &app,
         Method::POST,
         format!("/api/sessions/{}/messages", session.id.0),
-        Some(json!({"content":"second slow-diff-test","delivery":"queued"})),
+        Some(json!({"content":"second hold-after-tool-call","delivery":"queued"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

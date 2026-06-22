@@ -29,11 +29,7 @@ impl WorktreeCreationBaseError {
 pub async fn resolve_worktree_creation_base(
     workspace_root: &Path,
 ) -> Result<WorktreeCreationBase, WorktreeCreationBaseError> {
-    let driver = vcs::driver_for_path(workspace_root)
-        .await
-        .map_err(|error| WorktreeCreationBaseError::RepositoryUnavailable {
-            message: error.to_string(),
-        })?;
+    let driver = driver_for_workspace_root(workspace_root)?;
     let vcs_kind = driver.kind();
     let base_commit_sha = driver
         .rev_parse_head(workspace_root)
@@ -53,6 +49,20 @@ pub async fn resolve_worktree_creation_base(
     })
 }
 
+fn driver_for_workspace_root(
+    workspace_root: &Path,
+) -> Result<std::sync::Arc<dyn vcs::VcsDriver>, WorktreeCreationBaseError> {
+    if workspace_root.join(".jj").exists() {
+        return Ok(vcs::driver_for_kind(Some(VcsKind::Jj)));
+    }
+    if workspace_root.join(".git").exists() {
+        return Ok(vcs::driver_for_kind(Some(VcsKind::Git)));
+    }
+    Err(WorktreeCreationBaseError::RepositoryUnavailable {
+        message: format!("no vcs repo found at {}", workspace_root.display()),
+    })
+}
+
 fn is_missing_head_message(message: &str) -> bool {
     let message = message.to_lowercase();
     message.contains("ambiguous argument 'head'")
@@ -62,6 +72,15 @@ fn is_missing_head_message(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
 
     #[test]
     fn missing_head_classifier_matches_git_empty_repo_errors() {
@@ -88,5 +107,24 @@ mod tests {
             message: "io".to_string(),
         }
         .is_client_error());
+    }
+
+    #[tokio::test]
+    async fn resolve_creation_base_does_not_inherit_parent_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        git(&["init"], temp.path());
+        let child = temp.path().join("child-workspace");
+        std::fs::create_dir(&child).expect("create child dir");
+
+        let error = resolve_worktree_creation_base(&child)
+            .await
+            .expect_err("child without root marker should not inherit parent repo");
+
+        assert_eq!(
+            error,
+            WorktreeCreationBaseError::RepositoryUnavailable {
+                message: format!("no vcs repo found at {}", child.display()),
+            }
+        );
     }
 }

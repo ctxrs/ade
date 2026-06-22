@@ -19,13 +19,22 @@ Use **Settings** -> **Analytics** and related preferences to manage product tele
 
 Work records, command observations, artifacts, logs, summaries, and the local
 search index live under the local ctx data root unless you explicitly export or
-copy them. Search, context, report, timeline, and desktop Work Report responses
-use redacted renderable/searchable data by default and do not include raw
-transcript payloads.
+copy them. Search, context, report, timeline, and desktop Work Inspector
+responses use redacted renderable/searchable data by default and do not include
+raw transcript payloads, raw stdout/stderr, absolute artifact paths, or
+arbitrary local files.
+
+Bounded previews can still contain project-specific command text, artifact
+names, branch names, commit messages, and other details. Review redacted reports
+before sharing them outside a trusted context.
 
 Provider/model traffic is separate from Work record storage. It only happens
 through the harnesses or provider-backed features you connect. Raw local
 expansion or full-local export should be treated as trusted-machine-only data.
+
+Fine-grained Work purge controls are not part of the public local slice yet. Use
+isolated data roots for disposable runs, remove those roots when finished, and
+rebuild the redacted Work search index after trusted-machine maintenance.
 
 ## Practical privacy operations
 

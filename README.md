@@ -4,8 +4,11 @@
 
 **A local Work record system for coding agents, with an optional desktop workbench.**
 
-ctx records the Work around coding-agent changes: prompts, transcripts, commands,
-diffs, pull requests, artifacts, checks, and review evidence. The goal is to make
+ctx can record the Work around coding-agent changes: prompts, transcripts,
+commands, diffs, pull requests, artifacts, checks, and review evidence. What
+appears in a record depends on the capture source: ADE sessions project durable
+session state, shims provide best-effort command context, and explicit
+`ctx work` commands add evidence or source-control links. The goal is to make
 agent work inspectable and reusable after the terminal tab, provider session, or
 one-off worktree is gone.
 
@@ -68,7 +71,7 @@ best-effort command capture, notes, redacted search, bounded agent context
 packs, reviewer reports, evidence freshness, deterministic local summaries,
 explicit PR/commit linking, and recent context. Shim capture is context, not
 tamper-proof audit; use `ctx work link-pr` or `ctx work link-commit` when those
-durable source-control anchors are known. Open `/workspaces/:id/work/:work-id`
+durable source-control anchors are known. Open `/workspaces/:id/work/:workId`
 in the desktop app for the tabbed Work Inspector.
 
 ## What ctx Helps You Do

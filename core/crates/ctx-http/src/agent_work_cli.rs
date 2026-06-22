@@ -7122,6 +7122,8 @@ mod tests {
             )
             .await
             .unwrap();
+        let stored_events = store.list_session_events(session.id).await.unwrap();
+        assert_eq!(stored_events.len(), 1);
 
         let mut output = Vec::new();
         run_with_writer(

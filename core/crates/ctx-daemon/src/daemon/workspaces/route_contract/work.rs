@@ -2558,7 +2558,15 @@ fn pull_request_links(links: &[WorkRecordLink]) -> Vec<Value> {
 }
 
 fn inspector_pull_request_work_link_value(link: &WorkRecordLink) -> Option<Value> {
-    let target = link.target_json.as_ref()?.as_object()?;
+    let Some(target) = link.target_json.as_ref().and_then(Value::as_object) else {
+        let target_id = link.target_id.as_deref()?;
+        let (provider, owner, repo, number) = pull_request_target_id_fallback_parts(target_id);
+        let mut value = inspector_pull_request_ref_value(
+            &provider, &owner, &repo, number, None, None, None, None,
+        );
+        add_pull_request_target_id(&mut value, target_id);
+        return Some(value);
+    };
     let nested = target
         .get("pull_request")
         .and_then(Value::as_object)
@@ -2589,7 +2597,7 @@ fn inspector_pull_request_work_link_value(link: &WorkRecordLink) -> Option<Value
                 .and_then(|text| text.parse::<i64>().ok())
         })
         .unwrap_or_default();
-    Some(inspector_pull_request_ref_value(
+    let mut value = inspector_pull_request_ref_value(
         provider,
         owner,
         repo,
@@ -2612,7 +2620,53 @@ fn inspector_pull_request_work_link_value(link: &WorkRecordLink) -> Option<Value
             .get("state")
             .and_then(Value::as_str)
             .or_else(|| target.get("state").and_then(Value::as_str)),
-    ))
+    );
+    if let Some(target_id) = link.target_id.as_deref() {
+        add_pull_request_target_id(&mut value, target_id);
+    }
+    Some(value)
+}
+
+fn add_pull_request_target_id(value: &mut Value, target_id: &str) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "target_id".to_string(),
+            Value::String(bounded_redacted_text(target_id, 300)),
+        );
+    }
+}
+
+fn pull_request_target_id_fallback_parts(target_id: &str) -> (String, String, String, i64) {
+    let Some((provider, rest)) = target_id.split_once(':') else {
+        return (
+            "unknown".to_string(),
+            "unknown".to_string(),
+            "unknown".to_string(),
+            0,
+        );
+    };
+    let Some((repo_path, number_text)) = rest.rsplit_once('#') else {
+        return (
+            bounded_redacted_text(provider, 100),
+            "unknown".to_string(),
+            "unknown".to_string(),
+            0,
+        );
+    };
+    let Some((owner, repo)) = repo_path.split_once('/') else {
+        return (
+            bounded_redacted_text(provider, 100),
+            "unknown".to_string(),
+            "unknown".to_string(),
+            number_text.parse::<i64>().unwrap_or_default(),
+        );
+    };
+    (
+        bounded_redacted_text(provider, 100),
+        bounded_redacted_text(owner, 200),
+        bounded_redacted_text(repo, 200),
+        number_text.parse::<i64>().unwrap_or_default(),
+    )
 }
 
 fn commit_links(links: &[WorkRecordLink]) -> Vec<String> {

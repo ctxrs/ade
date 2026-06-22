@@ -94,6 +94,18 @@ async fn recv_worktree_vcs_snapshot(
     None
 }
 
+async fn drain_queued_vcs_stream_messages(socket: &mut TestWsStream, max_wait: Duration) {
+    let deadline = tokio::time::Instant::now() + max_wait;
+    while tokio::time::Instant::now() < deadline {
+        if recv_vcs_stream_message(socket, Duration::from_millis(50))
+            .await
+            .is_none()
+        {
+            break;
+        }
+    }
+}
+
 async fn open_workspace_vcs_stream(
     base: &str,
     workspace_id: WorkspaceId,
@@ -1521,6 +1533,7 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
             .await
             .expect("missing worktree");
     assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Fresh);
+    drain_queued_vcs_stream_messages(&mut socket, Duration::from_millis(500)).await;
 
     let repeat = json!({
         "type": "replace_subscription",
