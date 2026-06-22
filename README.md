@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/readme/header-homepage-20260403.png" alt="ctx is an open-source Agentic Development Environment (ADE)" />
+  <img src="assets/readme/header-homepage-20260403.png" alt="ctx ADE desktop workbench for coding agents" />
 </p>
 
 **A local-first desktop workbench for coding agents.**
 
-ctx is an open-source Agentic Development Environment (ADE): one place to run, supervise, review, and land work from the coding agents you already use.
+ctx ADE is an open-source Agentic Development Environment (ADE): one place to run, supervise, review, and land work from the coding agents you already use.
 
-If you use Claude Code, Codex, Cursor, or other agents across multiple tasks, the work quickly spreads across tmux panes, terminal tabs, provider session files, worktrees, diffs, screenshots, and GitHub tabs. ctx pulls that workflow into one local, hackable desktop app: tasks, sessions, transcripts, artifacts, diffs, containers, remote machines, and merge queue state all live in the same review surface.
+If you use Claude Code, Codex, Cursor, or other agents across multiple tasks, the work quickly spreads across tmux panes, terminal tabs, provider session files, worktrees, diffs, screenshots, and GitHub tabs. ctx ADE pulls that workflow into one local, hackable desktop app: tasks, sessions, transcripts, artifacts, diffs, containers, remote machines, and merge queue state all live in the same review surface.
 
-Use ctx on your own machine or against a remote devbox or VPS you control. ctx is local-first: your repos, task state, transcripts, and artifacts live on the machine running the workspace, and you bring your own agents, providers, models, and credentials.
+Use ctx ADE on your own machine or against a remote devbox or VPS you control. ctx ADE is local-first: your repos, task state, transcripts, and artifacts live on the machine running the workspace, and you bring your own agents, providers, models, and credentials.
 
 <p align="center">
   <img src="assets/videos/ctx-homepage-demo-20260406-900w-6s-10fps.gif" alt="A short demo of ctx showing the workbench, task thread, and agent workflow." />
@@ -26,7 +26,7 @@ Platform support: macOS and Linux today. Windows is on the roadmap.
 - Blog: https://ctx.rs/blog
 - Install guide: https://ctx.rs/getting-started/install-and-launch/
 
-## What ctx helps you do
+## What ctx ADE helps you do
 
 - Use Claude Code, Codex, Cursor, and other coding agents in a desktop workbench instead of flickering terminal panes
 - Run agents in isolated containers with explicit disk and network controls
@@ -35,9 +35,9 @@ Platform support: macOS and Linux today. Windows is on the roadmap.
 - Run work locally or on remote machines you control
 - Keep parallel tasks isolated in separate worktrees and land them cleanly with the agent merge queue
 
-## Why ctx exists
+## Why ctx ADE exists
 
-- A bare diff is not enough: ctx keeps the prompt, transcript, commands, artifacts, and worktree state that produced it
+- A bare diff is not enough: ctx ADE keeps the prompt, transcript, commands, artifacts, and worktree state that produced it
 - Parallel agents need isolated worktrees and a sane way to land branches without manual branch juggling
 - Agent sessions should be durable and inspectable instead of trapped in one provider's app state
 - You should be able to change harnesses and models without rebuilding your whole workflow
@@ -45,26 +45,26 @@ Platform support: macOS and Linux today. Windows is on the roadmap.
 
 ## How is this different from Codex app?
 
-Codex app, Cursor, and Antigravity are first-party environments for their own agent stacks. ctx is an open-source, local-first workbench around the agent harness you use today and the ones you may want to try later.
+Codex app, Cursor, and Antigravity are first-party environments for their own agent stacks. ctx ADE is an open-source, local-first workbench around the agent harness you use today and the ones you may want to try later.
 
-If one vendor's app is already your whole workflow, you may prefer that app. ctx is for engineers who want the workbench to stay stable as agents, models, and harnesses change.
+If one vendor's app is already your whole workflow, you may prefer that app. ctx ADE is for engineers who want the workbench to stay stable as agents, models, and harnesses change.
 
-The difference is the layer ctx cares about. ctx focuses on task state, worktrees, transcripts, artifacts, diffs, containers, remote machines, review, and landing branches. The workbench itself is open source, so you can inspect it, modify it, script it, and keep your workflow independent of any single agent provider.
+The difference is the layer ctx ADE cares about. ctx ADE focuses on task state, worktrees, transcripts, artifacts, diffs, containers, remote machines, review, and landing branches. The workbench itself is open source, so you can inspect it, modify it, script it, and keep your workflow independent of any single agent provider.
 
 ## The Pi ethos, one layer up
 
 Pi makes the case that an agent harness should be yours: inspectable, adaptable, built from primitives, and shaped around your workflow instead of sealed behind a vendor product.
 
-ctx is trying to bring that same ethos to the Agentic Development Environment. The ADE is the layer where agent sessions run, transcripts accumulate, diffs are reviewed, artifacts are captured, and branches land. If that layer becomes central to software development, it should be open and hackable too.
+ctx ADE is trying to bring that same ethos to the Agentic Development Environment. The ADE is the layer where agent sessions run, transcripts accumulate, diffs are reviewed, artifacts are captured, and branches land. If that layer becomes central to software development, it should be open and hackable too.
 
-ctx does not yet have Pi-style extensibility or plugin primitives. Making the workbench more extensible, plugin-ready, and hot-reloadable is an active area of development. If that direction interests you, we would love contributions.
+ctx ADE does not yet have Pi-style extensibility or plugin primitives. Making the workbench more extensible, plugin-ready, and hot-reloadable is an active area of development. If that direction interests you, we would love contributions.
 
 ## Under the hood
 
-ctx is built around a local Rust daemon, real agent harnesses, and per-task worktrees.
+ctx ADE is built around a local Rust daemon, real agent harnesses, and per-task worktrees.
 
 - The workbench talks to a local Rust daemon that owns sessions, transcripts, artifacts, diffs, workspace state, provider setup, and merge queue state
-- ctx runs real agent harnesses instead of replacing them with one internal agent loop; adapters use structured runtime protocols where available instead of scraping terminal output
+- ctx ADE runs real agent harnesses instead of replacing them with one internal agent loop; adapters use structured runtime protocols where available instead of scraping terminal output
 - CRP adapters normalize provider streams into one durable session model for the UI, review surface, local SQLite store, and artifact system
 - Each task runs in its own worktree, so transcripts, artifacts, diffs, and review state are tied to the exact execution root that produced them
 - Sandbox runs are materialized into an isolated container data plane instead of mutating a host checkout in place
@@ -99,8 +99,8 @@ Prerequisites:
 Install dependencies and build the Rust workspace:
 
 ```bash
-git clone https://github.com/ctxrs/ctx.git
-cd ctx
+git clone https://github.com/ctxrs/ade.git
+cd ade
 cd core
 corepack enable
 pnpm install --frozen-lockfile
