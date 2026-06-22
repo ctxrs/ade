@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/readme/header-homepage-20260403.png" alt="ctx ADE desktop workbench for coding agents" />
-</p>
-
 **A local-first desktop workbench for coding agents.**
 
 ctx ADE is an open-source Agentic Development Environment (ADE): one place to run, supervise, review, and land work from the coding agents you already use.
