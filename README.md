@@ -15,14 +15,14 @@ Use ctx ADE on your own machine or against a remote devbox or VPS you control. c
 ## Install
 
 ```bash
-curl -fsSL https://ctx.rs/install | sh
+curl -fsSL https://ade.ctx.rs/install | sh
 ```
 
 Platform support: macOS and Linux today. Windows is on the roadmap.
 
-- Website: https://ctx.rs
-- Blog: https://ctx.rs/blog
-- Install guide: https://ctx.rs/getting-started/install-and-launch/
+- Website: https://ade.ctx.rs
+- Blog: https://ade.ctx.rs/blog
+- Install guide: https://ade.ctx.rs/getting-started/install-and-launch/
 
 ## What ctx ADE helps you do
 

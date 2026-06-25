@@ -20,4 +20,4 @@ This directory contains selected ctx documentation for GitHub browsing.
 - `legal/`: privacy, security, and terms pages
 - `blog/`: selected long-form writing
 
-Full rendered docs: https://ctx.rs
+Full rendered docs: https://ade.ctx.rs

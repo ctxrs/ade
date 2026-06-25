@@ -189,7 +189,7 @@ export default function DaemonAvailabilityOverlay() {
     setNotice(null);
     try {
       if (!isDesktop) {
-        window.location.assign("https://ctx.rs/install");
+        window.location.assign("https://ade.ctx.rs/install");
         return;
       }
       const resp = await desktopApplyAppUpdate();
@@ -200,16 +200,16 @@ export default function DaemonAvailabilityOverlay() {
       }
       if (resp.up_to_date) {
         setActionError(
-          "No compatible update was found. Install the latest ctx from ctx.rs/install, then reopen ctx.",
+          "No compatible update was found. Install the latest ctx from ade.ctx.rs/install, then reopen ctx.",
         );
         return;
       }
       setActionError(
-        "Update could not be started. Install the latest version from ctx.rs/install, then reopen ctx.",
+        "Update could not be started. Install the latest version from ade.ctx.rs/install, then reopen ctx.",
       );
     } catch {
       setActionError(
-        "Update could not be started. Install the latest version from ctx.rs/install, then reopen ctx.",
+        "Update could not be started. Install the latest version from ade.ctx.rs/install, then reopen ctx.",
       );
     } finally {
       setDesktopAppUpdateBusy(false);
