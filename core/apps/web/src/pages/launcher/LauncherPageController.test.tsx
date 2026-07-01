@@ -249,6 +249,58 @@ describe("LauncherPage recents", () => {
     });
   });
 
+  it("opens local recent workspaces in the web workbench without invoking the desktop bridge", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(false);
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "repo-web",
+        root_path: "/tmp/repo-web",
+        updated_at_ms: 50,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockRejectedValue(new Error("desktop bridge unavailable") as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "ws-web", root_path: "/tmp/repo-web" }] as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /repo-web/i }));
+
+    await waitFor(() => {
+      expect(desktopConnectLocal).not.toHaveBeenCalled();
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "local",
+        root_path: "/tmp/repo-web",
+        label: "repo-web",
+        updated_at_ms: expect.any(Number),
+      }));
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-web", { replace: true });
+    });
+  });
+
+  it("handles remote recents gracefully in the web workbench without invoking the desktop bridge", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(false);
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "ssh",
+        label: "remote-web",
+        host: "devbox.example.com",
+        remote_port: 4399,
+        updated_at_ms: 50,
+      },
+    ]);
+    vi.mocked(desktopConnectSsh).mockRejectedValue(new Error("desktop bridge unavailable") as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /remote-web/i }));
+
+    expect(await screen.findByText("Remote recent workspaces can only be opened from the desktop app."))
+      .toBeInTheDocument();
+    expect(desktopConnectSsh).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it("resolves local host recents against canonical workspace paths", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
