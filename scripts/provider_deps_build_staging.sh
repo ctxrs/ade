@@ -6,7 +6,7 @@ MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-provider-accounts/src
 OUT_DIR=""
 OS_OVERRIDE=""
 ARCH_OVERRIDE=""
-PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex-cli,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
+PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,auggie,claude-cli,claude-crp,cline,codex-cli,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
 
 usage() {
   cat <<'USAGE'
@@ -1348,9 +1348,6 @@ if [[ -n "${providers[*]-}" ]]; then
         ;;
       droid)
         build_rust_provider "$provider" "$ROOT/harness-adapters/droid-acp" "droid-acp" "$version" "droid-acp"
-        ;;
-      amp)
-        build_node_project_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "$version"
         ;;
       auggie|claude-cli|cline|copilot|cursor|gemini|qwen)
         stage_matrix_npm_provider "$provider" "$version"

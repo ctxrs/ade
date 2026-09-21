@@ -132,7 +132,10 @@ mod tests {
                 assert!(real_guest_exec);
                 assert_eq!(workspace_id, "ws-123");
                 assert_eq!(worktree_id, "wt-456");
-                assert_eq!(host_worktree_root, PathBuf::from("/Users/example-user/code/repo"));
+                assert_eq!(
+                    host_worktree_root,
+                    PathBuf::from("/Users/example-user/code/repo")
+                );
                 assert_eq!(
                     guest_worktree_root,
                     PathBuf::from("/ctx/ws/worktrees/wt-456")

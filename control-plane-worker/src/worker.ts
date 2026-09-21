@@ -118,7 +118,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ ok: true }, 200, cors);
   }
   if ((path === "/v1/auth/start" || path === "/v1/auth/callback") && request.method === "POST") {
-    return featureUnavailable(cors, "ctx account auth");
+    return featureUnavailable(cors, "account authentication");
   }
   if (path === "/v1/account" && request.method === "GET") {
     return jsonResponse({ user: null, account: null }, 200, cors);
@@ -130,22 +130,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return jsonResponse(EMPTY_TEAM_STATE, 200, cors);
   }
   if (path === "/v1/team/admin" && request.method === "POST") {
-    return featureUnavailable(cors, "Team and Enterprise admin");
+    return featureUnavailable(cors, "organization administration");
   }
   if (path === "/v1/mobile/tunnel-grant" && request.method === "POST") {
-    return featureUnavailable(cors, "managed mobile tunnel grants");
+    return featureUnavailable(cors, "remote access grants");
   }
   if (path === "/v1/billing/checkout" && request.method === "POST") {
-    return featureUnavailable(cors, "billing checkout");
+    return featureUnavailable(cors, "billing operation");
   }
   if (path === "/v1/billing/portal" && request.method === "POST") {
-    return featureUnavailable(cors, "billing portal");
+    return featureUnavailable(cors, "billing operation");
   }
   if (path === "/v1/billing/sync" && request.method === "POST") {
     return jsonResponse({ ok: true, synced: false }, 200, cors);
   }
   if ((path === "/v1/webhooks/stripe" || path === "/v1/webhooks/workos") && request.method === "POST") {
-    return featureUnavailable(cors, "control-plane webhook intake");
+    return featureUnavailable(cors, "webhook intake");
   }
 
   if (["GET", "POST"].includes(request.method)) {

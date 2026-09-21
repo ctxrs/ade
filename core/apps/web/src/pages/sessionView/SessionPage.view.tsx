@@ -15,7 +15,6 @@ import { useFeatureGate } from "../../utils/analytics";
 import { useDictationController } from "../../utils/useDictationController";
 import { useWorkbenchStore } from "../../workbench/store";
 import { deriveProtocolSlashCommands } from "../../utils/protocolSlashCommands";
-import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../../config/licenses";
 import { appendSegment } from "./SessionPage.helpers";
 import { SessionWorkbenchPane } from "./SessionWorkbenchPane";
 import { useSessionDraftAttachments } from "./useSessionDraftAttachments";
@@ -181,7 +180,6 @@ export function SessionView({
     perfEnabled,
     listStyle,
     increaseViewportBy: SCROLLBACK_INCREASE_VIEWPORT_BY_PX,
-    licenseKey: VIRTUOSO_MESSAGE_LIST_LICENSE_KEY,
   });
 
   const composerState = useSessionComposerQueueController({
@@ -303,7 +301,6 @@ export function SessionView({
       onScroll={transcriptController.transcript.onScroll}
       onRenderedDataChange={transcriptController.transcript.onRenderedDataChange}
       methodsRef={transcriptController.transcript.methodsRef}
-      licenseKey={transcriptController.transcript.licenseKey}
       shortSizeAlign={transcriptController.transcript.shortSizeAlign}
       queueForPanel={queueForPanel}
       pendingQueueMessageIdSet={composerState.pendingQueueMessageIdSet}

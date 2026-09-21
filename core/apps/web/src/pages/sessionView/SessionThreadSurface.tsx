@@ -87,7 +87,6 @@ export type SessionThreadSurfaceTranscriptProps = {
   methodsRef: MutableRefObject<
     PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null
   >;
-  licenseKey: string;
   shortSizeAlign: PretextVirtualizerShortSizeAlign;
 };
 
@@ -320,7 +319,6 @@ export function SessionThreadSurface({
         onScroll={transcript.onScroll}
         onRenderedDataChange={transcript.onRenderedDataChange}
         methodsRef={transcript.methodsRef}
-        licenseKey={transcript.licenseKey}
         shortSizeAlign={transcript.shortSizeAlign}
       >
         {transcript.liveTailItems.length > 0 ? (

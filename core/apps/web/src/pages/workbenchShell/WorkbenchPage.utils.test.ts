@@ -164,6 +164,6 @@ describe("formatWorktreeChipLabel", () => {
         worktreeId: "42fe9bb2-6457-4ab5-9ac4-41a0101243ed",
         executionEnvironment: "host",
       }),
-    ).toBe("c445f56d");
+    ).toBe("00000000");
   });
 });

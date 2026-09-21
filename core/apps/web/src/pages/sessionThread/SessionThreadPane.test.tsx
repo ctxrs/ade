@@ -69,7 +69,6 @@ describe("SessionThreadPane", () => {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={noopMethodsRef}
-        licenseKey=""
         shortSizeAlign="top"
       >
         <div />
@@ -109,7 +108,6 @@ describe("SessionThreadPane", () => {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={noopMethodsRef}
-        licenseKey=""
         shortSizeAlign="top"
       >
         <div />
@@ -146,7 +144,6 @@ describe("SessionThreadPane", () => {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={noopMethodsRef}
-        licenseKey=""
         shortSizeAlign="top"
       >
         <div data-testid="bottom" />
@@ -180,7 +177,6 @@ describe("SessionThreadPane", () => {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={noopMethodsRef}
-        licenseKey=""
         shortSizeAlign="top"
       >
         <div />
@@ -221,7 +217,6 @@ describe("SessionThreadPane", () => {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={noopMethodsRef}
-        licenseKey=""
         shortSizeAlign="top"
       >
         <div />

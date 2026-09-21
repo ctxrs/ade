@@ -91,6 +91,7 @@ const CLAUDE_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 3] = [
 const GEMINI_CATALOG_VERSION_0_33_1: &str = "0.33.1";
 const GEMINI_CATALOG_VERSION_0_38_2: &str = "0.38.2";
 const GEMINI_CATALOG_VERSION_0_39_0: &str = "0.39.0";
+const GEMINI_CATALOG_VERSION_0_60_0: &str = "0.60.0";
 
 const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1: [PinnedFlatModel; 7] = [
     PinnedFlatModel {
@@ -120,6 +121,53 @@ const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1: [PinnedFlatModel; 7] = [
     PinnedFlatModel {
         id: "gemini-2.5-flash-lite",
         display_name: "Gemini 2.5 Flash Lite",
+    },
+];
+
+const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_60_0: [PinnedFlatModel; 11] = [
+    PinnedFlatModel {
+        id: "auto",
+        display_name: "Auto",
+    },
+    PinnedFlatModel {
+        id: "gemini-3.1-pro-preview",
+        display_name: "Gemini 3.1 Pro Preview",
+    },
+    PinnedFlatModel {
+        id: "gemini-3.5-flash",
+        display_name: "Gemini 3.5 Flash",
+    },
+    PinnedFlatModel {
+        id: "gemini-3.1-flash-lite",
+        display_name: "Gemini 3.1 Flash Lite",
+    },
+    PinnedFlatModel {
+        id: "gemini-3-pro-preview",
+        display_name: "Gemini 3 Pro Preview",
+    },
+    PinnedFlatModel {
+        id: "gemini-3-flash-preview",
+        display_name: "Gemini 3 Flash Preview",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-pro",
+        display_name: "Gemini 2.5 Pro",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-flash",
+        display_name: "Gemini 2.5 Flash",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-flash-lite",
+        display_name: "Gemini 2.5 Flash Lite",
+    },
+    PinnedFlatModel {
+        id: "gemma-4-31b-it",
+        display_name: "Gemma 4 31B IT",
+    },
+    PinnedFlatModel {
+        id: "gemma-4-26b-a4b-it",
+        display_name: "Gemma 4 26B A4B IT",
     },
 ];
 
@@ -198,6 +246,12 @@ fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
             normalized_version.as_str(),
             GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
             &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
+        )),
+        GEMINI_CATALOG_VERSION_0_60_0 => Some(pinned_flat_models_value(
+            "gemini_cli_version_pinned",
+            normalized_version.as_str(),
+            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_60_0[0].id,
+            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_60_0,
         )),
         _ => None,
     }
@@ -337,9 +391,28 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .expect("managed gemini release");
 
-        assert!(
-            pinned_subscription_models_value("gemini", Some(managed_release)).is_some(),
-            "missing pinned gemini catalog for managed release {managed_release}"
+        let payload = pinned_subscription_models_value("gemini", Some(managed_release))
+            .unwrap_or_else(|| {
+                panic!("missing pinned gemini catalog for managed release {managed_release}")
+            });
+        assert_eq!(
+            payload
+                .get("current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("auto")
         );
+        let models = payload
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .expect("models array");
+        for expected in [
+            "gemini-3.1-pro-preview",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+        ] {
+            assert!(models.iter().any(|model| {
+                model.get("id").and_then(serde_json::Value::as_str) == Some(expected)
+            }));
+        }
     }
 }

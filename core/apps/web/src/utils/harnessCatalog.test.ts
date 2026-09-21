@@ -7,11 +7,11 @@ import {
 } from "./harnessCatalog";
 
 describe("harnessCatalog", () => {
-  it("maps Pi to the official pi.dev logo asset", () => {
+  it("uses text fallbacks instead of redistributed brand artwork", () => {
     const pi = HARNESS_CATALOG.find((entry) => entry.id === "pi");
     expect(pi).toBeDefined();
-    expect(pi?.logoSrc).toContain("pi.svg");
-    expect(pi?.invertInLight).toBe(true);
+    expect(pi?.logoSrc).toBe("");
+    expect(HARNESS_CATALOG.every((entry) => entry.logoSrc === "")).toBe(true);
   });
 
   it("omits unsupported harnesses from the curated catalog", () => {
@@ -30,7 +30,7 @@ describe("harnessCatalog", () => {
     const codex = findHarnessCatalogEntry("codex");
     expect(codex?.id).toBe("codex");
     expect(codex?.label).toBe("Codex");
-    expect(codex?.logoSrc).toContain("openai");
+    expect(codex?.logoSrc).toBe("");
   });
 
   it("does not alias adapter implementation ids into provider ids", () => {

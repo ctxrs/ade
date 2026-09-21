@@ -14,10 +14,6 @@ const PROVIDER_SPECS = Object.freeze({
     binaryName: "acp-crp-bridge",
     targetLabel: "//external-harnesses/acp-crp-bridge:acp-crp-bridge",
   }),
-  amp: Object.freeze({
-    artifactKind: "archive",
-    targetLabel: "//harness-adapters/example-acp:provider-stage-archive",
-  }),
   "claude-crp": Object.freeze({
     artifactKind: "archive",
     passTargetKeyToRun: true,

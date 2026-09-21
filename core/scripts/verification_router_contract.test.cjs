@@ -87,7 +87,7 @@ test("verify:affected routes Neon migrations through the dedicated invariant che
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
-    changedFiles: ["neon/migrations/0007_reserved.sql"],
+    changedFiles: ["neon/migrations/0012_telemetry_effective_traffic_class.sql"],
   });
 
   assert.deepEqual(plan.commands, [NEON_MIGRATIONS_COMMAND]);
@@ -401,7 +401,7 @@ test("verify:merge-ready uses the clean checkin profile gate", () => {
 });
 
 test("verify:merge-ready keeps overlay invariants alongside the checkin profile", () => {
-  assert.deepEqual(buildOverlayCommands(["neon/migrations/0007_reserved.sql"]), [
+  assert.deepEqual(buildOverlayCommands(["neon/migrations/0012_telemetry_effective_traffic_class.sql"]), [
     NEON_MIGRATIONS_COMMAND,
   ]);
 });
@@ -576,7 +576,7 @@ test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and stil
     entrypoint: "verify:touched",
     profileId: "agent-default",
     baseRef: "origin/main",
-    changedFiles: ["neon/migrations/0007_reserved.sql"],
+    changedFiles: ["neon/migrations/0012_telemetry_effective_traffic_class.sql"],
     mergeBase: "",
     overlayCommands: [NEON_MIGRATIONS_COMMAND],
     taxonomyEntries: [],
@@ -611,7 +611,7 @@ test("verify router degrades gracefully when telemetry initialization fails", ()
     entrypoint: "verify:touched",
     profileId: "agent-default",
     baseRef: "origin/main",
-    changedFiles: ["neon/migrations/0007_reserved.sql"],
+    changedFiles: ["neon/migrations/0012_telemetry_effective_traffic_class.sql"],
     mergeBase: "",
     overlayCommands: [NEON_MIGRATIONS_COMMAND],
     taxonomyEntries: [],

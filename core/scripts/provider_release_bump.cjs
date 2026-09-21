@@ -12,7 +12,6 @@ const defaultMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts",
 
 const workspaceVersionSources = {
   "acp-crp-bridge": { kind: "cargo", relPath: "external-harnesses/acp-crp-bridge/Cargo.toml" },
-  amp: { kind: "package_json", relPath: "harness-adapters/example-acp/package.json" },
   codex: { kind: "cargo", relPath: "core/crates/codex-crp/Cargo.toml" },
   "claude-crp": { kind: "package_json", relPath: "external-harnesses/claude-crp/package.json" },
   droid: { kind: "cargo", relPath: "harness-adapters/droid-acp/Cargo.toml" },

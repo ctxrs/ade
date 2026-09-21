@@ -39,7 +39,6 @@ type Params = {
   perfEnabled: boolean;
   listStyle: CSSProperties;
   increaseViewportBy: number;
-  licenseKey: string;
 };
 
 type Result = {
@@ -93,7 +92,6 @@ export function useSessionViewTranscriptController(params: Params): Result {
     perfEnabled,
     listStyle,
     increaseViewportBy,
-    licenseKey,
   } = params;
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
@@ -422,7 +420,6 @@ export function useSessionViewTranscriptController(params: Params): Result {
       onScroll,
       onRenderedDataChange,
       methodsRef,
-      licenseKey,
       shortSizeAlign: atBottom ? "bottom" : "top",
     },
   };

@@ -458,7 +458,6 @@ const buildReport = (manifest, validation) => {
   lines.push("- `release` covers every installable provider on macOS host, macOS sandbox, Linux host, and Linux sandbox before stable promotion.");
   lines.push("- `nightly` repeats installability and may add launch/probe/first-turn breadth where deterministic credentials exist.");
   lines.push("- Live runners must continue through all selected cells and report every failed provider/target before exiting non-zero.");
-  lines.push("");
 
   return `${lines.join("\n")}\n`;
 };

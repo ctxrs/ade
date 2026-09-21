@@ -26,7 +26,6 @@ export function SessionThreadPane({
   onScroll,
   onRenderedDataChange,
   methodsRef,
-  licenseKey,
   shortSizeAlign,
   children,
 }: {
@@ -45,7 +44,6 @@ export function SessionThreadPane({
   onScroll: (location: PretextVirtualizerScrollLocation) => void;
   onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
   methodsRef: MutableRefObject<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
-  licenseKey: string;
   shortSizeAlign: PretextVirtualizerShortSizeAlign;
   children: ReactNode;
 }) {
@@ -70,7 +68,6 @@ export function SessionThreadPane({
           onScroll={onScroll}
           onRenderedDataChange={onRenderedDataChange}
           methodsRef={methodsRef}
-          licenseKey={licenseKey}
           shortSizeAlign={shortSizeAlign}
         />
       ) : (

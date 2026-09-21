@@ -10,7 +10,6 @@ const managedHelperScript = fs.readFileSync(
   path.join(repoRoot, "tools", "bazel", "provider_managed_install_archive.sh"),
   "utf8",
 );
-const ampBuild = fs.readFileSync(path.join(repoRoot, "harness-adapters", "amp-acp", "BUILD.bazel"), "utf8");
 const piBuild = fs.readFileSync(path.join(repoRoot, "harness-adapters", "pi-acp", "BUILD.bazel"), "utf8");
 const providerAccountsBuild = fs.readFileSync(
   path.join(repoRoot, "core", "crates", "ctx-provider-accounts", "BUILD.bazel"),
@@ -28,12 +27,7 @@ test("provider node archive helper is exported for Bazel package targets", () =>
   assert.match(managedHelperScript, /missing staged provider artifact/);
 });
 
-test("amp and pi provider adapters expose Bazel-run archive targets", () => {
-  assert.match(ampBuild, /name = "provider-stage-archive"/);
-  assert.match(ampBuild, /"\/\/tools\/bazel:provider_node_archive\.sh"/);
-  assert.match(ampBuild, /"harness-adapters\/amp-acp"/);
-  assert.match(ampBuild, /"dist\/bin\/amp-acp\.js"/);
-
+test("open-source provider adapters expose Bazel-run archive targets", () => {
   assert.match(piBuild, /name = "provider-stage-archive"/);
   assert.match(piBuild, /"\/\/tools\/bazel:provider_node_archive\.sh"/);
   assert.match(piBuild, /"harness-adapters\/pi-acp"/);

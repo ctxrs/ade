@@ -215,10 +215,15 @@ export default function LauncherPage() {
     openingKey?: string,
   ) => {
     try {
-      setBusyDetail("Connecting daemon...");
-      const info = await desktopConnectLocal();
-      setConnection(info);
-      applyConnection(info);
+      if (isDesktop) {
+        setBusyDetail("Connecting daemon...");
+        const info = await desktopConnectLocal();
+        setConnection(info);
+        applyConnection(info);
+      } else {
+        setBusyDetail("Checking daemon...");
+        setConnection({ kind: "none" });
+      }
       // Avoid landing on workspaces while the daemon is still booting.
       setBusyDetail("Waiting for daemon...");
       await waitForDaemonReady(15000);
@@ -267,9 +272,17 @@ export default function LauncherPage() {
   const onOpenRecent = async (r: LauncherRecentEntry) => {
     const recentKey = recentRenderKey(r);
     setError(null);
+    if (!isDesktop && r.kind !== "local") {
+      setError("Remote recent workspaces can only be opened from the desktop app.");
+      return;
+    }
     setBusy(true);
     setOpeningRecentKey(r.execution_environment === "sandbox" ? recentKey : null);
-    setBusyDetail(r.kind === "local" ? "Connecting daemon..." : "Connecting remote...");
+    setBusyDetail(
+      r.kind === "local"
+        ? (isDesktop ? "Connecting daemon..." : "Checking daemon...")
+        : "Connecting remote...",
+    );
     setLaunchSnapshot(null);
     try {
       if (r.kind === "local") {

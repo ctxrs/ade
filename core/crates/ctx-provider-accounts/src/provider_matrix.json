@@ -69,73 +69,6 @@
       ]
     },
     {
-      "id": "amp",
-      "display_name": "Amp",
-      "tier": "tier2",
-      "command": {
-        "command": "amp-acp",
-        "args": []
-      },
-      "managed_install": {
-        "kind": "archive",
-        "version": "0.1.4",
-        "args": [],
-        "targets": {
-          "darwin-aarch64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/macos/aarch64/sha256/075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345/amp-0.1.3-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345"
-          },
-          "darwin-x86_64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/macos/x86_64/sha256/075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345/amp-0.1.3-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345"
-          },
-          "linux-aarch64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/linux/aarch64/sha256/98be3292664435f8b057d9bef24e270e8ffb6c46a4e5eec7bfc0a8b7819c3dac/amp-0.1.3-linux-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "98be3292664435f8b057d9bef24e270e8ffb6c46a4e5eec7bfc0a8b7819c3dac"
-          },
-          "linux-x86_64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/linux/x86_64/sha256/98be3292664435f8b057d9bef24e270e8ffb6c46a4e5eec7bfc0a8b7819c3dac/amp-0.1.3-linux-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "98be3292664435f8b057d9bef24e270e8ffb6c46a4e5eec7bfc0a8b7819c3dac"
-          },
-          "macos-aarch64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/macos/aarch64/sha256/075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345/amp-0.1.3-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345"
-          },
-          "macos-x86_64": {
-            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/amp/0.1.3/macos/x86_64/sha256/075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345/amp-0.1.3-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "075d82723226eeb71bffb9ff325d11e778b4887c11fdeafb187ef3ed6110f345"
-          }
-        }
-      },
-      "version_probe": {
-        "kind": "command",
-        "args": [
-          "--version"
-        ]
-      },
-      "releases": [
-        {
-          "version": "0.1.4",
-          "status": "supported",
-          "context_min": "0.1.0",
-          "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260423202803-gfcf58c2"
-        }
-      ]
-    },
-    {
       "id": "auggie",
       "display_name": "Auggie",
       "tier": "tier2",
@@ -179,7 +112,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@anthropic-ai/claude-code",
-        "version": "2.1.119",
+        "version": "2.1.278",
         "entrypoint": "node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs",
         "args": []
       },
@@ -189,7 +122,7 @@
       },
       "releases": [
         {
-          "version": "2.1.119",
+          "version": "2.1.278",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Anthropic Claude Code CLI bundle release"
@@ -468,7 +401,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@github/copilot",
-        "version": "1.0.35",
+        "version": "1.0.87",
         "entrypoint": "node_modules/@github/copilot/npm-loader.js",
         "args": [
           "--acp",
@@ -481,7 +414,7 @@
       },
       "releases": [
         {
-          "version": "1.0.35",
+          "version": "1.0.87",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned GitHub Copilot CLI ACP bundle release"
@@ -693,7 +626,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",
-        "version": "0.39.0",
+        "version": "0.60.0",
         "entrypoint": "node_modules/@google/gemini-cli/bundle/gemini.js",
         "args": [
           "--experimental-acp"
@@ -705,7 +638,7 @@
       },
       "releases": [
         {
-          "version": "0.39.0",
+          "version": "0.60.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"

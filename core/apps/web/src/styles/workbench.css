@@ -3250,23 +3250,6 @@
   box-sizing: border-box;
 }
 
-.wb-thread-scroller--message-list [data-testid="virtuoso-list"] {
-  width: 100%;
-  /* `VirtuosoMessageList` sets `boxSizing: content-box` inline on this element.
-     Apply horizontal padding/centering on the row wrappers instead to avoid width overhang. */
-  padding-bottom: 8px;
-}
-
-.wb-thread-scroller--message-list [data-testid="virtuoso-list"] [role="listitem"] {
-  width: 100%;
-  max-width: var(--wb-transcript-max-width);
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: var(--wb-session-padding-inline);
-  padding-right: var(--wb-session-padding-inline);
-  box-sizing: border-box;
-}
-
 .wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-thread-list[data-pretext-virtualizer-content="1"] {
   width: 100%;
   max-width: none;

@@ -141,7 +141,6 @@ HERMETIC_WEB_CHECK_DATA = WEB_CHECK_SOURCES + [
     ":node_modules/@types/react",
     ":node_modules/@types/react-dom",
     ":node_modules/@types/react-syntax-highlighter",
-    ":node_modules/@virtuoso.dev/message-list",
     ":node_modules/@vitejs/plugin-react",
     ":node_modules/@xterm/addon-fit",
     ":node_modules/@xterm/addon-web-links",

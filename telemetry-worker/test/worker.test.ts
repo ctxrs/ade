@@ -19,16 +19,16 @@ describe("telemetry worker", () => {
     const worker = createTestWorker(database);
 
     const response = await worker.fetch(
-      new Request("https://https://telemetry.example.invalid/functions/v1/telemetry", {
+      new Request("https://telemetry.example.invalid/functions/v1/telemetry", {
         method: "OPTIONS",
-        headers: { origin: "https://https://telemetry.example.invalid" },
+        headers: { origin: "https://telemetry.example.invalid" },
       }),
       testEnv(),
     );
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
-    expect(response.headers.get("access-control-allow-origin")).toBe("https://https://telemetry.example.invalid");
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://telemetry.example.invalid");
     expect(response.headers.get("access-control-allow-methods")).toBe("POST, OPTIONS");
     expect(database.rows).toEqual([]);
   });
@@ -38,7 +38,7 @@ describe("telemetry worker", () => {
     const worker = createTestWorker(database);
 
     const response = await worker.fetch(
-      new Request("https://https://telemetry.example.invalid/functions/v1/telemetry", { method: "GET" }),
+      new Request("https://telemetry.example.invalid/functions/v1/telemetry", { method: "GET" }),
       testEnv(),
     );
 
@@ -393,7 +393,7 @@ function testEnv(): Env {
 }
 
 function jsonRequest(body: unknown): Request {
-  return new Request("https://https://telemetry.example.invalid/functions/v1/telemetry", {
+  return new Request("https://telemetry.example.invalid/functions/v1/telemetry", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

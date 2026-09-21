@@ -27,7 +27,6 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   itemIdentity: _itemIdentity,
   increaseViewportBy: _increaseViewportBy,
   threadProjectionOp,
-  licenseKey: _licenseKey,
 }: {
   sessionId: string;
   isActive: boolean;
@@ -44,7 +43,6 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   onScroll: (location: PretextVirtualizerScrollLocation) => void;
   onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
   methodsRef: MutableRefObject<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
-  licenseKey: string;
   shortSizeAlign: PretextVirtualizerShortSizeAlign;
 }) {
   return (

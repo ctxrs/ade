@@ -122,7 +122,6 @@ type SessionWorkbenchPaneProps = {
   methodsRef: MutableRefObject<
     PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null
   >;
-  licenseKey: string;
   shortSizeAlign: PretextVirtualizerShortSizeAlign;
   queueForPanel: Message[];
   pendingQueueMessageIdSet: Set<string>;
@@ -238,7 +237,6 @@ export function SessionWorkbenchPane({
   onScroll,
   onRenderedDataChange,
   methodsRef,
-  licenseKey,
   shortSizeAlign,
   queueForPanel,
   pendingQueueMessageIdSet,
@@ -449,7 +447,6 @@ export function SessionWorkbenchPane({
             onScroll,
             onRenderedDataChange,
             methodsRef,
-            licenseKey,
             shortSizeAlign,
           }}
           queue={{

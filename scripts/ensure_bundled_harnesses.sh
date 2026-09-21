@@ -446,7 +446,6 @@ INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
 
 local_adapter_dir() {
   case "${1:-}" in
-    amp) printf '%s' "amp-acp" ;;
     pi) printf '%s' "pi-acp" ;;
     droid) printf '%s' "droid-acp" ;;
     *) printf '%s' "" ;;
@@ -668,17 +667,8 @@ verify_sha256_if_expected() {
   fi
 }
 
-local_adapter_amp_entrypoint() {
-  local dir
-  dir="$(local_adapter_dir "amp")"
-  printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/amp-acp.js"
-}
-
 local_adapter_node_entrypoint() {
   case "${1:-}" in
-    amp)
-      local_adapter_amp_entrypoint
-      ;;
     pi)
       local dir
       dir="$(local_adapter_dir "pi")"
@@ -878,7 +868,7 @@ build_local_adapters() {
   fi
 
   local node_adapter_id
-  for node_adapter_id in amp pi; do
+  for node_adapter_id in pi; do
     if ! provider_selected_for_bundle "$node_adapter_id"; then
       continue
     fi

@@ -1,7 +1,6 @@
 import React, { useRef, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
 import type { Session } from "../../api/client";
 import type { MessageAttachment } from "../../api/client";
 import type { WorkbenchMessageListContext } from "../sessionThread";
@@ -76,7 +75,7 @@ function TestPane({
   const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
 
   return (
-    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+    <>
       <SessionWorkbenchPane
         id="session-1"
         entryLoadState={undefined}
@@ -130,7 +129,6 @@ function TestPane({
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={methodsRef}
-        licenseKey=""
         shortSizeAlign="top"
         queueForPanel={[]}
         pendingQueueMessageIdSet={new Set<string>()}
@@ -187,7 +185,7 @@ function TestPane({
         modelSwitchError={null}
         interruptSessionId={interruptSessionId}
       />
-    </VirtuosoMessageListTestingContext.Provider>
+    </>
   );
 }
 
@@ -213,7 +211,7 @@ function TestMessagePane() {
   const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
 
   return (
-    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+    <>
       <SessionWorkbenchPane
         id="session-1"
         entryLoadState={undefined}
@@ -267,7 +265,6 @@ function TestMessagePane() {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={methodsRef}
-        licenseKey=""
         shortSizeAlign="top"
         queueForPanel={[]}
         pendingQueueMessageIdSet={new Set<string>()}
@@ -324,7 +321,7 @@ function TestMessagePane() {
         modelSwitchError={null}
         interruptSessionId=""
       />
-    </VirtuosoMessageListTestingContext.Provider>
+    </>
   );
 }
 
@@ -351,7 +348,7 @@ function TestAssistantPane() {
   const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
 
   return (
-    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+    <>
       <SessionWorkbenchPane
         id="session-1"
         entryLoadState={undefined}
@@ -405,7 +402,6 @@ function TestAssistantPane() {
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
         methodsRef={methodsRef}
-        licenseKey=""
         shortSizeAlign="top"
         queueForPanel={[]}
         pendingQueueMessageIdSet={new Set<string>()}
@@ -462,7 +458,7 @@ function TestAssistantPane() {
         modelSwitchError={null}
         interruptSessionId=""
       />
-    </VirtuosoMessageListTestingContext.Provider>
+    </>
   );
 }
 

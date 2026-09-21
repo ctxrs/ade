@@ -20,7 +20,9 @@ pub(crate) const COPILOT_BOOTSTRAP_MODEL_ID: &str = "gpt-5-mini";
 
 const COPILOT_CATALOG_VERSION_1_0_0: &str = "1.0.0";
 const COPILOT_CATALOG_VERSION_1_0_3: &str = "1.0.3";
-const COPILOT_DEFAULT_MODEL_ID: &str = "claude-sonnet-4.6";
+const COPILOT_CATALOG_VERSION_1_0_87: &str = "1.0.87";
+const COPILOT_LEGACY_DEFAULT_MODEL_ID: &str = "claude-sonnet-4.6";
+const COPILOT_DEFAULT_MODEL_ID: &str = "gpt-6-astra";
 
 fn default_copilot_credential_kind() -> String {
     COPILOT_CREDENTIAL_KIND_GH_TOKEN.to_string()
@@ -89,6 +91,86 @@ const COPILOT_MODEL_CATALOG_1_0_X: [CopilotKnownModel; 7] = [
     CopilotKnownModel {
         id: "gpt-4.1",
         display_name: "GPT-4.1",
+        requires_enablement: false,
+        is_default: false,
+        bootstrap_safe: true,
+    },
+];
+
+const COPILOT_MODEL_CATALOG_1_0_87: [CopilotKnownModel; 11] = [
+    CopilotKnownModel {
+        id: "gpt-6-astra",
+        display_name: "GPT-6 Astra (requires enablement)",
+        requires_enablement: true,
+        is_default: true,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.6-sol",
+        display_name: "GPT-5.6 Sol (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.6-terra",
+        display_name: "GPT-5.6 Terra (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.6-luna",
+        display_name: "GPT-5.6 Luna (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.5",
+        display_name: "GPT-5.5 (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.3-codex",
+        display_name: "GPT-5.3-Codex (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "claude-sonnet-5",
+        display_name: "Claude Sonnet 5 (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "claude-opus-5",
+        display_name: "Claude Opus 5 (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gemini-3.8-flash",
+        display_name: "Gemini 3.8 Flash (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "claude-haiku-4.5",
+        display_name: "Claude Haiku 4.5",
+        requires_enablement: false,
+        is_default: false,
+        bootstrap_safe: true,
+    },
+    CopilotKnownModel {
+        id: "gpt-5-mini",
+        display_name: "GPT-5 mini",
         requires_enablement: false,
         is_default: false,
         bootstrap_safe: true,
@@ -378,15 +460,21 @@ pub(crate) fn copilot_model_catalog_for_version(version: &str) -> Option<Copilot
     match normalize_copilot_cli_version(version)?.as_str() {
         COPILOT_CATALOG_VERSION_1_0_0 => Some(CopilotModelCatalog {
             version: COPILOT_CATALOG_VERSION_1_0_0,
-            default_model_id: COPILOT_DEFAULT_MODEL_ID,
+            default_model_id: COPILOT_LEGACY_DEFAULT_MODEL_ID,
             bootstrap_model_id: COPILOT_BOOTSTRAP_MODEL_ID,
             models: &COPILOT_MODEL_CATALOG_1_0_X,
         }),
         COPILOT_CATALOG_VERSION_1_0_3 => Some(CopilotModelCatalog {
             version: COPILOT_CATALOG_VERSION_1_0_3,
-            default_model_id: COPILOT_DEFAULT_MODEL_ID,
+            default_model_id: COPILOT_LEGACY_DEFAULT_MODEL_ID,
             bootstrap_model_id: COPILOT_BOOTSTRAP_MODEL_ID,
             models: &COPILOT_MODEL_CATALOG_1_0_X,
+        }),
+        COPILOT_CATALOG_VERSION_1_0_87 => Some(CopilotModelCatalog {
+            version: COPILOT_CATALOG_VERSION_1_0_87,
+            default_model_id: COPILOT_DEFAULT_MODEL_ID,
+            bootstrap_model_id: COPILOT_BOOTSTRAP_MODEL_ID,
+            models: &COPILOT_MODEL_CATALOG_1_0_87,
         }),
         _ => None,
     }

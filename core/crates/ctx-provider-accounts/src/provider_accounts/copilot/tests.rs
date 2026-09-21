@@ -97,7 +97,7 @@ fn copilot_model_catalog_returns_pinned_models_for_known_version() {
         .and_then(serde_json::Value::as_array)
         .expect("models array");
     assert_eq!(current, Some(COPILOT_BOOTSTRAP_MODEL_ID));
-    assert_eq!(default, Some(COPILOT_DEFAULT_MODEL_ID));
+    assert_eq!(default, Some(COPILOT_LEGACY_DEFAULT_MODEL_ID));
     assert_eq!(catalog_version, Some(COPILOT_CATALOG_VERSION_1_0_0));
     assert!(models.iter().any(|model| {
         model.get("id").and_then(serde_json::Value::as_str) == Some("claude-sonnet-4.6")
@@ -121,6 +121,26 @@ fn copilot_model_catalog_aliases_host_cli_version() {
     assert!(models.iter().any(|model| {
         model.get("id").and_then(serde_json::Value::as_str) == Some("claude-opus-4.6-fast")
     }));
+}
+
+#[test]
+fn copilot_model_catalog_includes_current_models_for_managed_cli() {
+    let value = copilot_models_value_for_version("1.0.87").expect("catalog");
+    assert_eq!(
+        value
+            .get("default_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("gpt-6-astra")
+    );
+    let models = value
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .expect("models array");
+    for expected in ["gpt-6-astra", "claude-sonnet-5", "gemini-3.8-flash"] {
+        assert!(models.iter().any(|model| {
+            model.get("id").and_then(serde_json::Value::as_str) == Some(expected)
+        }));
+    }
 }
 
 #[tokio::test]

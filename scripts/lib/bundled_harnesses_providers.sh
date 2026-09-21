@@ -120,8 +120,7 @@ PY
 fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
-  if provider_selected_for_bundle "amp" \
-    || provider_selected_for_bundle "pi"; then
+  if provider_selected_for_bundle "pi"; then
     runtime_need_node="1"
   fi
 fi
@@ -784,7 +783,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi droid; do
+  for id in pi droid; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi
@@ -796,7 +795,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       version="local"
     fi
 
-    if [[ "$id" == "amp" || "$id" == "pi" ]]; then
+    if [[ "$id" == "pi" ]]; then
       src="$(local_adapter_node_entrypoint "$id")"
       if [[ ! -f "$src" ]]; then
         dir="$(local_adapter_dir "$id")"

@@ -11,7 +11,6 @@ const {
 test("provider-deps Bazel helper keeps the explicit provider and cross-target map", () => {
   assert.deepEqual(Object.keys(PROVIDER_SPECS).sort(), [
     "acp-crp-bridge",
-    "amp",
     "claude-crp",
     "codex",
     "droid",
@@ -20,8 +19,6 @@ test("provider-deps Bazel helper keeps the explicit provider and cross-target ma
     "pi",
   ]);
   assert.equal(PROVIDER_SPECS["acp-crp-bridge"].targetLabel, "//external-harnesses/acp-crp-bridge:acp-crp-bridge");
-  assert.equal(PROVIDER_SPECS.amp.artifactKind, "archive");
-  assert.equal(PROVIDER_SPECS.amp.targetLabel, "//harness-adapters/example-acp:provider-stage-archive");
   assert.equal(PROVIDER_SPECS["claude-crp"].artifactKind, "archive");
   assert.equal(PROVIDER_SPECS["claude-crp"].targetLabel, "//external-harnesses/claude-crp:provider-stage-archive");
   assert.equal(PROVIDER_SPECS["claude-crp"].passTargetKeyToRun, true);

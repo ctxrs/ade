@@ -26,7 +26,6 @@ const DEFAULT_RUNTIME_LOCK_RELATIVE_PATH = path.join(
 );
 const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "acp-crp-bridge",
-  "amp",
   "auggie",
   "claude-cli",
   "claude-crp",
