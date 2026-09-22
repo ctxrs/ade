@@ -1,10 +1,24 @@
-# ADE
+> NOTE: Development on the ctx ADE has stopped in favor of using first-party desktop apps. Specifically, I am using the Codex desktop app now with a detached model router, paired with ctx CLI for agent history search.
+>
+> The biggest reason for this: ACP (or in our case, CRP) is not rich enough of a protocol for multi-agent orchestration at scale. If you are making a first party desktop app, you can make custom APIs to talk directly to subagents status and lots of other long-tail stuff that isn't exposed top level of a session event stream.
+>
+> In theory, you could build richer protocols for every single harness, but they are starting to be so divergent that it doesn't make sense to make one desktop app to handle every harness. Maybe someone will do it one day, but for now the best bet is to pick whichever desktop app works best in a 1:1 relationship with the harness.
+>
+> If anyone wants to pick up work from here, my recommendation is to take this as a baseline, strip out all of the harness agnostic stuff, pick a single open harness (such as Pi or maybe Fx) and build everything around that. Make it interoperable with OpenAI and Anthropic endpoints and subscriptions, and try to make it good enough that nobody misses the first party harness.
+>
+> There are some really nice parts in here that I like such as the UI scroll virtualization. And I think that the ACP community can learn from the CRP implementation which was much stabler at scale.
 
-ADE is a desktop workbench for running coding agents against local and remote repositories. It brings agent sessions, terminals, files, Git state, provider setup, and workspace isolation into one application.
+# ctx ade
 
-This repository is the open-source release of the original ctx Agent Development Environment. It contains the retained product history from December 2025 through ADE 0.69.7, plus the final web-launcher fix. Internal planning, private operations, and personal data were removed while preserving product source and tests.
+ctx ade (Agentic Development Environment) is a multi-harness desktop app for steering many concurrent coding agents.
 
-## What is here
+Its built around harnesses like Claude Code, Codex, and Cursor, so you can keep using the same agent that you already like in the terminal, but in a desktop GUI.
+
+The desktop interface affords many UX capabilities that are simply not available in the terminal, even with multiplexing solutions like tmux and zellij.
+
+The ctx ade includes support for remote development via SSH and integrated sandboxing.
+
+## Under the hood
 
 - A Tauri desktop app with a React workbench and a local Rust daemon.
 - Adapters for Codex, Claude, Gemini, Copilot, Cursor, OpenHands, Goose, and other agent runtimes.
@@ -16,26 +30,20 @@ This repository is the open-source release of the original ctx Agent Development
 
 Provider model lists are discovered from the installed runtime when the provider supports it. A saved model choice is scoped to that provider, so new model IDs can be used without changing ADE's source.
 
-## Project status
-
-This is a source release of the last ADE product line. Active ctx development moved to the CLI after 0.69.7. The code is useful as a working system, a reference implementation, and a record of the engineering behind the product; it is not currently maintained as a supported hosted service.
-
-Some installation, update, telemetry, and remote-access paths refer to public infrastructure under `ctx.rs`. The workers and service implementations are included in this repository, but a new operator must supply their own deployment configuration, credentials, signing keys, and artifact hosting. Local development does not require those hosted services.
-
 ## Repository map
 
-| Path | Purpose |
-| --- | --- |
-| `core/apps/desktop` | Tauri desktop shell and desktop automation |
-| `core/apps/web` | React workbench |
-| `core/crates` | Rust daemon, workspace, provider, sandbox, session, and transport services |
-| `external-harnesses` | Agent protocol bridges maintained with ADE |
-| `harness-adapters` | Adapters for third-party coding agents |
-| `control-plane-worker` | Team, entitlement, billing, and mobile-access API surface |
-| `release-api-worker` | Release manifest and download service |
-| `llm-relay-worker` | Optional model relay |
-| `telemetry-worker` | Optional telemetry ingress |
-| `install-site` | Installer and uninstaller endpoints |
+| Path                   | Purpose                                                                    |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `core/apps/desktop`    | Tauri desktop shell and desktop automation                                 |
+| `core/apps/web`        | React workbench                                                            |
+| `core/crates`          | Rust daemon, workspace, provider, sandbox, session, and transport services |
+| `external-harnesses`   | Agent protocol bridges maintained with ADE                                 |
+| `harness-adapters`     | Adapters for third-party coding agents                                     |
+| `control-plane-worker` | Team, entitlement, billing, and mobile-access API surface                  |
+| `release-api-worker`   | Release manifest and download service                                      |
+| `llm-relay-worker`     | Optional model relay                                                       |
+| `telemetry-worker`     | Optional telemetry ingress                                                 |
+| `install-site`         | Installer and uninstaller endpoints                                        |
 
 ## Development
 
@@ -65,10 +73,10 @@ Run the quick verification suite:
 make verify-quick PNPM="npx pnpm@9.15.1"
 ```
 
-The repository contains broader merge, nightly, desktop, provider, and release suites. Several of those need platform-specific runners, provider credentials, remote hosts, or release infrastructure.
+The repo contains merge, nightly, desktop, provider, and release suites. Several of those need platform-specific runners, provider credentials, remote hosts, or release infrastructure.
 
 ## License
 
-Copyright © 2025–2026 Wills Manley and contributors.
+Copyright © 2026 ctx engineering inc and contributors.
 
-ADE is released under the [GNU General Public License v3.0](LICENSE.md). Third-party code and assets retain their own licenses in the directories where they are included.
+ctx ade is released under the [Apache License 2.0](LICENSE.md). Third-party code and assets retain their own licenses in the directories where they are included.
